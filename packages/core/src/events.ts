@@ -31,3 +31,22 @@ export interface AgentEvent {
   timestamp: number;
   payload: Record<string, unknown>;
 }
+
+/** All event types for validation and iteration. */
+export const AGENT_EVENT_TYPES: readonly AgentEventType[] = [
+  'agent.spawn',
+  'agent.idle',
+  'agent.error',
+  'agent.terminate',
+  'task.start',
+  'task.progress',
+  'task.complete',
+  'task.fail',
+  'tool.call',
+  'tool.result',
+  'file.read',
+  'file.write',
+  'message.send',
+  'message.receive',
+  'data.transfer',
+] as const;

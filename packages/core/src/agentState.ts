@@ -5,19 +5,133 @@
 
 import type { AgentEvent } from './events.js';
 
+export type AgentRuntimeState = 'idle' | 'thinking' | 'error';
+
 export interface AgentState {
   id: string;
   name: string;
   type: string;
-  state: 'idle' | 'thinking' | 'error';
+  state: AgentRuntimeState;
   currentTaskId: string | null;
+}
+
+export interface TaskState {
+  id: string;
+  agentId: string;
+  progress: number;
+  complexity: number;
+  startedAt: number;
+}
+
+export interface ShipState {
+  id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  payloadSize: number;
+  taskId: string | null;
+  createdAt: number;
 }
 
 export class AgentStateManager {
   private agents = new Map<string, AgentState>();
+  private tasks = new Map<string, TaskState>();
+  private ships = new Map<string, ShipState>();
+  private taskIdCounter = 0;
+  private shipIdCounter = 0;
 
-  apply(_event: AgentEvent): void {
-    // TODO: update agent/task/ship state from events
+  private nextTaskId(): string {
+    return `task-${++this.taskIdCounter}`;
+  }
+
+  private nextShipId(): string {
+    return `ship-${++this.shipIdCounter}`;
+  }
+
+  apply(event: AgentEvent): void {
+    const { agentId, agentName, agentType, type, timestamp, payload } = event;
+
+    switch (type) {
+      case 'agent.spawn': {
+        this.agents.set(agentId, {
+          id: agentId,
+          name: agentName,
+          type: agentType,
+          state: 'idle',
+          currentTaskId: null,
+        });
+        break;
+      }
+      case 'agent.idle': {
+        const a = this.agents.get(agentId);
+        if (a) this.agents.set(agentId, { ...a, state: 'idle', currentTaskId: null });
+        break;
+      }
+      case 'agent.error': {
+        const a = this.agents.get(agentId);
+        if (a) this.agents.set(agentId, { ...a, state: 'error' });
+        break;
+      }
+      case 'agent.terminate': {
+        this.agents.delete(agentId);
+        break;
+      }
+      case 'task.start': {
+        const taskId = (payload?.taskId as string) ?? this.nextTaskId();
+        const complexity = (payload?.complexity as number) ?? 1;
+        this.tasks.set(taskId, {
+          id: taskId,
+          agentId,
+          progress: 0,
+          complexity,
+          startedAt: timestamp,
+        });
+        const agent = this.agents.get(agentId);
+        if (agent) {
+          this.agents.set(agentId, { ...agent, state: 'thinking', currentTaskId: taskId });
+        }
+        break;
+      }
+      case 'task.progress': {
+        const taskId = payload?.taskId as string | undefined;
+        const progress = (payload?.progress as number) ?? 0;
+        if (taskId) {
+          const t = this.tasks.get(taskId);
+          if (t) this.tasks.set(taskId, { ...t, progress });
+        }
+        break;
+      }
+      case 'task.complete':
+      case 'task.fail': {
+        const taskId = payload?.taskId as string | undefined;
+        if (taskId) {
+          this.tasks.delete(taskId);
+          const agent = this.agents.get(agentId);
+          if (agent && agent.currentTaskId === taskId) {
+            this.agents.set(agentId, { ...agent, state: 'idle', currentTaskId: null });
+          }
+        }
+        break;
+      }
+      case 'data.transfer': {
+        const toAgentId = (payload?.toAgentId as string) ?? '';
+        const payloadSize = (payload?.payloadSize as number) ?? 0;
+        const taskId = (payload?.taskId as string) ?? null;
+        if (toAgentId) {
+          const shipId = this.nextShipId();
+          this.ships.set(shipId, {
+            id: shipId,
+            fromAgentId: agentId,
+            toAgentId,
+            payloadSize,
+            taskId,
+            createdAt: timestamp,
+          });
+        }
+        break;
+      }
+      default:
+        break;
+    }
   }
 
   getAgent(agentId: string): AgentState | undefined {
@@ -26,5 +140,36 @@ export class AgentStateManager {
 
   getAllAgents(): AgentState[] {
     return Array.from(this.agents.values());
+  }
+
+  getTask(taskId: string): TaskState | undefined {
+    return this.tasks.get(taskId);
+  }
+
+  getTasksForAgent(agentId: string): TaskState[] {
+    return Array.from(this.tasks.values()).filter((t) => t.agentId === agentId);
+  }
+
+  getAllTasks(): TaskState[] {
+    return Array.from(this.tasks.values());
+  }
+
+  getShip(shipId: string): ShipState | undefined {
+    return this.ships.get(shipId);
+  }
+
+  getShipsForAgent(agentId: string): ShipState[] {
+    return Array.from(this.ships.values()).filter(
+      (s) => s.fromAgentId === agentId || s.toAgentId === agentId
+    );
+  }
+
+  getAllShips(): ShipState[] {
+    return Array.from(this.ships.values());
+  }
+
+  /** Remove a ship (e.g. when it reaches destination or singularity). */
+  removeShip(shipId: string): void {
+    this.ships.delete(shipId);
   }
 }
