@@ -4,13 +4,21 @@
 
 import * as vscode from 'vscode';
 
-export function createWebviewProvider(context: vscode.ExtensionContext): vscode.WebviewViewProvider {
+export function createWebviewProvider(
+  context: vscode.ExtensionContext,
+  webviewRef: { current: vscode.Webview | null }
+): vscode.WebviewViewProvider {
   return {
     resolveWebviewView(
       webviewView: vscode.WebviewView,
       _resolveContext: vscode.WebviewViewResolveContext,
       _token: vscode.CancellationToken
     ): void {
+      webviewRef.current = webviewView.webview;
+      webviewView.onDidDispose(() => {
+        webviewRef.current = null;
+      });
+
       webviewView.webview.options = {
         enableScripts: true,
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'webview-dist')],
