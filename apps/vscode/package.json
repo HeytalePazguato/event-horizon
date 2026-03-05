@@ -37,16 +37,26 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && pnpm run build:webview",
+    "build:webview": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx",
+    "package:vsix": "pnpm run build && vsce package --no-dependencies",
     "dev": "tsc --watch",
-    "clean": "rm -rf out"
+    "clean": "rm -rf out webview-dist"
   },
   "dependencies": {
     "@event-horizon/core": "workspace:*",
-    "@event-horizon/connectors": "workspace:*"
+    "@event-horizon/connectors": "workspace:*",
+    "@event-horizon/renderer": "workspace:*",
+    "@event-horizon/ui": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
     "typescript": "^5.7.2"
   }
 }

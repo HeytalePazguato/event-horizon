@@ -12,3 +12,4 @@ coverage
 .vscode/*
 !.vscode/extensions.json
 !.vscode/launch.json
+apps/vscode/webview-dist/

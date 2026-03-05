@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 
-export function createWebviewProvider(_context: vscode.ExtensionContext): vscode.WebviewViewProvider {
+export function createWebviewProvider(context: vscode.ExtensionContext): vscode.WebviewViewProvider {
   return {
     resolveWebviewView(
       webviewView: vscode.WebviewView,
@@ -13,17 +13,36 @@ export function createWebviewProvider(_context: vscode.ExtensionContext): vscode
     ): void {
       webviewView.webview.options = {
         enableScripts: true,
-        localResourceRoots: [],
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'webview-dist')],
       };
-      webviewView.webview.html = getWebviewHtml(webviewView.webview);
+
+      const scriptUri = webviewView.webview.asWebviewUri(
+        vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js')
+      );
+
+      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri);
     },
   };
 }
 
-function getWebviewHtml(_webview: vscode.Webview): string {
+function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri): string {
+  const csp = [
+    "default-src 'none'",
+    "script-src 'unsafe-inline' " + webview.cspSource,
+    "style-src 'unsafe-inline'",
+    "img-src " + webview.cspSource + " data:",
+  ].join('; ');
+
   return `<!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><title>Event Horizon</title></head>
-<body><p>Event Horizon universe (webview placeholder)</p></body>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <title>Event Horizon</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="${scriptUri}"></script>
+</body>
 </html>`;
 }
