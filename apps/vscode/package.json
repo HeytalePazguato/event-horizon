@@ -1,0 +1,52 @@
+{
+  "name": "event-horizon-vscode",
+  "version": "0.1.0",
+  "private": true,
+  "displayName": "Event Horizon",
+  "description": "Visualize AI coding agents as a living cosmic system",
+  "main": "out/extension.js",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "eventHorizon.open",
+        "title": "Event Horizon: Open Universe"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "event-horizon",
+          "title": "Event Horizon",
+          "icon": "$(globe)"
+        }
+      ]
+    },
+    "views": {
+      "event-horizon": [
+        {
+          "type": "webview",
+          "id": "eventHorizon.universe",
+          "name": "Universe"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf out"
+  },
+  "dependencies": {
+    "@event-horizon/core": "workspace:*",
+    "@event-horizon/connectors": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.7.2"
+  }
+}

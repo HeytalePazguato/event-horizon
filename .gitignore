@@ -1,0 +1,14 @@
+node_modules
+dist
+out
+.turbo
+*.vsix
+.DS_Store
+*.log
+.env
+.env.local
+coverage
+.idea
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
