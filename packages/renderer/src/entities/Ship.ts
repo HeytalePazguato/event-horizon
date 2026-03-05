@@ -1,5 +1,6 @@
 /**
  * Data transfer visualization (spaceship).
+ * For many ships, use object pooling and reuse containers (performance).
  * @event-horizon/renderer
  */
 
