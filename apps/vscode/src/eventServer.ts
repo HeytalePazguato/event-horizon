@@ -58,8 +58,16 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
         event = mapOpenCodeToEvent(body);
       } else if (req.url === '/events' && typeof body === 'object' && body !== null) {
         const b = body as Record<string, unknown>;
-        if (typeof b.agentId === 'string' && typeof b.type === 'string' && b.id && b.timestamp) {
-          event = b as unknown as AgentEvent;
+        if (typeof b.agentId === 'string' && typeof b.type === 'string' && b.id != null && b.timestamp != null) {
+          event = {
+            id: String(b.id),
+            agentId: b.agentId,
+            agentName: typeof b.agentName === 'string' ? b.agentName : b.agentId,
+            agentType: (typeof b.agentType === 'string' ? b.agentType : 'unknown') as AgentEvent['agentType'],
+            type: b.type as AgentEvent['type'],
+            timestamp: Number(b.timestamp),
+            payload: (b.payload as Record<string, unknown>) ?? {},
+          };
         } else {
           event = mapOpenCodeToEvent(body);
         }
