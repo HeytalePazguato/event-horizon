@@ -194,6 +194,7 @@ function App() {
   }, [agentMap, metricsMap, setSelectedAgentData]);
 
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
+  const centerRequestedAt = useCommandCenterStore((s) => s.centerRequestedAt);
 
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
   const hoveredMetrics = hoveredAgentId ? metricsMap[hoveredAgentId] : null;
@@ -375,6 +376,7 @@ function App() {
           agents={agents}
           metrics={metrics}
           selectedAgentId={selectedAgentId}
+          centerRequestedAt={centerRequestedAt}
           onPlanetHover={handlePlanetHover}
           onPlanetClick={handlePlanetClick}
         />

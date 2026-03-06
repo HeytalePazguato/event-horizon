@@ -4,7 +4,18 @@
  */
 
 import type { FC } from 'react';
+import { useState } from 'react';
 import { useCommandCenterStore } from '../store.js';
+
+const tabStyle = (active: boolean) => ({
+  padding: '2px 8px',
+  fontSize: 9,
+  border: '1px solid #2a4a3a',
+  background: active ? 'rgba(50,90,60,0.4)' : 'transparent',
+  color: active ? '#8fc08a' : '#6a7a72',
+  cursor: 'pointer' as const,
+  marginRight: 4,
+});
 
 const labelStyle = {
   color: '#6a8a7a',
@@ -24,12 +35,16 @@ const cellStyle = {
 
 export const MetricsPanel: FC = () => {
   const selectedMetrics = useCommandCenterStore((s) => s.selectedMetrics);
+  const [view, setView] = useState<'info' | 'logs'>('info');
 
   if (!selectedMetrics) {
     return (
       <div data-metrics-panel>
-        <div style={{ ...labelStyle, marginBottom: 8 }}>Status</div>
-        <div style={{ color: '#4a5a52', fontSize: 12, padding: 8, border: '1px dashed #2a4a3a' }}>
+        <div style={{ display: 'flex', marginBottom: 6, gap: 4 }}>
+          <button type="button" style={tabStyle(view === 'info')} onClick={() => setView('info')}>Info</button>
+          <button type="button" style={tabStyle(view === 'logs')} onClick={() => setView('logs')}>Logs</button>
+        </div>
+        <div style={{ color: '#4a5a52', fontSize: 11, padding: 8, border: '1px dashed #2a4a3a' }}>
           Select an agent
         </div>
       </div>
@@ -41,7 +56,15 @@ export const MetricsPanel: FC = () => {
 
   return (
     <div data-metrics-panel>
-      <div style={{ ...labelStyle, marginBottom: 8 }}>Status</div>
+      <div style={{ display: 'flex', marginBottom: 6, gap: 4 }}>
+        <button type="button" style={tabStyle(view === 'info')} onClick={() => setView('info')}>Info</button>
+        <button type="button" style={tabStyle(view === 'logs')} onClick={() => setView('logs')}>Logs</button>
+      </div>
+      {view === 'logs' ? (
+        <div style={{ color: '#7a8a82', fontSize: 10, fontFamily: 'Consolas, monospace', whiteSpace: 'pre-wrap' }}>
+          {`[Event log]\nNo entries yet.`}
+        </div>
+      ) : (
       <div style={gridStyle}>
         <div style={cellStyle}>
           <div style={labelStyle}>Load</div>
@@ -66,6 +89,7 @@ export const MetricsPanel: FC = () => {
           <div style={{ color: '#8a9a8a', fontSize: 12 }}>{lastUpdated}</div>
         </div>
       </div>
+      )}
     </div>
   );
 };

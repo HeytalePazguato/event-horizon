@@ -11,14 +11,17 @@ export interface CommandCenterState {
   selectedAgentId: string | null;
   selectedAgent: AgentState | null;
   selectedMetrics: AgentMetrics | null;
+  centerRequestedAt: number;
   setSelectedAgent: (id: string | null) => void;
   setSelectedAgentData: (agent: AgentState | null, metrics: AgentMetrics | null) => void;
+  requestCenter: () => void;
 }
 
 export const useCommandCenterStore = create<CommandCenterState>((set) => ({
   selectedAgentId: null,
   selectedAgent: null,
   selectedMetrics: null,
+  centerRequestedAt: 0,
   setSelectedAgent: (id) => set({ selectedAgentId: id, selectedAgent: null, selectedMetrics: null }),
   setSelectedAgentData: (agent, metrics) =>
     set({
@@ -26,4 +29,5 @@ export const useCommandCenterStore = create<CommandCenterState>((set) => ({
       selectedAgent: agent ?? null,
       selectedMetrics: metrics ?? null,
     }),
+  requestCenter: () => set({ centerRequestedAt: Date.now() }),
 }));

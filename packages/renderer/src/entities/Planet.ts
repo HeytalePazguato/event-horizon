@@ -50,14 +50,14 @@ export function createPlanet(props: PlanetProps): Container {
   const glow = new Graphics();
   glow.circle(0, 0, glowRadius).fill({
     color: v.glow,
-    alpha: 0.25 * brightness,
+    alpha: 0.4 * brightness,
   });
   container.addChild(glow);
 
   const body = new Graphics();
   body.circle(0, 0, size).fill({
     color: v.base,
-    alpha: 0.85 + 0.15 * brightness,
+    alpha: 1,
   });
   container.addChild(body);
 
@@ -67,7 +67,7 @@ export function createPlanet(props: PlanetProps): Container {
     const bandY = (hash(agentId + '1') % 100) / 100 * size * 0.6 - size * 0.3;
     band.ellipse(0, bandY, size * 0.9, bandWidth).fill({
       color: v.band,
-      alpha: 0.6,
+      alpha: 0.85,
     });
     container.addChild(band);
   }
@@ -79,7 +79,7 @@ export function createPlanet(props: PlanetProps): Container {
     const spotR = size * 0.25;
     spot.circle(sx, sy, spotR).fill({
       color: v.spot,
-      alpha: 0.5,
+      alpha: 0.9,
     });
     container.addChild(spot);
   }

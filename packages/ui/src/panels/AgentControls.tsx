@@ -36,58 +36,49 @@ const activeButton = {
 
 const gridStyle = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(2, 1fr)',
-  gap: 6,
+  gridTemplateColumns: 'repeat(5, 1fr)',
+  gridTemplateRows: 'repeat(3, 1fr)',
+  gap: 4,
+  flex: 1,
+  minHeight: 0,
 };
+
+const slotStyle = (active: boolean) => ({
+  ...(active ? activeButton : baseButton),
+  aspectRatio: '1',
+  minHeight: 28,
+  padding: 4,
+  fontSize: 9,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  textAlign: 'center' as const,
+});
 
 export const AgentControls: FC = () => {
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
+  const requestCenter = useCommandCenterStore((s) => s.requestCenter);
   const disabled = !selectedAgentId;
 
   return (
-    <div data-agent-controls>
+    <div data-agent-controls style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={labelStyle}>Commands</div>
       <div style={gridStyle}>
-        <button
-          type="button"
-          style={disabled ? baseButton : activeButton}
-          disabled={disabled}
-          aria-label="Pause agent"
-        >
-          Pause
-        </button>
-        <button
-          type="button"
-          style={disabled ? baseButton : activeButton}
-          disabled={disabled}
-          aria-label="Restart agent"
-        >
-          Restart
-        </button>
-        <button
-          type="button"
-          style={disabled ? baseButton : activeButton}
-          disabled={disabled}
-          aria-label="Isolate agent"
-        >
-          Isolate
-        </button>
-        <button
-          type="button"
-          style={disabled ? baseButton : activeButton}
-          disabled={disabled}
-          aria-label="Prioritize agent"
-        >
-          Prioritize
-        </button>
-        <button
-          type="button"
-          style={disabled ? { ...baseButton, gridColumn: 'span 2' } : { ...activeButton, gridColumn: 'span 2' }}
-          disabled={disabled}
-          aria-label="View logs"
-        >
-          View logs
-        </button>
+        <button type="button" style={slotStyle(!disabled)} disabled={disabled} aria-label="Pause agent">Pause</button>
+        <button type="button" style={slotStyle(!disabled)} disabled={disabled} aria-label="Restart agent">Restart</button>
+        <button type="button" style={slotStyle(!disabled)} disabled={disabled} aria-label="Isolate agent">Isolate</button>
+        <button type="button" style={slotStyle(!disabled)} disabled={disabled} aria-label="Prioritize agent">Prioritize</button>
+        <button type="button" style={{ ...slotStyle(!disabled), gridColumn: 'span 1' }} disabled={disabled} aria-label="View logs">Logs</button>
+        <button type="button" style={slotStyle(true)} onClick={requestCenter} aria-label="Re-center map">Center</button>
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
       </div>
     </div>
   );
