@@ -1,14 +1,26 @@
 /**
- * Center panel: tokens, tasks, memory, throughput, latency, tool calls.
+ * Center panel: tokens, tasks, metrics in a StarCraft-style status grid.
  * @event-horizon/ui
  */
 
 import type { FC } from 'react';
 import { useCommandCenterStore } from '../store.js';
 
-const labelStyle = { color: '#8899aa', fontSize: 11, marginBottom: 2 };
-const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px 16px' };
-const metricStyle = { minWidth: 0 };
+const labelStyle = {
+  color: '#6a8a7a',
+  fontSize: 10,
+  marginBottom: 2,
+  letterSpacing: '0.05em',
+  textTransform: 'uppercase' as const,
+};
+const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 14px' };
+const cellStyle = {
+  minWidth: 0,
+  padding: '6px 8px',
+  background: 'rgba(0,0,0,0.25)',
+  border: '1px solid #1e3328',
+  boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
+};
 
 export const MetricsPanel: FC = () => {
   const selectedMetrics = useCommandCenterStore((s) => s.selectedMetrics);
@@ -16,8 +28,10 @@ export const MetricsPanel: FC = () => {
   if (!selectedMetrics) {
     return (
       <div data-metrics-panel>
-        <div style={labelStyle}>Metrics</div>
-        <div style={{ color: '#667' }}>Select an agent</div>
+        <div style={{ ...labelStyle, marginBottom: 8 }}>Status</div>
+        <div style={{ color: '#4a5a52', fontSize: 12, padding: 8, border: '1px dashed #2a4a3a' }}>
+          Select an agent
+        </div>
       </div>
     );
   }
@@ -27,27 +41,29 @@ export const MetricsPanel: FC = () => {
 
   return (
     <div data-metrics-panel>
-      <div style={{ ...labelStyle, marginBottom: 8 }}>Metrics</div>
+      <div style={{ ...labelStyle, marginBottom: 8 }}>Status</div>
       <div style={gridStyle}>
-        <div style={metricStyle}>
+        <div style={cellStyle}>
           <div style={labelStyle}>Load</div>
-          <div>{loadPct}%</div>
+          <div style={{ color: '#b0d0a8', fontWeight: 600 }}>{loadPct}%</div>
         </div>
-        <div style={metricStyle}>
+        <div style={cellStyle}>
           <div style={labelStyle}>Tokens</div>
-          <div>{selectedMetrics.tokenUsage.toLocaleString()}</div>
+          <div style={{ color: '#b0d0a8' }}>{selectedMetrics.tokenUsage.toLocaleString()}</div>
         </div>
-        <div style={metricStyle}>
+        <div style={cellStyle}>
           <div style={labelStyle}>Active tasks</div>
-          <div>{selectedMetrics.activeTasks}</div>
+          <div style={{ color: '#b0d0a8' }}>{selectedMetrics.activeTasks}</div>
         </div>
-        <div style={metricStyle}>
+        <div style={cellStyle}>
           <div style={labelStyle}>Errors</div>
-          <div>{selectedMetrics.errorCount}</div>
+          <div style={{ color: selectedMetrics.errorCount > 0 ? '#c65858' : '#b0d0a8' }}>
+            {selectedMetrics.errorCount}
+          </div>
         </div>
-        <div style={metricStyle}>
+        <div style={{ ...cellStyle, gridColumn: 'span 2' }}>
           <div style={labelStyle}>Last updated</div>
-          <div>{lastUpdated}</div>
+          <div style={{ color: '#8a9a8a', fontSize: 12 }}>{lastUpdated}</div>
         </div>
       </div>
     </div>

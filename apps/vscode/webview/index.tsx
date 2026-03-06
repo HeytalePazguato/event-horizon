@@ -200,6 +200,102 @@ function App() {
   const panelSize = usePanelSize();
 
   const hasAgents = agents.length > 0;
+  const [demoSimRunning, setDemoSimRunning] = useState(false);
+  const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const runDemoSimulation = useCallback(() => {
+    const demoAgents = [
+      { id: 'demo-opencode', name: 'OpenCode' },
+      { id: 'demo-claude', name: 'Claude' },
+      { id: 'demo-copilot', name: 'Copilot' },
+      { id: 'demo-cursor', name: 'Cursor' },
+      { id: 'demo-agent', name: 'Agent' },
+    ];
+    setAgents((prev) => {
+      const existing = new Set(prev.map((a) => a.id));
+      const toAdd = demoAgents.filter((a) => !existing.has(a.id));
+      return toAdd.length ? [...prev, ...toAdd] : prev;
+    });
+    demoAgents.forEach((a) => {
+      setAgentMap((m) => ({
+        ...m,
+        [a.id]: {
+          id: a.id,
+          name: a.name,
+          type: 'demo',
+          state: 'idle',
+          currentTaskId: null,
+        },
+      }));
+      setMetrics((m) => ({ ...m, [a.id]: { load: 0.3 + Math.random() * 0.5 } }));
+      setMetricsMap((m) => ({
+        ...m,
+        [a.id]: {
+          agentId: a.id,
+          load: 0.3 + Math.random() * 0.5,
+          tokenUsage: Math.floor(Math.random() * 5000),
+          activeTasks: 0,
+          errorCount: 0,
+          lastUpdated: Date.now(),
+        },
+      }));
+    });
+    if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+    demoIntervalRef.current = setInterval(() => {
+      setAgentMap((prev) => {
+        const next = { ...prev };
+        demoAgents.forEach((a) => {
+          const s = next[a.id];
+          if (!s) return;
+          next[a.id] = {
+            ...s,
+            state: Math.random() > 0.6 ? (s.state === 'thinking' ? 'idle' : 'thinking') : s.state,
+            currentTaskId: s.state === 'thinking' ? 'task-' + Date.now() : null,
+          };
+        });
+        return next;
+      });
+      setMetrics((prev) => {
+        const next = { ...prev };
+        demoAgents.forEach((a) => {
+          const prevLoad = prev[a.id]?.load ?? 0.3;
+          next[a.id] = { load: Math.min(0.95, prevLoad * 0.7 + 0.2 + Math.random() * 0.5) };
+        });
+        return next;
+      });
+      setMetricsMap((prev) => {
+        const next = { ...prev };
+        demoAgents.forEach((a) => {
+          const m = prev[a.id];
+          const load = (m?.load ?? 0.3) * 0.9 + 0.1 * Math.random();
+          next[a.id] = {
+            agentId: a.id,
+            load,
+            tokenUsage: (m?.tokenUsage ?? 0) + Math.floor(Math.random() * 50),
+            activeTasks: m?.activeTasks ?? 0,
+            errorCount: m?.errorCount ?? 0,
+            lastUpdated: Date.now(),
+          };
+        });
+        return next;
+      });
+    }, 1400);
+    setDemoSimRunning(true);
+  }, []);
+
+  const stopDemoSimulation = useCallback(() => {
+    if (demoIntervalRef.current) {
+      clearInterval(demoIntervalRef.current);
+      demoIntervalRef.current = null;
+    }
+    setDemoSimRunning(false);
+    setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
+  }, []);
+
+  useEffect(() => () => {
+    if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+  }, []);
+
   const psCommand = "$body = '{\"id\":\"t1\",\"agentId\":\"agent-1\",\"agentName\":\"Test Agent\",\"agentType\":\"opencode\",\"type\":\"task.start\",\"timestamp\":' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ',\"payload\":{}}'; Invoke-RestMethod -Uri http://127.0.0.1:28765/events -Method Post -Body $body -ContentType \"application/json\"";
 
   return (
@@ -225,10 +321,48 @@ function App() {
           fontSize: 12,
           fontFamily: 'system-ui',
           boxShadow: 'inset 0 1px 0 rgba(100,180,120,0.12)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
         }}
       >
         <strong style={{ color: '#c8e4b0', textShadow: '0 0 6px rgba(150,220,120,0.25)' }}>COMMAND</strong>
-        <span style={{ marginLeft: 8 }}>Agents = planets. Send a test event to spawn one.</span>
+        <span style={{ flex: 1 }}>Agents = planets. Send a test event or run demo.</span>
+        {!demoSimRunning ? (
+          <button
+            type="button"
+            onClick={runDemoSimulation}
+            style={{
+              padding: '4px 10px',
+              background: 'linear-gradient(180deg, #2a4a3a 0%, #1a3a2a 100%)',
+              border: '1px solid #3a6a4a',
+              borderRadius: 2,
+              color: '#b8d4a0',
+              fontSize: 11,
+              cursor: 'pointer',
+              boxShadow: 'inset 0 1px 0 rgba(100,180,120,0.2)',
+            }}
+          >
+            Simulate 5 agents
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={stopDemoSimulation}
+            style={{
+              padding: '4px 10px',
+              background: 'linear-gradient(180deg, #3a2a2a 0%, #2a1a1a 100%)',
+              border: '1px solid #6a4a4a',
+              borderRadius: 2,
+              color: '#d4a0a0',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            Stop demo
+          </button>
+        )}
       </header>
       <div
         ref={panelSize.ref}
