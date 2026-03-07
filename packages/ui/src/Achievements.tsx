@@ -463,7 +463,7 @@ export const AchievementToasts: FC = () => {
       style={{
         position: 'fixed',
         right: 12,
-        bottom: 152,  // sits just above the command center (≈140px tall)
+        bottom: 220,  // above command center + SC2 tooltip zone
         zIndex: 200,
         display: 'flex',
         flexDirection: 'column-reverse',
