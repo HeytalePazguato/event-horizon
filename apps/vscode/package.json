@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Visualize AI coding agents as a living cosmic system — planets, black holes, ships and more.",
