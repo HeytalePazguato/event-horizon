@@ -114,6 +114,23 @@ function App() {
   const unlockAchievement    = useCommandCenterStore((s) => s.unlockAchievement);
   const selectedAgentId      = useCommandCenterStore((s) => s.selectedAgentId);
   const centerRequestedAt    = useCommandCenterStore((s) => s.centerRequestedAt);
+  const pendingConnectAgent  = useCommandCenterStore((s) => s.pendingConnectAgent);
+  const clearConnectAgent    = useCommandCenterStore((s) => s.clearConnectAgent);
+
+  // VS Code API (available in webview context only)
+  const vscodeRef = useRef<{ postMessage: (msg: unknown) => void } | null>(null);
+  if (!vscodeRef.current && typeof (window as unknown as Record<string, unknown>).acquireVsCodeApi === 'function') {
+    vscodeRef.current = (window as unknown as { acquireVsCodeApi: () => { postMessage: (msg: unknown) => void } }).acquireVsCodeApi();
+  }
+
+  // Handle pending agent connection requests
+  useEffect(() => {
+    if (!pendingConnectAgent) return;
+    if (pendingConnectAgent === 'claude-code') {
+      vscodeRef.current?.postMessage({ type: 'setup-agent', agentType: 'claude-code' });
+    }
+    clearConnectAgent();
+  }, [pendingConnectAgent, clearConnectAgent]);
 
   // Achievement tracking state
   const shipLaunchCountRef = useRef(0);

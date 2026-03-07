@@ -3,6 +3,7 @@
  */
 
 import * as vscode from 'vscode';
+import { runSetupClaudeCodeHooks } from './setupHooks.js';
 
 export function createWebviewProvider(
   context: vscode.ExtensionContext,
@@ -29,6 +30,12 @@ export function createWebviewProvider(
       );
 
       webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri);
+
+      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string }) => {
+        if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
+          void runSetupClaudeCodeHooks();
+        }
+      });
     },
   };
 }

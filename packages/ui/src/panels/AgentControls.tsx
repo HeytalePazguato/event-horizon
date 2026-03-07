@@ -57,7 +57,9 @@ const slotStyle = (active: boolean) => ({
 
 export const AgentControls: FC = () => {
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
-  const requestCenter = useCommandCenterStore((s) => s.requestCenter);
+  const requestCenter   = useCommandCenterStore((s) => s.requestCenter);
+  const toggleConnect   = useCommandCenterStore((s) => s.toggleConnect);
+  const connectOpen     = useCommandCenterStore((s) => s.connectOpen);
   const disabled = !selectedAgentId;
 
   return (
@@ -70,7 +72,7 @@ export const AgentControls: FC = () => {
         <button type="button" style={slotStyle(!disabled)} disabled={disabled} aria-label="Prioritize agent">Prioritize</button>
         <button type="button" style={{ ...slotStyle(!disabled), gridColumn: 'span 1' }} disabled={disabled} aria-label="View logs">Logs</button>
         <button type="button" style={slotStyle(true)} onClick={requestCenter} aria-label="Re-center map">Center</button>
-        <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
+        <button type="button" style={slotStyle(connectOpen)} onClick={toggleConnect} aria-label="Connect agent">Connect</button>
         <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
         <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />
         <button type="button" style={slotStyle(false)} disabled aria-label="Unused" tabIndex={-1} />

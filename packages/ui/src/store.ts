@@ -42,6 +42,10 @@ export interface CommandCenterState {
   activeToasts: ToastEntry[];
   /** Achievement IDs that have already been unlocked (one-shot). */
   unlockedAchievements: string[];
+  /** Whether the "Connect Agent" dropdown is open. */
+  connectOpen: boolean;
+  /** Non-null when the user requested connecting a specific agent type; cleared after handling. */
+  pendingConnectAgent: string | null;
 
   setSelectedAgent: (id: string | null) => void;
   setSelectedAgentData: (agent: AgentState | null, metrics: AgentMetrics | null) => void;
@@ -59,6 +63,9 @@ export interface CommandCenterState {
   unlockAchievement: (id: string) => void;
   /** Remove a toast by instanceId (called when the animation finishes). */
   dismissToast: (instanceId: string) => void;
+  toggleConnect: () => void;
+  requestConnectAgent: (agentType: string) => void;
+  clearConnectAgent: () => void;
 }
 
 export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
@@ -75,6 +82,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   demoRequested: false,
   activeToasts: [],
   unlockedAchievements: [],
+  connectOpen: false,
+  pendingConnectAgent: null,
 
   setSelectedAgent: (id) => set({ selectedAgentId: id, selectedAgent: null, selectedMetrics: null }),
 
@@ -132,4 +141,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
     set((s) => ({
       activeToasts: s.activeToasts.filter((t) => t.instanceId !== instanceId),
     })),
+
+  toggleConnect: () => set((s) => ({ connectOpen: !s.connectOpen })),
+  requestConnectAgent: (agentType) => set({ pendingConnectAgent: agentType, connectOpen: false }),
+  clearConnectAgent: () => set({ pendingConnectAgent: null }),
 }));
