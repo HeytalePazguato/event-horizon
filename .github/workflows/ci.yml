@@ -107,6 +107,38 @@ jobs:
           path: apps/vscode/*.vsix
           retention-days: 30
 
+  cleanup-dev-artifacts:
+    name: Cleanup old dev artifacts
+    runs-on: ubuntu-latest
+    needs: package
+    if: github.ref == 'refs/heads/develop'
+    permissions:
+      actions: write
+
+    steps:
+      - name: Delete old dev artifacts (keep latest 3)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const devArtifacts = artifacts.data.artifacts
+              .filter(a => a.name.includes('-dev'))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const toDelete = devArtifacts.slice(3);
+            for (const artifact of toDelete) {
+              console.log(`Deleting old dev artifact: ${artifact.name} (${artifact.created_at})`);
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+              });
+            }
+            console.log(`Kept ${Math.min(devArtifacts.length, 3)} dev artifacts, deleted ${toDelete.length}`);
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
