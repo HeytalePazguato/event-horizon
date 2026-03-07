@@ -717,7 +717,7 @@ if (rootEl) {
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    rootEl.innerHTML = `<div style="color:#e88;padding:1em;font-family:system-ui">Error: ${msg}</div>`;
+    rootEl.textContent = `Error: ${msg}`;
     if (typeof (window as unknown as { __ehScriptLoadError?: (m: string) => void }).__ehScriptLoadError === 'function') {
       (window as unknown as { __ehScriptLoadError: (m: string) => void }).__ehScriptLoadError('Error: ' + msg);
     }

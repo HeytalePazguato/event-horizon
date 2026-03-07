@@ -353,6 +353,15 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { boostedRef.current = boostedAgentIds; }, [boostedAgentIds]);
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
 
+  // --- init timeout (fallback if PixiJS silently fails) --------------------
+  useEffect(() => {
+    if (canvasReady || initError) return;
+    const t = setTimeout(() => {
+      if (!canvasReady && !initError) setInitError('PixiJS initialization timed out');
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [canvasReady, initError]);
+
   // --- init PixiJS ----------------------------------------------------------
   useEffect(() => {
     mountedRef.current = true;

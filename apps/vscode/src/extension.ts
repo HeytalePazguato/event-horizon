@@ -27,7 +27,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  eventBus.on(onAgentEvent);
+  const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
   startEventServer({ onEvent: (event) => eventBus.emit(event) });
   setupCopilotOutputChannel((event) => eventBus.emit(event));
@@ -70,6 +70,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push({
     dispose: () => {
+      unsubscribeEventBus();
       stopEventServer();
       webviewRef.current = null;
     },
