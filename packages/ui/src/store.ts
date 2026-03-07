@@ -44,6 +44,8 @@ export interface CommandCenterState {
   unlockedAchievements: string[];
   /** Whether the "Connect Agent" dropdown is open. */
   connectOpen: boolean;
+  /** Whether the "Spawn Agent" modal is open. */
+  spawnOpen: boolean;
   /** Non-null when the user requested connecting a specific agent type; cleared after handling. */
   pendingConnectAgent: string | null;
 
@@ -64,6 +66,7 @@ export interface CommandCenterState {
   /** Remove a toast by instanceId (called when the animation finishes). */
   dismissToast: (instanceId: string) => void;
   toggleConnect: () => void;
+  toggleSpawn: () => void;
   requestConnectAgent: (agentType: string) => void;
   clearConnectAgent: () => void;
 }
@@ -83,6 +86,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   activeToasts: [],
   unlockedAchievements: [],
   connectOpen: false,
+  spawnOpen: false,
   pendingConnectAgent: null,
 
   setSelectedAgent: (id) => set({ selectedAgentId: id, selectedAgent: null, selectedMetrics: null }),
@@ -143,6 +147,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
     })),
 
   toggleConnect: () => set((s) => ({ connectOpen: !s.connectOpen })),
+  toggleSpawn: () => set((s) => ({ spawnOpen: !s.spawnOpen })),
   requestConnectAgent: (agentType) => set({ pendingConnectAgent: agentType, connectOpen: false }),
   clearConnectAgent: () => set({ pendingConnectAgent: null }),
 }));

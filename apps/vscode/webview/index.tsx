@@ -133,6 +133,8 @@ function App() {
   const centerRequestedAt    = useCommandCenterStore((s) => s.centerRequestedAt);
   const connectOpen          = useCommandCenterStore((s) => s.connectOpen);
   const toggleConnect        = useCommandCenterStore((s) => s.toggleConnect);
+  const spawnOpen            = useCommandCenterStore((s) => s.spawnOpen);
+  const toggleSpawn          = useCommandCenterStore((s) => s.toggleSpawn);
 
 
   // Achievement tracking state
@@ -207,27 +209,42 @@ function App() {
         },
       }));
 
-      // Update metrics — 2.7: single metricsMap, load derived from here for renderer too
+      // Update metrics — all hook-derivable counters tracked here
       const isHighLoad = type === 'task.progress' || type === 'tool.call' || type === 'tool.result';
       const loadTarget = isHighLoad ? 0.7 : 0.3;
-      const tokens = ((raw.payload?.tokens as number) ?? 0)
-        + ((raw.payload?.inputTokens as number) ?? 0)
-        + ((raw.payload?.outputTokens as number) ?? 0);
+      const isSubagent = !!(raw.payload?.isSubagent);
+      const isToolFailure = !!(raw.payload?.isToolFailure);
+      const toolName = (raw.payload?.toolName as string) ?? undefined;
       setMetricsMap((prev) => {
         const m = prev[agentId];
-        const activeTasks = type === 'task.start'
+        const isTaskStart = type === 'task.start' && !isSubagent;
+        const isTaskEnd = (type === 'task.complete' || type === 'task.fail') && !isSubagent;
+        const activeTasks = isTaskStart
           ? (m?.activeTasks ?? 0) + 1
-          : (type === 'task.complete' || type === 'task.fail' || type === 'task.cancel')
+          : isTaskEnd
             ? Math.max(0, (m?.activeTasks ?? 0) - 1)
             : (m?.activeTasks ?? 0);
+        const activeSubagents = (type === 'task.start' && isSubagent)
+          ? (m?.activeSubagents ?? 0) + 1
+          : ((type === 'task.complete' || type === 'task.fail') && isSubagent)
+            ? Math.max(0, (m?.activeSubagents ?? 0) - 1)
+            : (m?.activeSubagents ?? 0);
+        const tb = { ...(m?.toolBreakdown ?? {}) };
+        if (type === 'tool.call' && toolName) tb[toolName] = (tb[toolName] ?? 0) + 1;
         return {
           ...prev,
           [agentId]: {
             agentId,
             load: (m?.load ?? 0.3) * 0.9 + loadTarget * 0.1,
-            tokenUsage: (m?.tokenUsage ?? 0) + tokens,
+            toolCalls: (m?.toolCalls ?? 0) + (type === 'tool.call' ? 1 : 0),
+            toolFailures: (m?.toolFailures ?? 0) + (isToolFailure ? 1 : 0),
+            promptsSubmitted: (m?.promptsSubmitted ?? 0) + (isTaskStart ? 1 : 0),
+            subagentSpawns: (m?.subagentSpawns ?? 0) + (type === 'task.start' && isSubagent ? 1 : 0),
+            activeSubagents,
             activeTasks,
             errorCount: type === 'agent.error' ? (m?.errorCount ?? 0) + 1 : (m?.errorCount ?? 0),
+            sessionStartedAt: m?.sessionStartedAt ?? (type === 'agent.spawn' ? Date.now() : Date.now()),
+            toolBreakdown: tb,
             lastUpdated: Date.now(),
           },
         };
@@ -355,9 +372,15 @@ function App() {
         [a.id]: {
           agentId: a.id,
           load: 0.3 + Math.random() * 0.5,
-          tokenUsage: Math.floor(Math.random() * 5000),
+          toolCalls: Math.floor(Math.random() * 20),
+          toolFailures: 0,
+          promptsSubmitted: Math.floor(Math.random() * 5),
+          subagentSpawns: Math.floor(Math.random() * 3),
+          activeSubagents: Math.random() < 0.3 ? 1 : 0,
           activeTasks: 0,
           errorCount: 0,
+          sessionStartedAt: Date.now() - Math.floor(Math.random() * 300000),
+          toolBreakdown: { Read: 5, Write: 3, Bash: 2, Edit: 4 },
           lastUpdated: Date.now(),
         },
       }));
@@ -382,12 +405,15 @@ function App() {
         demoAgents.forEach((a) => {
           const m = prev[a.id];
           const load = (m?.load ?? 0.3) * 0.9 + 0.1 * Math.random();
+          // Occasionally toggle subagents for demo moons
+          let activeSubagents = m?.activeSubagents ?? 0;
+          if (Math.random() < 0.15) activeSubagents = Math.min(4, activeSubagents + 1);
+          if (Math.random() < 0.1 && activeSubagents > 0) activeSubagents -= 1;
           next[a.id] = {
-            agentId: a.id,
+            ...m!,
             load,
-            tokenUsage: (m?.tokenUsage ?? 0) + Math.floor(Math.random() * 50),
-            activeTasks: m?.activeTasks ?? 0,
-            errorCount: m?.errorCount ?? 0,
+            toolCalls: (m?.toolCalls ?? 0) + (Math.random() < 0.3 ? 1 : 0),
+            activeSubagents,
             lastUpdated: Date.now(),
           };
         });
@@ -455,6 +481,7 @@ function App() {
           height={panelSize.height}
           agents={agents}
           metrics={Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, { load: v.load }]))}
+          activeSubagents={Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, v.activeSubagents ?? 0]))}
           ships={ships}
           agentStates={agentStates}
           pausedAgentIds={pausedAgentIds}
@@ -607,6 +634,54 @@ function App() {
             <div style={{ marginTop: 10, fontSize: 9, color: '#2a4a34', textAlign: 'center' }}>
               Event Horizon listens on port 28765 — any agent on this machine can connect
             </div>
+          </div>
+        </div>
+      )}
+      {spawnOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={toggleSpawn}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(180deg, #0b1a12 0%, #060e09 100%)',
+              border: '1px solid #1e4030',
+              padding: '20px 24px',
+              width: 340,
+              fontFamily: 'Consolas, monospace',
+              boxShadow: '0 4px 32px rgba(0,0,0,0.85)',
+              clipPath: 'polygon(16px 0, 100% 0, 100% 100%, 0 100%, 0 16px)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+              <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#3a9060', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+                Spawn Agent
+              </div>
+              <button type="button" onClick={toggleSpawn}
+                style={{ background: 'none', border: 'none', color: '#2a5040', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 9, color: '#4a6a50', marginBottom: 12, lineHeight: 1.5 }}>
+              Opens a new terminal in the IDE running the selected agent CLI.
+            </div>
+            {[
+              { id: 'claude-code', label: 'Claude Code', cmd: 'claude', planet: '🟤' },
+              { id: 'opencode',    label: 'OpenCode',    cmd: 'opencode', planet: '🟠' },
+              { id: 'aider',       label: 'Aider',       cmd: 'aider', planet: '🟢' },
+            ].map((a) => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid rgba(30,70,45,0.35)' }}>
+                <div style={{ fontSize: 16, lineHeight: 1 }}>{a.planet}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: '#90c088', fontWeight: 700 }}>{a.label}</div>
+                  <div style={{ fontSize: 9, color: '#3a5a44' }}>$ {a.cmd}</div>
+                </div>
+                <button type="button"
+                  onClick={() => { vscodeApi?.postMessage({ type: 'spawn-agent', command: a.cmd, label: a.label }); toggleSpawn(); }}
+                  style={{ padding: '4px 10px', border: '1px solid #25904a', background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)', color: '#50c070', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
+                  Launch
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}

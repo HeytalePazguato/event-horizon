@@ -13,4 +13,6 @@ coverage
 !.vscode/extensions.json
 !.vscode/launch.json
 apps/vscode/webview-dist/
-AUDIT.md
+.claude/
+docs/AUDIT.md
+docs/IMPLEMENTATION_PLAN.md

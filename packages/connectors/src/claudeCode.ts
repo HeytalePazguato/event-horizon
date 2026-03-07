@@ -38,24 +38,22 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   const agentId = String(p.session_id ?? p.agentId ?? p.sessionId ?? 'claude-1').slice(0, 128);
   const agentName = String(p.agentName ?? 'Claude Code').slice(0, 64);
 
-  // Extract token counts from usage fields Claude Code may provide
-  const usage = p.usage as Record<string, number> | undefined;
-  const inputTokens  = (usage?.input_tokens  ?? p.input_tokens  ?? 0) as number;
-  const outputTokens = (usage?.output_tokens ?? p.output_tokens ?? 0) as number;
+  const isSubagent = hookEvent === 'SubagentStart' || hookEvent === 'SubagentStop';
+  const isToolFailure = hookEvent === 'PostToolUseFailure';
 
   return {
     id: nextId(),
-    agentId: String(agentId),
-    agentName: String(agentName),
+    agentId,
+    agentName,
     agentType: 'claude-code',
     type,
     timestamp: (p.timestamp as number) ?? Date.now(),
     payload: {
       ...((p.payload as Record<string, unknown>) ?? p),
-      inputTokens,
-      outputTokens,
       toolName: p.tool_name,
       toolInput: p.tool_input,
+      ...(isSubagent ? { isSubagent: true } : {}),
+      ...(isToolFailure ? { isToolFailure: true } : {}),
     },
   };
 }

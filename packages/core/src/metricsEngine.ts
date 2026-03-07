@@ -8,9 +8,15 @@ import type { AgentEvent, AgentEventType } from './events.js';
 export interface AgentMetrics {
   agentId: string;
   load: number;
-  tokenUsage: number;
+  toolCalls: number;
+  toolFailures: number;
+  promptsSubmitted: number;
+  subagentSpawns: number;
+  activeSubagents: number;
   activeTasks: number;
   errorCount: number;
+  sessionStartedAt: number;
+  toolBreakdown: Record<string, number>;
   lastUpdated: number;
 }
 
@@ -33,15 +39,6 @@ const EVENT_LOAD_WEIGHT: Partial<Record<AgentEventType, number>> = {
 
 const LOAD_DECAY_PER_MS = 0.0002;
 
-function getTokenDelta(event: AgentEvent): number {
-  const tokens = event.payload?.tokens as number | undefined;
-  if (typeof tokens === 'number') return tokens;
-  const input = event.payload?.inputTokens as number | undefined;
-  const output = event.payload?.outputTokens as number | undefined;
-  if (typeof input === 'number' && typeof output === 'number') return input + output;
-  return 0;
-}
-
 export class MetricsEngine {
   private metrics = new Map<string, AgentMetrics>();
   private loadByAgent = new Map<string, number>();
@@ -55,9 +52,15 @@ export class MetricsEngine {
       m = {
         agentId,
         load: 0,
-        tokenUsage: 0,
+        toolCalls: 0,
+        toolFailures: 0,
+        promptsSubmitted: 0,
+        subagentSpawns: 0,
+        activeSubagents: 0,
         activeTasks: 0,
         errorCount: 0,
+        sessionStartedAt: now,
+        toolBreakdown: {},
         lastUpdated: now,
       };
       this.metrics.set(agentId, m);
@@ -74,21 +77,41 @@ export class MetricsEngine {
     this.loadByAgent.set(agentId, load);
     m.load = load;
 
-    m.tokenUsage += getTokenDelta(event);
     m.lastUpdated = now;
+
+    const isSubagent = !!(event.payload?.isSubagent);
+    const isToolFailure = !!(event.payload?.isToolFailure);
 
     switch (event.type) {
       case 'agent.spawn':
+        m.sessionStartedAt = now;
         break;
       case 'agent.error':
         m.errorCount += 1;
+        if (isToolFailure) m.toolFailures += 1;
         break;
+      case 'tool.call': {
+        m.toolCalls += 1;
+        const toolName = (event.payload?.toolName as string) ?? 'unknown';
+        m.toolBreakdown[toolName] = (m.toolBreakdown[toolName] ?? 0) + 1;
+        break;
+      }
       case 'task.start':
-        m.activeTasks += 1;
+        if (isSubagent) {
+          m.subagentSpawns += 1;
+          m.activeSubagents += 1;
+        } else {
+          m.activeTasks += 1;
+          m.promptsSubmitted += 1;
+        }
         break;
       case 'task.complete':
       case 'task.fail':
-        m.activeTasks = Math.max(0, m.activeTasks - 1);
+        if (isSubagent) {
+          m.activeSubagents = Math.max(0, m.activeSubagents - 1);
+        } else {
+          m.activeTasks = Math.max(0, m.activeTasks - 1);
+        }
         break;
       default:
         break;

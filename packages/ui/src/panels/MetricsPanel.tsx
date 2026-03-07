@@ -1,5 +1,5 @@
 /**
- * Center panel: tokens, tasks, metrics + logs + medals tabs.
+ * Center panel: agent metrics + logs + medals tabs.
  * @event-horizon/ui
  */
 
@@ -56,6 +56,24 @@ const MedalsView: FC = () => {
   );
 };
 
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function topTool(breakdown: Record<string, number>): string {
+  let best = '';
+  let max = 0;
+  for (const [name, count] of Object.entries(breakdown)) {
+    if (count > max) { max = count; best = name; }
+  }
+  return best || '-';
+}
+
 const tabStyle = (active: boolean) => ({
   padding: '2px 8px',
   fontSize: 9,
@@ -68,19 +86,22 @@ const tabStyle = (active: boolean) => ({
 
 const labelStyle = {
   color: '#6a8a7a',
-  fontSize: 10,
-  marginBottom: 2,
+  fontSize: 8,
+  marginBottom: 1,
   letterSpacing: '0.05em',
   textTransform: 'uppercase' as const,
 };
-const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 14px' };
-const cellStyle = {
+const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '3px 4px' };
+const cellStyle: React.CSSProperties = {
   minWidth: 0,
-  padding: '6px 8px',
+  padding: '3px 4px',
   background: 'rgba(0,0,0,0.25)',
   border: '1px solid #1e3328',
   boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
+  overflow: 'hidden',
 };
+const valStyle: React.CSSProperties = { color: '#b0d0a8', fontSize: 10, fontWeight: 600 };
+const errStyle: React.CSSProperties = { ...valStyle, color: '#c65858' };
 
 type View = 'info' | 'logs' | 'medals';
 
@@ -93,7 +114,6 @@ export const MetricsPanel: FC = () => {
   const unlockedCount   = useCommandCenterStore((s) => s.unlockedAchievements.length);
   const [view, setView] = useState<View>('info');
 
-  // Sync with store logsOpen flag
   const effectiveView: View = logsOpen ? 'logs' : view;
   const setEffectiveView = (v: View) => {
     setView(v);
@@ -105,7 +125,7 @@ export const MetricsPanel: FC = () => {
     : allLogs;
 
   const tabs = (
-    <div style={{ display: 'flex', marginBottom: 6, gap: 4 }}>
+    <div style={{ display: 'flex', marginBottom: 4, gap: 4 }}>
       <button type="button" style={tabStyle(effectiveView === 'info')} onClick={() => setEffectiveView('info')}>Info</button>
       <button type="button" style={tabStyle(effectiveView === 'logs')} onClick={() => setEffectiveView('logs')}>
         Logs{(effectiveView === 'logs' ? agentLogs : allLogs).length > 0 ? ` (${(effectiveView === 'logs' ? agentLogs : allLogs).length})` : ''}
@@ -131,8 +151,14 @@ export const MetricsPanel: FC = () => {
     );
   }
 
-  const loadPct = Math.round(selectedMetrics.load * 100);
-  const lastUpdated = new Date(selectedMetrics.lastUpdated).toLocaleTimeString();
+  const m = selectedMetrics;
+  const loadPct = Math.round(m.load * 100);
+  const successRate = m.toolCalls > 0
+    ? Math.round(((m.toolCalls - m.toolFailures) / m.toolCalls) * 100)
+    : 100;
+  const uptime = formatDuration(Date.now() - m.sessionStartedAt);
+  const lastActive = formatDuration(Date.now() - m.lastUpdated);
+  const top = topTool(m.toolBreakdown);
 
   return (
     <div data-metrics-panel>
@@ -143,25 +169,43 @@ export const MetricsPanel: FC = () => {
         <div style={gridStyle}>
           <div style={cellStyle}>
             <div style={labelStyle}>Load</div>
-            <div style={{ color: '#b0d0a8', fontWeight: 600 }}>{loadPct}%</div>
+            <div style={valStyle}>{loadPct}%</div>
           </div>
           <div style={cellStyle}>
-            <div style={labelStyle}>Tokens</div>
-            <div style={{ color: '#b0d0a8' }}>{selectedMetrics.tokenUsage.toLocaleString()}</div>
+            <div style={labelStyle}>Tools</div>
+            <div style={valStyle}>{m.toolCalls}</div>
           </div>
           <div style={cellStyle}>
-            <div style={labelStyle}>Active tasks</div>
-            <div style={{ color: '#b0d0a8' }}>{selectedMetrics.activeTasks}</div>
+            <div style={labelStyle}>Prompts</div>
+            <div style={valStyle}>{m.promptsSubmitted}</div>
           </div>
           <div style={cellStyle}>
             <div style={labelStyle}>Errors</div>
-            <div style={{ color: selectedMetrics.errorCount > 0 ? '#c65858' : '#b0d0a8' }}>
-              {selectedMetrics.errorCount}
-            </div>
+            <div style={m.errorCount > 0 ? errStyle : valStyle}>{m.errorCount}</div>
           </div>
-          <div style={{ ...cellStyle, gridColumn: 'span 2' }}>
-            <div style={labelStyle}>Last updated</div>
-            <div style={{ color: '#8a9a8a', fontSize: 12 }}>{lastUpdated}</div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Success</div>
+            <div style={valStyle}>{successRate}%</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Agents</div>
+            <div style={valStyle}>{m.activeSubagents}/{m.subagentSpawns}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Tasks</div>
+            <div style={valStyle}>{m.activeTasks}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Top Tool</div>
+            <div style={{ ...valStyle, fontSize: 8 }}>{top}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Uptime</div>
+            <div style={valStyle}>{uptime}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Last Act</div>
+            <div style={valStyle}>{lastActive}</div>
           </div>
         </div>
       )}

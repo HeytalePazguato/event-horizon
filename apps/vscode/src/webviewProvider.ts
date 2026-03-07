@@ -49,7 +49,7 @@ export function createWebviewProvider(
         void webviewView.webview.postMessage({ type: 'init-state', agents, metrics });
       }
 
-      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string }) => {
+      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string }) => {
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
           void runSetupClaudeCodeHooks().then(() => {
             void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
@@ -58,6 +58,10 @@ export function createWebviewProvider(
           removeClaudeCodeHooks();
           void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
           void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+        } else if (msg?.type === 'spawn-agent' && msg.command) {
+          const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
+          terminal.sendText(msg.command);
+          terminal.show();
         }
       });
     },

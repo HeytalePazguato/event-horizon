@@ -17,13 +17,6 @@ const IconPause: FC = () => (
   </svg>
 );
 
-const IconRestart: FC = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-    <path d="M 7 2.5 A 4.5 4.5 0 1 0 11.5 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
-    <polygon points="11.5,2.5 14,5.5 9,5.5" fill="currentColor" />
-  </svg>
-);
-
 const IconIsolate: FC = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
     <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
@@ -35,13 +28,6 @@ const IconIsolate: FC = () => (
     <line x1="11" y1="7" x2="13" y2="7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
   </svg>
 );
-
-const IconPrioritize: FC = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-    <polygon points="7,1.5 9,5.5 13,5.5 10,8 11,12 7,9.5 3,12 4,8 1,5.5 5,5.5" fill="currentColor" opacity="0.85" />
-  </svg>
-);
-
 
 const IconCenter: FC = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -63,6 +49,28 @@ const IconConnect: FC = () => (
   </svg>
 );
 
+const IconSpawn: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <rect x="1.5" y="4" width="11" height="8" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" />
+    <line x1="1.5" y1="6.5" x2="12.5" y2="6.5" stroke="currentColor" strokeWidth="0.8" />
+    <text x="4" y="11" fill="currentColor" fontSize="4" fontFamily="monospace">&gt;_</text>
+  </svg>
+);
+
+const IconDemo: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <polygon points="4,2 12,7 4,12" fill="currentColor" opacity="0.85" />
+  </svg>
+);
+
+const IconInfo: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
+    <circle cx="7" cy="4.5" r="1" fill="currentColor" />
+    <rect x="6" y="6.5" width="2" height="4.5" rx="0.5" fill="currentColor" />
+  </svg>
+);
+
 // ── Button definitions ────────────────────────────────────────────────────────
 
 interface CmdBtn {
@@ -75,12 +83,13 @@ interface CmdBtn {
 }
 
 const BUTTONS: CmdBtn[] = [
-  { id: 'pause',      label: 'Pause',      desc: 'Freeze agent animation and pulse.',    icon: IconPause,      requiresAgent: true },
-  { id: 'restart',    label: 'Restart',    desc: 'Reset agent to idle state.',           icon: IconRestart,    requiresAgent: true },
-  { id: 'isolate',    label: 'Isolate',    desc: 'Dim all other planets.',               icon: IconIsolate,    requiresAgent: true },
-  { id: 'prioritize', label: 'Prioritize', desc: 'Temporarily boost this agent.',        icon: IconPrioritize, requiresAgent: true },
-  { id: 'center',     label: 'Center',     desc: 'Re-center the map.',                  icon: IconCenter,     alwaysActive: true },
-  { id: 'connect',    label: 'Connect',    desc: 'Connect a new agent to the universe.', icon: IconConnect,    alwaysActive: true },
+  { id: 'pause',   label: 'Pause',   desc: 'Freeze agent animation and pulse.',     icon: IconPause,   requiresAgent: true },
+  { id: 'isolate', label: 'Isolate', desc: 'Dim all other planets to focus.',       icon: IconIsolate,  requiresAgent: true },
+  { id: 'center',  label: 'Center',  desc: 'Re-center the map.',                    icon: IconCenter,   alwaysActive: true },
+  { id: 'connect', label: 'Connect', desc: 'Connect a new agent to the universe.',  icon: IconConnect,  alwaysActive: true },
+  { id: 'spawn',   label: 'Spawn',   desc: 'Open a terminal with an agent CLI.',    icon: IconSpawn,    alwaysActive: true },
+  { id: 'demo',    label: 'Demo',    desc: 'Toggle demo simulation.',               icon: IconDemo,     alwaysActive: true },
+  { id: 'info',    label: 'Info',    desc: 'Show the universe guide.',              icon: IconInfo,     alwaysActive: true },
 ];
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -174,6 +183,16 @@ export const AgentControls: FC = () => {
   const requestCenter   = useCommandCenterStore((s) => s.requestCenter);
   const toggleConnect   = useCommandCenterStore((s) => s.toggleConnect);
   const connectOpen     = useCommandCenterStore((s) => s.connectOpen);
+  const togglePause     = useCommandCenterStore((s) => s.togglePause);
+  const pausedAgentIds  = useCommandCenterStore((s) => s.pausedAgentIds);
+  const toggleIsolate   = useCommandCenterStore((s) => s.toggleIsolate);
+  const isolatedAgentId = useCommandCenterStore((s) => s.isolatedAgentId);
+  const requestDemo     = useCommandCenterStore((s) => s.requestDemo);
+  const demoRequested   = useCommandCenterStore((s) => s.demoRequested);
+  const toggleInfo      = useCommandCenterStore((s) => s.toggleInfo);
+  const infoOpen        = useCommandCenterStore((s) => s.infoOpen);
+  const toggleSpawn     = useCommandCenterStore((s) => s.toggleSpawn);
+  const spawnOpen       = useCommandCenterStore((s) => s.spawnOpen);
   const [hovered, setHovered] = useState<string | null>(null);
 
   const hoveredBtn = hovered ? BUTTONS.find((b) => b.id === hovered) : null;
@@ -181,6 +200,11 @@ export const AgentControls: FC = () => {
   function handleClick(id: string) {
     if (id === 'center') requestCenter();
     else if (id === 'connect') toggleConnect();
+    else if (id === 'pause' && selectedAgentId) togglePause(selectedAgentId);
+    else if (id === 'isolate' && selectedAgentId) toggleIsolate(selectedAgentId);
+    else if (id === 'spawn') toggleSpawn();
+    else if (id === 'demo') requestDemo();
+    else if (id === 'info') toggleInfo();
   }
 
   function isActive(btn: CmdBtn): boolean {
@@ -189,7 +213,13 @@ export const AgentControls: FC = () => {
   }
 
   function isLit(btn: CmdBtn): boolean {
-    return btn.id === 'connect' && connectOpen;
+    if (btn.id === 'connect') return connectOpen;
+    if (btn.id === 'spawn') return spawnOpen;
+    if (btn.id === 'demo') return demoRequested;
+    if (btn.id === 'info') return infoOpen;
+    if (btn.id === 'pause' && selectedAgentId) return !!pausedAgentIds[selectedAgentId];
+    if (btn.id === 'isolate' && selectedAgentId) return isolatedAgentId === selectedAgentId;
+    return false;
   }
 
   return (
@@ -216,7 +246,7 @@ export const AgentControls: FC = () => {
             </button>
           );
         })}
-        {/* Empty slots to fill the 5×3 grid */}
+        {/* Empty slots to fill the 5x3 grid */}
         {Array.from({ length: 15 - BUTTONS.length }).map((_, i) => (
           <button key={`empty-${i}`} type="button" style={btnDisabled} disabled tabIndex={-1} aria-hidden />
         ))}
