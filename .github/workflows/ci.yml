@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, develop]
+    branches: [master, develop, 'release/**']
   pull_request:
     branches: [master, develop]
 
@@ -45,11 +45,12 @@ jobs:
         run: pnpm test
         continue-on-error: true  # no tests yet — remove this once tests exist
 
-  package:
-    name: Package VSIX
+  # ── Dev builds (develop) — artifact only, not on Releases ──────────────────
+  package-dev:
+    name: Package Dev VSIX
     runs-on: ubuntu-latest
     needs: lint-build-test
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
 
     steps:
       - name: Checkout
@@ -67,8 +68,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Stamp dev version (develop only)
-        if: github.ref == 'refs/heads/develop'
+      - name: Stamp dev version
         run: |
           DEV_VERSION="0.0.${GITHUB_RUN_NUMBER}"
           DISPLAY_VERSION="0.0.0.${GITHUB_RUN_NUMBER}-dev"
@@ -81,24 +81,11 @@ jobs:
           "
           echo "Stamped dev version: ${DEV_VERSION} (artifact: ${DISPLAY_VERSION})"
 
-      - name: Read release version (master only)
-        if: github.ref == 'refs/heads/master'
-        run: |
-          VERSION=$(node -p "require('./apps/vscode/package.json').version")
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "Release version: ${VERSION}"
-
       - name: Build all packages
         run: pnpm build
 
       - name: Package VSIX
-        run: |
-          cd apps/vscode
-          if [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
-          else
-            pnpm run package:vsix
-          fi
+        run: cd apps/vscode && tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
@@ -110,8 +97,7 @@ jobs:
   cleanup-dev-artifacts:
     name: Cleanup old dev artifacts
     runs-on: ubuntu-latest
-    needs: package
-    if: github.ref == 'refs/heads/develop'
+    needs: package-dev
     permissions:
       actions: write
 
@@ -139,11 +125,12 @@ jobs:
             }
             console.log(`Kept ${Math.min(devArtifacts.length, 3)} dev artifacts, deleted ${toDelete.length}`);
 
-  release:
-    name: Create GitHub Release
+  # ── Pre-releases (release/* branches) — alpha/beta/rc on Releases page ─────
+  package-prerelease:
+    name: Package Pre-release VSIX
     runs-on: ubuntu-latest
-    needs: package
-    if: github.ref == 'refs/heads/master'
+    needs: lint-build-test
+    if: startsWith(github.ref, 'refs/heads/release/') && github.event_name == 'push'
     permissions:
       contents: write
 
@@ -151,19 +138,134 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Determine pre-release version
+        run: |
+          # Extract base version from branch name: release/0.1.0 → 0.1.0
+          BRANCH="${GITHUB_REF#refs/heads/release/}"
+          BASE_VERSION="${BRANCH}"
+
+          # Count existing pre-release tags for this version to auto-increment
+          git fetch --tags
+          ALPHA_COUNT=$(git tag -l "v${BASE_VERSION}-alpha.*" | wc -l)
+          BETA_COUNT=$(git tag -l "v${BASE_VERSION}-beta.*" | wc -l)
+          RC_COUNT=$(git tag -l "v${BASE_VERSION}-rc.*" | wc -l)
+          TOTAL=$((ALPHA_COUNT + BETA_COUNT + RC_COUNT))
+
+          # Determine stage based on count: first 3 = alpha, next 3 = beta, then rc
+          # Or read from commit message if [alpha], [beta], or [rc] is present
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if echo "$COMMIT_MSG" | grep -qi '\[rc\]'; then
+            STAGE="rc"
+            NUM=$((RC_COUNT + 1))
+          elif echo "$COMMIT_MSG" | grep -qi '\[beta\]'; then
+            STAGE="beta"
+            NUM=$((BETA_COUNT + 1))
+          else
+            STAGE="alpha"
+            NUM=$((ALPHA_COUNT + 1))
+          fi
+
+          PRE_VERSION="${BASE_VERSION}-${STAGE}.${NUM}"
+          # VS Code needs clean 3-digit for the internal version
+          VSCE_VERSION="${BASE_VERSION}"
+          TAG="v${PRE_VERSION}"
+
+          echo "VERSION=${PRE_VERSION}" >> $GITHUB_ENV
+          echo "VSCE_VERSION=${VSCE_VERSION}" >> $GITHUB_ENV
+          echo "TAG=${TAG}" >> $GITHUB_ENV
+          echo "Pre-release: ${PRE_VERSION} (vsce: ${VSCE_VERSION}, tag: ${TAG})"
+
+      - name: Stamp version in package.json
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('./apps/vscode/package.json', 'utf8'));
+            pkg.version = '${VSCE_VERSION}';
+            fs.writeFileSync('./apps/vscode/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Package VSIX
+        run: cd apps/vscode && tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: event-horizon-${{ env.VERSION }}.vsix
+          path: apps/vscode/*.vsix
+          retention-days: 90
+
+      - name: Create pre-release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ env.TAG }}"
+          git push origin "${{ env.TAG }}"
+
+      - name: Create GitHub Pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.VERSION }}
+          files: apps/vscode/*.vsix
+          prerelease: true
+          generate_release_notes: true
+
+  # ── Stable releases (master) — tagged release on Releases page ─────────────
+  release:
+    name: Create Stable Release
+    runs-on: ubuntu-latest
+    needs: lint-build-test
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Read version
         run: |
           VERSION=$(node -p "require('./apps/vscode/package.json').version")
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Release version: ${VERSION}"
 
-      - name: Download VSIX artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: event-horizon-${{ env.VERSION }}.vsix
-          path: ./artifacts
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Package VSIX
+        run: cd apps/vscode && pnpm run package:vsix
 
       - name: Create git tag
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
 
@@ -172,5 +274,5 @@ jobs:
         with:
           tag_name: v${{ env.VERSION }}
           name: v${{ env.VERSION }}
-          files: ./artifacts/*.vsix
+          files: apps/vscode/*.vsix
           generate_release_notes: true
