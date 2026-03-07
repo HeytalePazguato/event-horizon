@@ -3,7 +3,7 @@
  */
 
 export { Universe } from './Universe.js';
-export type { UniverseProps, AgentView, MetricsView } from './Universe.js';
+export type { UniverseProps, AgentView, MetricsView, ShipSpawn } from './Universe.js';
 export { createPlanet } from './entities/Planet.js';
 export type { PlanetProps } from './entities/Planet.js';
 export { createMoon } from './entities/Moon.js';

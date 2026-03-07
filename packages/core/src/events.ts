@@ -20,7 +20,7 @@ export type AgentEventType =
   | 'message.receive'
   | 'data.transfer';
 
-export type AgentType = 'opencode' | 'claude-code' | 'copilot' | 'unknown';
+export type AgentType = 'opencode' | 'claude-code' | 'copilot' | 'cursor' | 'unknown';
 
 export interface AgentEvent {
   id: string;

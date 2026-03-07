@@ -34,9 +34,9 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   const type = CLAUDE_HOOK_TO_EVENT[hookEvent];
   if (!type) return null;
 
-  // Claude Code uses session_id; fall back to other id fields
-  const agentId = (p.session_id ?? p.agentId ?? p.sessionId ?? 'claude-1') as string;
-  const agentName = (p.agentName ?? 'Claude Code') as string;
+  // Claude Code uses session_id; fall back to other id fields; clamp to prevent oversized strings
+  const agentId = String(p.session_id ?? p.agentId ?? p.sessionId ?? 'claude-1').slice(0, 128);
+  const agentName = String(p.agentName ?? 'Claude Code').slice(0, 64);
 
   // Extract token counts from usage fields Claude Code may provide
   const usage = p.usage as Record<string, number> | undefined;

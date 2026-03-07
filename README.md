@@ -54,21 +54,23 @@ If `pnpm` is not in your PATH, use `npx pnpm` instead (e.g. `npx pnpm install`, 
 
 2. **Run:** Press **F5**. If a dialog appears, click **Continue**. A second window opens (Extension Development Host).
 
-3. **Open the view:** In that second window, click the **globe icon** in the left sidebar, or **Ctrl+Shift+P** → **Event Horizon: Open Universe**. You’ll see a space-style background and a control panel. A **“How to see agents”** callout in the panel shows a PowerShell command.
+3. **Open the view:** In that second window, click the **globe icon** in the left sidebar, or **Ctrl+Shift+P** → **Event Horizon: Open Universe**.
 
-4. **See agents (planets):** Copy the command from the callout and run it in a terminal (in the Extension Development Host window or your project window). One line is enough. A planet will appear in the universe. Run it again with a different `agentId` / `agentName` to add more.
+4. **Connect an agent:** Click the **Connect** button in the Command Center to open the Connect Agent wizard. Choose **Claude Code** and click **Install** — this adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet will appear automatically.
 
-**Send test events** (manual alternative): You can also use:
+5. **Demo mode:** Click **Demo** in the Command Center to see the universe populated with simulated agents without a live connection.
+
+**Send test events manually:**
 
    **PowerShell (Windows):**
    ```powershell
-   $body = '{"id":"t1","agentId":"agent-1","agentName":"Test Agent","agentType":"opencode","type":"task.start","timestamp":' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ',"payload":{}}'
-   Invoke-RestMethod -Uri http://127.0.0.1:28765/events -Method Post -Body $body -ContentType "application/json"
+   $body = ‘{“id”:”t1”,”agentId”:”agent-1”,”agentName”:”Test Agent”,”agentType”:”opencode”,”type”:”agent.spawn”,”timestamp”:’ + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ‘,”payload”:{}}’
+   Invoke-RestMethod -Uri http://127.0.0.1:28765/events -Method Post -Body $body -ContentType “application/json”
    ```
 
    **Bash (macOS/Linux):**
    ```bash
-   curl -X POST http://127.0.0.1:28765/events -H "Content-Type: application/json" -d "{\"id\":\"t1\",\"agentId\":\"agent-1\",\"agentName\":\"Test Agent\",\"agentType\":\"opencode\",\"type\":\"task.start\",\"timestamp\":$(date +%s)000,\"payload\":{}}"
+   curl -X POST http://127.0.0.1:28765/events -H “Content-Type: application/json” -d “{\”id\”:\”t1\”,\”agentId\”:\”agent-1\”,\”agentName\”:\”Test Agent\”,\”agentType\”:\”opencode\”,\”type\”:\”agent.spawn\”,\”timestamp\”:$(date +%s)000,\”payload\”:{}}”
    ```
 
 **If F5 doesn’t open a second window:** install from .vsix instead — run `cd apps/vscode && pnpm run package:vsix`, then **Extensions** → **...** → **Install from VSIX...** and reload.

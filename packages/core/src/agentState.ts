@@ -23,28 +23,13 @@ export interface TaskState {
   startedAt: number;
 }
 
-export interface ShipState {
-  id: string;
-  fromAgentId: string;
-  toAgentId: string;
-  payloadSize: number;
-  taskId: string | null;
-  createdAt: number;
-}
-
 export class AgentStateManager {
   private agents = new Map<string, AgentState>();
   private tasks = new Map<string, TaskState>();
-  private ships = new Map<string, ShipState>();
   private taskIdCounter = 0;
-  private shipIdCounter = 0;
 
   private nextTaskId(): string {
     return `task-${++this.taskIdCounter}`;
-  }
-
-  private nextShipId(): string {
-    return `ship-${++this.shipIdCounter}`;
   }
 
   apply(event: AgentEvent): void {
@@ -112,23 +97,9 @@ export class AgentStateManager {
         }
         break;
       }
-      case 'data.transfer': {
-        const toAgentId = (payload?.toAgentId as string) ?? '';
-        const payloadSize = (payload?.payloadSize as number) ?? 0;
-        const taskId = (payload?.taskId as string) ?? null;
-        if (toAgentId) {
-          const shipId = this.nextShipId();
-          this.ships.set(shipId, {
-            id: shipId,
-            fromAgentId: agentId,
-            toAgentId,
-            payloadSize,
-            taskId,
-            createdAt: timestamp,
-          });
-        }
+      case 'data.transfer':
+        // Ships are tracked exclusively in the webview (with timeout cleanup); no-op here.
         break;
-      }
       default:
         break;
     }
@@ -154,22 +125,4 @@ export class AgentStateManager {
     return Array.from(this.tasks.values());
   }
 
-  getShip(shipId: string): ShipState | undefined {
-    return this.ships.get(shipId);
-  }
-
-  getShipsForAgent(agentId: string): ShipState[] {
-    return Array.from(this.ships.values()).filter(
-      (s) => s.fromAgentId === agentId || s.toAgentId === agentId
-    );
-  }
-
-  getAllShips(): ShipState[] {
-    return Array.from(this.ships.values());
-  }
-
-  /** Remove a ship (e.g. when it reaches destination or singularity). */
-  removeShip(shipId: string): void {
-    this.ships.delete(shipId);
-  }
 }

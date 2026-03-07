@@ -3,12 +3,17 @@
  */
 
 import * as vscode from 'vscode';
+import type { AgentStateManager, MetricsEngine } from '@event-horizon/core';
 import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
 
 export function createWebviewProvider(
   context: vscode.ExtensionContext,
-  webviewRef: { current: vscode.Webview | null }
+  webviewRef: { current: vscode.Webview | null },
+  agentStateManager: AgentStateManager,
+  metricsEngine: MetricsEngine,
 ): vscode.WebviewViewProvider {
+  const version = (context.extension.packageJSON as { version: string }).version;
+
   return {
     resolveWebviewView(
       webviewView: vscode.WebviewView,
@@ -35,7 +40,14 @@ export function createWebviewProvider(
         return types;
       }
 
-      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, getConnectedAgentTypes());
+      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, version, getConnectedAgentTypes());
+
+      // 2.2 — hydrate webview with accumulated state on (re)open
+      const agents = agentStateManager.getAllAgents();
+      const metrics = metricsEngine.getAllMetrics();
+      if (agents.length > 0) {
+        void webviewView.webview.postMessage({ type: 'init-state', agents, metrics });
+      }
 
       webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string }) => {
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
@@ -44,7 +56,7 @@ export function createWebviewProvider(
           });
         } else if (msg?.type === 'remove-agent' && msg.agentType === 'claude-code') {
           removeClaudeCodeHooks();
-          vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
+          void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
           void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
         }
       });
@@ -52,15 +64,27 @@ export function createWebviewProvider(
   };
 }
 
-function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, connectedAgentTypes: string[]): string {
+function getWebviewHtml(
+  webview: vscode.Webview,
+  scriptUri: vscode.Uri,
+  version: string,
+  connectedAgentTypes: string[],
+): string {
+  // unsafe-eval is required by PixiJS for WebGL shader compilation — cannot be removed.
+  // unsafe-inline is limited to styles only; scripts are loaded via src= with nonce-less cspSource.
   const csp = [
     "default-src 'none'",
-    "script-src 'unsafe-inline' 'unsafe-eval' " + webview.cspSource,
+    "script-src 'unsafe-eval' " + webview.cspSource, // 1.6 — removed unsafe-inline for scripts
     "style-src 'unsafe-inline'",
     "img-src " + webview.cspSource + " data:",
   ].join('; ');
 
-  const scriptSrc = scriptUri.toString() + '?v=2';
+  // 3.5 — use extension version as cache-bust suffix so updates are picked up immediately
+  const scriptSrc = scriptUri.toString() + '?v=' + version;
+
+  // 1.6 — initial state injected via data attribute to avoid inline script (CSP compliance)
+  const initData = JSON.stringify({ connectedAgents: connectedAgentTypes });
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -76,21 +100,8 @@ function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, connecte
   </style>
 </head>
 <body>
-  <div id="root"><div class="loading">Loading app…</div></div>
-  <script>
-    window.__ehConnectedAgents = ${JSON.stringify(connectedAgentTypes)};
-    window.__ehScriptLoadError = function(msg) {
-      var r = document.getElementById('root');
-      if (r) r.innerHTML = '<div class="err">' + msg + '</div>';
-    };
-    setTimeout(function() {
-      var r = document.getElementById('root');
-      if (r && r.innerHTML.indexOf('Loading app') !== -1) {
-        r.innerHTML = '<div class="err">Still loading? Open Help → Toggle Developer Tools and check the Console for errors.</div>';
-      }
-    }, 8000);
-  </script>
-  <script src="${scriptSrc}" onerror="__ehScriptLoadError('Script failed to load. Rebuild: pnpm run build --filter=event-horizon-vscode')"></script>
+  <div id="root" data-eh-init="${initData.replace(/"/g, '&quot;')}"><div class="loading">Loading app\u2026</div></div>
+  <script src="${scriptSrc}"></script>
 </body>
 </html>`;
 }

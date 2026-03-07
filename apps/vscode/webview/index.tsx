@@ -107,10 +107,14 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 function App() {
   const [agents, setAgents] = useState<Array<{ id: string; name: string; agentType?: string }>>([]);
   const [connectedAgentTypes, setConnectedAgentTypes] = useState<string[]>(() => {
-    const w = window as unknown as Record<string, unknown>;
-    return Array.isArray(w['__ehConnectedAgents']) ? (w['__ehConnectedAgents'] as string[]) : [];
+    // 1.6 — read initial state from data attribute set by the extension host
+    try {
+      const el = document.getElementById('root');
+      const raw = el?.dataset['ehInit'];
+      if (raw) return (JSON.parse(raw) as { connectedAgents: string[] }).connectedAgents ?? [];
+    } catch { /* ignore */ }
+    return [];
   });
-  const [metrics, setMetrics] = useState<Record<string, { load: number }>>({});
   const [agentMap, setAgentMap] = useState<Record<string, AgentState>>({});
   const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
   const [ships, setShips] = useState<ShipSpawn[]>([]);
@@ -135,20 +139,33 @@ function App() {
   const shipLaunchCountRef = useRef(0);
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Single merged message handler — 2.6: eliminates duplicate event processing
   useEffect(() => {
     const handler = (e: MessageEvent<EventPayload>) => {
       const msg = e.data;
+
+      // connected-agents: update hook install state
       if (msg?.type === 'connected-agents') {
         setConnectedAgentTypes((msg as unknown as { agentTypes: string[] }).agentTypes ?? []);
         return;
       }
+
+      // init-state: hydrate from extension host accumulated state on (re)open — 2.2
+      if (msg?.type === 'init-state') {
+        const init = msg as unknown as { agents: AgentState[]; metrics: AgentMetrics[] };
+        setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type })));
+        setAgentMap(Object.fromEntries(init.agents.map((a) => [a.id, a])));
+        setMetricsMap(Object.fromEntries(init.metrics.map((m) => [m.agentId, m])));
+        return;
+      }
+
       if (msg?.type !== 'event' || !msg.payload) return;
+
       const raw = msg.payload as {
         agentId?: string;
         agentName?: string;
         agentType?: string;
         type?: string;
-        timestamp?: number;
         payload?: Record<string, unknown>;
       };
       const agentId = raw.agentId ?? 'unknown';
@@ -156,16 +173,13 @@ function App() {
       const agentType = raw.agentType ?? 'unknown';
       const type = raw.type ?? 'agent.spawn';
 
-      // Log every event
-      addLog({
-        ts: new Date().toLocaleTimeString(),
-        agentId,
-        agentName,
-        type,
-      });
+      addLog({ ts: new Date().toLocaleTimeString(), agentId, agentName, type });
 
+      // agent.terminate: clean up all state for this agent — 2.4
       if (type === 'agent.terminate') {
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
+        setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
+        setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
         return;
       }
 
@@ -175,17 +189,13 @@ function App() {
           const shipId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const payloadSize = (raw.payload?.payloadSize as number | undefined) ?? 1;
           setShips((prev) => [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }]);
-          // Clean up ship entry after enough time for it to complete its journey
           setTimeout(() => setShips((prev) => prev.filter((s) => s.id !== shipId)), 20000);
         }
         return;
       }
 
-      setAgents((prev) => {
-        const has = prev.some((a) => a.id === agentId);
-        if (has) return prev;
-        return [...prev, { id: agentId, name: agentName, agentType }];
-      });
+      // Upsert agent
+      setAgents((prev) => prev.some((a) => a.id === agentId) ? prev : [...prev, { id: agentId, name: agentName, agentType }]);
       setAgentMap((prev) => ({
         ...prev,
         [agentId]: {
@@ -196,50 +206,28 @@ function App() {
           currentTaskId: (raw.payload?.taskId as string | null) ?? null,
         },
       }));
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
 
-  useEffect(() => {
-    const handler = (e: MessageEvent<EventPayload>) => {
-      const msg = e.data;
-      if (msg?.type !== 'event' || !msg.payload) return;
-      const event = msg.payload as {
-        agentId: string;
-        type: string;
-        payload?: { tokens?: number; inputTokens?: number; outputTokens?: number };
-      };
-      const isHighLoad = event.type === 'task.progress' || event.type === 'tool.call' || event.type === 'tool.result';
-      const load = isHighLoad ? 0.7 : 0.3;
-      setMetrics((prev) => ({
-        ...prev,
-        [event.agentId]: {
-          load: prev[event.agentId] ? (prev[event.agentId].load * 0.9 + load * 0.1) : load,
-        },
-      }));
-      const tokens = (event.payload?.tokens ?? 0) as number
-        + ((event.payload?.inputTokens as number) ?? 0)
-        + ((event.payload?.outputTokens as number) ?? 0);
+      // Update metrics — 2.7: single metricsMap, load derived from here for renderer too
+      const isHighLoad = type === 'task.progress' || type === 'tool.call' || type === 'tool.result';
+      const loadTarget = isHighLoad ? 0.7 : 0.3;
+      const tokens = ((raw.payload?.tokens as number) ?? 0)
+        + ((raw.payload?.inputTokens as number) ?? 0)
+        + ((raw.payload?.outputTokens as number) ?? 0);
       setMetricsMap((prev) => {
-        const m = prev[event.agentId];
-        const prevLoad = m?.load ?? 0.3;
-        const activeTasks = event.type === 'task.start'
+        const m = prev[agentId];
+        const activeTasks = type === 'task.start'
           ? (m?.activeTasks ?? 0) + 1
-          : (event.type === 'task.complete' || event.type === 'task.fail' || event.type === 'task.cancel')
+          : (type === 'task.complete' || type === 'task.fail' || type === 'task.cancel')
             ? Math.max(0, (m?.activeTasks ?? 0) - 1)
             : (m?.activeTasks ?? 0);
-        const errorCount = event.type === 'agent.error'
-          ? (m?.errorCount ?? 0) + 1
-          : (m?.errorCount ?? 0);
         return {
           ...prev,
-          [event.agentId]: {
-            agentId: event.agentId,
-            load: prevLoad * 0.9 + load * 0.1,
+          [agentId]: {
+            agentId,
+            load: (m?.load ?? 0.3) * 0.9 + loadTarget * 0.1,
             tokenUsage: (m?.tokenUsage ?? 0) + tokens,
             activeTasks,
-            errorCount,
+            errorCount: type === 'agent.error' ? (m?.errorCount ?? 0) + 1 : (m?.errorCount ?? 0),
             lastUpdated: Date.now(),
           },
         };
@@ -247,7 +235,7 @@ function App() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, [addLog]);
 
   // ── Keep selectedMetrics/selectedAgent in sync with live data ────────────
   useEffect(() => {
@@ -362,7 +350,6 @@ function App() {
           currentTaskId: null,
         },
       }));
-      setMetrics((m) => ({ ...m, [a.id]: { load: 0.3 + Math.random() * 0.5 } }));
       setMetricsMap((m) => ({
         ...m,
         [a.id]: {
@@ -387,14 +374,6 @@ function App() {
             state: Math.random() > 0.6 ? (s.state === 'thinking' ? 'idle' : 'thinking') : s.state,
             currentTaskId: s.state === 'thinking' ? 'task-' + Date.now() : null,
           };
-        });
-        return next;
-      });
-      setMetrics((prev) => {
-        const next = { ...prev };
-        demoAgents.forEach((a) => {
-          const prevLoad = prev[a.id]?.load ?? 0.3;
-          next[a.id] = { load: Math.min(0.95, prevLoad * 0.7 + 0.2 + Math.random() * 0.5) };
         });
         return next;
       });
@@ -475,7 +454,7 @@ function App() {
           width={panelSize.width}
           height={panelSize.height}
           agents={agents}
-          metrics={metrics}
+          metrics={Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, { load: v.load }]))}
           ships={ships}
           agentStates={agentStates}
           pausedAgentIds={pausedAgentIds}
@@ -586,8 +565,8 @@ function App() {
             </div>
             {[
               { id: 'claude-code', label: 'Claude Code',    planet: '🟤', status: 'available' as const, desc: 'Installs curl hooks into ~/.claude/settings.json. One click, no token needed.' },
-              { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'auto'      as const, desc: 'Auto-detected via VS Code output channel. No setup required.' },
-              { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'auto'      as const, desc: 'Runs natively inside Cursor. No setup required.' },
+              { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'soon'      as const, desc: 'VS Code Copilot integration coming soon.' },
+              { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'soon'      as const, desc: 'Cursor connector coming soon.' },
               { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'soon'      as const, desc: 'OpenCode hook support coming soon.' },
               { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },
             ].map((c) => {
