@@ -71,14 +71,15 @@ jobs:
         if: github.ref == 'refs/heads/develop'
         run: |
           DEV_VERSION="0.0.${GITHUB_RUN_NUMBER}"
-          echo "VERSION=${DEV_VERSION}" >> $GITHUB_ENV
+          DISPLAY_VERSION="0.0.0.${GITHUB_RUN_NUMBER}-dev"
+          echo "VERSION=${DISPLAY_VERSION}" >> $GITHUB_ENV
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('./apps/vscode/package.json', 'utf8'));
             pkg.version = '${DEV_VERSION}';
             fs.writeFileSync('./apps/vscode/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          echo "Stamped dev version: ${DEV_VERSION}"
+          echo "Stamped dev version: ${DEV_VERSION} (artifact: ${DISPLAY_VERSION})"
 
       - name: Read release version (master only)
         if: github.ref == 'refs/heads/master'
@@ -91,7 +92,13 @@ jobs:
         run: pnpm build
 
       - name: Package VSIX
-        run: cd apps/vscode && pnpm run package:vsix
+        run: |
+          cd apps/vscode
+          if [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            tsc && pnpm run build:webview:prod && vsce package --no-dependencies --pre-release
+          else
+            pnpm run package:vsix
+          fi
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4

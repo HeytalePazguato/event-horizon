@@ -23,6 +23,21 @@ export interface Achievement {
 /** Tier labels displayed after the name, e.g. "Gravity Well III". */
 export const TIER_LABELS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
+/** Border colors that upgrade with tier: gray → bronze → silver → gold → platinum → diamond. */
+const TIER_BORDER_COLORS = [
+  '#6a6a7a',  // I   — gray
+  '#a06830',  // II  — bronze
+  '#a0a8b8',  // III — silver
+  '#d4aa30',  // IV  — gold
+  '#88ccdd',  // V   — platinum
+  '#b898ff',  // VI  — diamond
+];
+
+function tierBorderColor(tier: number | undefined): string | undefined {
+  if (tier == null) return undefined;
+  return TIER_BORDER_COLORS[Math.min(tier, TIER_BORDER_COLORS.length - 1)];
+}
+
 export const ACHIEVEMENTS: Achievement[] = [
   { id: 'first_contact',    name: 'First Contact',         desc: 'Your first agent appeared in the universe.' },
   { id: 'ground_control',   name: 'Ground Control',        desc: '3 or more agents active simultaneously.' },
@@ -329,6 +344,7 @@ export const AchievementsBar: FC = () => {
         const tier = achievementTiers[id];
         const count = achievementCounts[id];
         const tierLabel = ach?.tiers && tier != null ? ` ${TIER_LABELS[tier] ?? tier + 1}` : '';
+        const borderColor = ach?.tiers ? tierBorderColor(tier) : undefined;
         return (
           <div
             key={id}
@@ -336,7 +352,12 @@ export const AchievementsBar: FC = () => {
             onMouseEnter={() => setHoveredId(id)}
             onMouseLeave={() => setHoveredId(null)}
           >
-            <div style={{ opacity: 0.92, transition: 'opacity 0.15s', ...(hoveredId === id ? { opacity: 1 } : {}) }}>
+            <div style={{
+              opacity: 0.92,
+              transition: 'opacity 0.15s',
+              ...(hoveredId === id ? { opacity: 1 } : {}),
+              ...(borderColor ? { border: `1.5px solid ${borderColor}`, borderRadius: 3, boxShadow: `0 0 4px ${borderColor}44` } : {}),
+            }}>
               <Medal id={id} size={24} />
             </div>
             {hoveredId === id && ach && (
@@ -348,7 +369,7 @@ export const AchievementsBar: FC = () => {
                   left: '50%',
                   transform: 'translateX(-50%)',
                   background: 'linear-gradient(180deg, #0e1f18 0%, #091510 100%)',
-                  border: '1px solid #2a5a3c',
+                  border: `1px solid ${borderColor ?? '#2a5a3c'}`,
                   borderRadius: 2,
                   padding: '5px 8px',
                   minWidth: 130,
@@ -395,6 +416,7 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
   const achievement = ACHIEVEMENTS.find((a) => a.id === achievementId);
   const tier = useCommandCenterStore((s) => s.achievementTiers[achievementId]);
   const tierLabel = achievement?.tiers && tier != null ? ` ${TIER_LABELS[tier] ?? tier + 1}` : '';
+  const accentColor = (achievement?.tiers ? tierBorderColor(tier) : undefined) ?? '#4a9a6a';
 
   useEffect(() => {
     // Fade in
@@ -425,9 +447,9 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
         alignItems: 'center',
         gap: 0,
         background: 'linear-gradient(90deg, #0e1f18 0%, #091510 100%)',
-        border: '1px solid #2a5a3c',
-        borderLeft: '3px solid #4a9a6a',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.7), inset 0 1px 0 rgba(80,160,100,0.12)',
+        border: `1px solid ${accentColor}55`,
+        borderLeft: `3px solid ${accentColor}`,
+        boxShadow: `0 2px 12px rgba(0,0,0,0.7), inset 0 1px 0 ${accentColor}22`,
         position: 'relative',
         width: 240,
         overflow: 'hidden',
@@ -455,8 +477,8 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
 
       {/* Text */}
       <div style={{ padding: '6px 8px', minWidth: 0 }}>
-        <div style={{ fontSize: 8, color: '#4a9a6a', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 2 }}>
-          Achievement Unlocked
+        <div style={{ fontSize: 8, color: accentColor, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 2 }}>
+          {tier != null && tier > 0 ? 'Tier Upgraded' : 'Achievement Unlocked'}
         </div>
         <div style={{ fontSize: 11, color: '#c8e8b8', fontWeight: 600, lineHeight: 1.2, marginBottom: 2 }}>
           {achievement.name}{tierLabel}
@@ -474,7 +496,7 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
           left: 0,
           right: 0,
           height: 2,
-          background: '#4a9a6a',
+          background: accentColor,
           transformOrigin: 'left',
           animation: `eh-toast-shrink ${TOAST_DURATION_MS}ms linear forwards`,
         }}
