@@ -412,7 +412,7 @@ export const Universe: FC<UniverseProps> = ({
         const stars = createStars(w * 2, h * 2);
         stars.x = -w / 2;
         stars.y = -h / 2;
-        panContainer.addChild(stars);
+        app.stage.addChildAt(stars, 0);  // behind panContainer — fixed background
         starsRef.current = stars;
 
         const world = new Container();
@@ -554,13 +554,13 @@ export const Universe: FC<UniverseProps> = ({
     panContainer.x = cx + posRef.current.x;
     panContainer.y = cy + posRef.current.y;
 
-    if (stars && panContainer.removeChild(stars)) {
+    if (stars) {
       try { stars.destroy({ children: true }); } catch { /* ignore */ }
     }
     const newStars = createStars(width * 2, height * 2);
     newStars.x = -width / 2;
     newStars.y = -height / 2;
-    panContainer.addChildAt(newStars, 0);
+    app.stage.addChildAt(newStars, 0);
     starsRef.current = newStars;
   }, [width, height, canvasReady]);
 
@@ -732,6 +732,13 @@ export const Universe: FC<UniverseProps> = ({
       const s = sizeRef.current;
       panContainer.x = s.width / 2 + posRef.current.x;
       panContainer.y = s.height / 2 + posRef.current.y;
+    }
+    // Parallax: stars drift at 10% of pan speed for depth illusion
+    const stars = starsRef.current;
+    if (stars) {
+      const s = sizeRef.current;
+      stars.x = -s.width / 2 + posRef.current.x * 0.1;
+      stars.y = -s.height / 2 + posRef.current.y * 0.1;
     }
   }, []);
 
