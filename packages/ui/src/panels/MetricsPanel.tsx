@@ -7,7 +7,7 @@ import type { FC } from 'react';
 import { useState } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import type { LogEntry } from '../store.js';
-import { ACHIEVEMENTS, Medal } from '../Achievements.js';
+import { ACHIEVEMENTS, Medal, TIER_LABELS, tierBorderColor } from '../Achievements.js';
 
 const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
   <div style={{ fontFamily: 'Consolas, monospace', fontSize: 9, color: '#7a9a82', overflowY: 'auto', maxHeight: 80, lineHeight: 1.5 }}>
@@ -27,6 +27,8 @@ const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
 
 const MedalsView: FC = () => {
   const unlockedIds = useCommandCenterStore((s) => s.unlockedAchievements);
+  const achievementTiers = useCommandCenterStore((s) => s.achievementTiers);
+  const achievementCounts = useCommandCenterStore((s) => s.achievementCounts);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   if (unlockedIds.length === 0) {
@@ -34,23 +36,62 @@ const MedalsView: FC = () => {
   }
 
   const hovered = hoveredId ? ACHIEVEMENTS.find((a) => a.id === hoveredId) : null;
+  const hoveredTier = hoveredId ? achievementTiers[hoveredId] : undefined;
+  const hoveredCount = hoveredId ? achievementCounts[hoveredId] : undefined;
 
   return (
     <div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {unlockedIds.map((id) => (
-          <div
-            key={id}
-            onMouseEnter={() => setHoveredId(id)}
-            onMouseLeave={() => setHoveredId(null)}
-            style={{ cursor: 'default', opacity: hoveredId && hoveredId !== id ? 0.55 : 1 }}
-          >
-            <Medal id={id} size={28} />
-          </div>
-        ))}
+        {unlockedIds.map((id) => {
+          const ach = ACHIEVEMENTS.find((a) => a.id === id);
+          const tier = achievementTiers[id];
+          const borderColor = ach?.tiers ? tierBorderColor(tier) : undefined;
+          return (
+            <div
+              key={id}
+              onMouseEnter={() => setHoveredId(id)}
+              onMouseLeave={() => setHoveredId(null)}
+              style={{
+                cursor: 'default',
+                opacity: hoveredId && hoveredId !== id ? 0.55 : 1,
+                position: 'relative',
+                ...(borderColor ? { border: `2px solid ${borderColor}`, borderRadius: 4, boxShadow: `0 0 6px ${borderColor}66` } : {}),
+              }}
+            >
+              <Medal id={id} size={28} />
+              {ach?.tiers && tier != null && (
+                <span style={{
+                  position: 'absolute',
+                  bottom: -3,
+                  right: -3,
+                  fontSize: 8,
+                  fontWeight: 700,
+                  color: '#fff',
+                  background: borderColor ?? '#444',
+                  borderRadius: 2,
+                  padding: '0 3px',
+                  lineHeight: '12px',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                }}>
+                  {TIER_LABELS[tier] ?? ''}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div style={{ minHeight: 14, marginTop: 4, fontSize: 9, color: '#a0d090', fontWeight: 600, letterSpacing: '0.04em' }}>
-        {hovered ? hovered.name : ''}
+        {hovered ? (
+          <>
+            {hovered.name}
+            {hovered.tiers && hoveredTier != null ? ` ${TIER_LABELS[hoveredTier]}` : ''}
+            {hovered.tiers && hoveredCount != null ? (
+              <span style={{ color: '#6a8a72', fontWeight: 400 }}>
+                {' '}({hoveredCount}{hoveredTier != null && hoveredTier < hovered.tiers.length - 1 ? ` / ${hovered.tiers[hoveredTier + 1]}` : ''})
+              </span>
+            ) : null}
+          </>
+        ) : ''}
       </div>
     </div>
   );

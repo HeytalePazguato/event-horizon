@@ -95,7 +95,7 @@ jobs:
         run: |
           cd apps/vscode
           if [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            tsc && pnpm run build:webview:prod && vsce package --no-dependencies --pre-release
+            tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
           else
             pnpm run package:vsix
           fi

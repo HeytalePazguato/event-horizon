@@ -33,7 +33,7 @@ const TIER_BORDER_COLORS = [
   '#b898ff',  // VI  — diamond
 ];
 
-function tierBorderColor(tier: number | undefined): string | undefined {
+export function tierBorderColor(tier: number | undefined): string | undefined {
   if (tier == null) return undefined;
   return TIER_BORDER_COLORS[Math.min(tier, TIER_BORDER_COLORS.length - 1)];
 }
@@ -355,10 +355,28 @@ export const AchievementsBar: FC = () => {
             <div style={{
               opacity: 0.92,
               transition: 'opacity 0.15s',
+              position: 'relative',
               ...(hoveredId === id ? { opacity: 1 } : {}),
-              ...(borderColor ? { border: `1.5px solid ${borderColor}`, borderRadius: 3, boxShadow: `0 0 4px ${borderColor}44` } : {}),
+              ...(borderColor ? { border: `2px solid ${borderColor}`, borderRadius: 4, boxShadow: `0 0 6px ${borderColor}66` } : {}),
             }}>
               <Medal id={id} size={24} />
+              {tierLabel && (
+                <span style={{
+                  position: 'absolute',
+                  bottom: -2,
+                  right: -2,
+                  fontSize: 7,
+                  fontWeight: 700,
+                  color: '#fff',
+                  background: borderColor ?? '#444',
+                  borderRadius: 2,
+                  padding: '0 2px',
+                  lineHeight: '10px',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                }}>
+                  {TIER_LABELS[tier] ?? ''}
+                </span>
+              )}
             </div>
             {hoveredId === id && ach && (
               <div
