@@ -10,6 +10,15 @@ import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore } from
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
 
+// acquireVsCodeApi() may only be called once per webview lifetime — call at module level.
+const vscodeApi = ((): { postMessage: (msg: unknown) => void } | null => {
+  const w = window as unknown as Record<string, unknown>;
+  if (typeof w['acquireVsCodeApi'] === 'function') {
+    return (w['acquireVsCodeApi'] as () => { postMessage: (msg: unknown) => void })();
+  }
+  return null;
+})();
+
 function usePanelSize() {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 640, height: 400 });
@@ -117,17 +126,11 @@ function App() {
   const pendingConnectAgent  = useCommandCenterStore((s) => s.pendingConnectAgent);
   const clearConnectAgent    = useCommandCenterStore((s) => s.clearConnectAgent);
 
-  // VS Code API (available in webview context only)
-  const vscodeRef = useRef<{ postMessage: (msg: unknown) => void } | null>(null);
-  if (!vscodeRef.current && typeof (window as unknown as Record<string, unknown>).acquireVsCodeApi === 'function') {
-    vscodeRef.current = (window as unknown as { acquireVsCodeApi: () => { postMessage: (msg: unknown) => void } }).acquireVsCodeApi();
-  }
-
   // Handle pending agent connection requests
   useEffect(() => {
     if (!pendingConnectAgent) return;
     if (pendingConnectAgent === 'claude-code') {
-      vscodeRef.current?.postMessage({ type: 'setup-agent', agentType: 'claude-code' });
+      vscodeApi?.postMessage({ type: 'setup-agent', agentType: 'claude-code' });
     }
     clearConnectAgent();
   }, [pendingConnectAgent, clearConnectAgent]);
