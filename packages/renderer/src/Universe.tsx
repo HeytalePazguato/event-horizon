@@ -58,6 +58,8 @@ export interface UniverseProps {
   onAstronautSpawned?: () => void;
   /** Called when the UFO completes a successful abduction. */
   onUfoAbduction?: () => void;
+  /** Called when the user clicks on the UFO. */
+  onUfoClicked?: () => void;
 }
 
 // --- constants -----------------------------------------------------------
@@ -282,6 +284,7 @@ export const Universe: FC<UniverseProps> = ({
   onAstronautConsumed,
   onAstronautSpawned,
   onUfoAbduction,
+  onUfoClicked,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -342,6 +345,8 @@ export const Universe: FC<UniverseProps> = ({
   onAstronautSpawnedRef.current = onAstronautSpawned;
   const onUfoAbductionRef = useRef(onUfoAbduction);
   onUfoAbductionRef.current = onUfoAbduction;
+  const onUfoClickedRef = useRef(onUfoClicked);
+  onUfoClickedRef.current = onUfoClicked;
 
   const mountedRef = useRef(true);
 
@@ -446,6 +451,9 @@ export const Universe: FC<UniverseProps> = ({
         spiralContainerRef.current = spiralContainer;
 
         const ufo = createUfo();
+        ufo.eventMode = 'static';
+        ufo.cursor = 'pointer';
+        ufo.on('pointertap', () => { onUfoClickedRef.current?.(); });
         world.addChild(ufo);
         ufoRef.current = ufo;
 

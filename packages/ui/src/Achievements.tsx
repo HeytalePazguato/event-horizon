@@ -16,7 +16,12 @@ export interface Achievement {
   name: string;
   desc: string;
   secret?: boolean;
+  /** If set, this achievement has multiple tiers (thresholds). */
+  tiers?: number[];
 }
+
+/** Tier labels displayed after the name, e.g. "Gravity Well III". */
+export const TIER_LABELS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
 export const ACHIEVEMENTS: Achievement[] = [
   { id: 'first_contact',    name: 'First Contact',         desc: 'Your first agent appeared in the universe.' },
@@ -24,7 +29,8 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'the_horde',        name: 'The Horde',             desc: '10 agents active at the same time.' },
   { id: 'traffic_control',  name: 'Traffic Control',       desc: '10 ships launched across the system.' },
   { id: 'supernova',        name: 'Supernova',             desc: 'An agent entered an error state.' },
-  { id: 'gravity_well',     name: 'Gravity Well',          desc: 'An astronaut was consumed by the black hole.' },
+  { id: 'gravity_well',     name: 'Gravity Well',          desc: 'An astronaut was consumed by the black hole.', tiers: [1, 10, 50, 100, 1000, 10000] },
+  { id: 'ufo_hunter',       name: 'UFO Hunter',            desc: 'You captured a UFO by clicking on it.', tiers: [1, 10, 50, 100, 500] },
   { id: 'abduction',        name: 'Close Encounter',       desc: 'The UFO completed a successful extraction.' },
   { id: 'lone_astronaut',   name: 'One Small Step',        desc: 'You spawned an astronaut.', secret: true },
   { id: 'abyss',            name: 'Staring Into The Abyss',desc: 'You stared at an agent for a very long time.', secret: true },
@@ -229,6 +235,30 @@ const Medal: FC<{ id: string; size?: number }> = ({ id, size = 36 }) => {
         </svg>
       );
 
+    case 'ufo_hunter':
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#080c14" />
+          {/* Crosshair */}
+          <circle cx="18" cy="18" r="12" fill="none" stroke="#44aa66" strokeWidth="1" strokeOpacity="0.5" />
+          <circle cx="18" cy="18" r="7" fill="none" stroke="#44aa66" strokeWidth="0.8" strokeOpacity="0.4" />
+          <line x1="18" y1="4" x2="18" y2="14" stroke="#44aa66" strokeWidth="0.8" strokeOpacity="0.4" />
+          <line x1="18" y1="22" x2="18" y2="32" stroke="#44aa66" strokeWidth="0.8" strokeOpacity="0.4" />
+          <line x1="4" y1="18" x2="14" y2="18" stroke="#44aa66" strokeWidth="0.8" strokeOpacity="0.4" />
+          <line x1="22" y1="18" x2="32" y2="18" stroke="#44aa66" strokeWidth="0.8" strokeOpacity="0.4" />
+          {/* UFO in crosshair */}
+          <ellipse cx="18" cy="17" rx="7" ry="3" fill="#8a8aaa" />
+          <ellipse cx="18" cy="15.5" rx="4" ry="2.8" fill="#4a8a5a" />
+          <circle cx="17" cy="14.5" r="0.8" fill="#88ddaa" fillOpacity="0.6" />
+          {/* Rim lights */}
+          {[-4, -1.5, 1.5, 4].map((dx, i) => (
+            <circle key={i} cx={18 + dx} cy={17 + Math.abs(dx) * 0.3} r="1" fill={i % 2 === 0 ? '#ffee44' : '#ff6644'} />
+          ))}
+          {/* Capture flash */}
+          <circle cx="18" cy="17" r="3" fill="#88ffaa" fillOpacity="0.2" />
+        </svg>
+      );
+
     case 'abyss':
       return (
         <svg width={s} height={s} viewBox="0 0 36 36">
@@ -271,6 +301,8 @@ export { Medal };
 
 export const AchievementsBar: FC = () => {
   const unlockedIds = useCommandCenterStore((s) => s.unlockedAchievements);
+  const achievementTiers = useCommandCenterStore((s) => s.achievementTiers);
+  const achievementCounts = useCommandCenterStore((s) => s.achievementCounts);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -294,6 +326,9 @@ export const AchievementsBar: FC = () => {
       </span>
       {unlockedIds.map((id) => {
         const ach = ACHIEVEMENTS.find((a) => a.id === id);
+        const tier = achievementTiers[id];
+        const count = achievementCounts[id];
+        const tierLabel = ach?.tiers && tier != null ? ` ${TIER_LABELS[tier] ?? tier + 1}` : '';
         return (
           <div
             key={id}
@@ -323,9 +358,16 @@ export const AchievementsBar: FC = () => {
                   boxShadow: '0 2px 10px rgba(0,0,0,0.7)',
                 }}
               >
-                <div style={{ fontSize: 10, color: '#c8e8b8', fontWeight: 700, marginBottom: 2 }}>{ach.name}</div>
+                <div style={{ fontSize: 10, color: '#c8e8b8', fontWeight: 700, marginBottom: 2 }}>
+                  {ach.name}{tierLabel}
+                </div>
                 <div style={{ fontSize: 8, color: '#6a9a7a', lineHeight: 1.4 }}>
                   {ach.secret ? '???' : ach.desc}
+                  {ach.tiers && count != null && (
+                    <span style={{ display: 'block', marginTop: 2, color: '#4a7a5a' }}>
+                      Count: {count}{tier != null && tier < ach.tiers.length - 1 ? ` / next at ${ach.tiers[tier + 1]}` : ''}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -351,6 +393,8 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
   const [visible, setVisible] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const achievement = ACHIEVEMENTS.find((a) => a.id === achievementId);
+  const tier = useCommandCenterStore((s) => s.achievementTiers[achievementId]);
+  const tierLabel = achievement?.tiers && tier != null ? ` ${TIER_LABELS[tier] ?? tier + 1}` : '';
 
   useEffect(() => {
     // Fade in
@@ -415,7 +459,7 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
           Achievement Unlocked
         </div>
         <div style={{ fontSize: 11, color: '#c8e8b8', fontWeight: 600, lineHeight: 1.2, marginBottom: 2 }}>
-          {achievement.name}
+          {achievement.name}{tierLabel}
         </div>
         <div style={{ fontSize: 9, color: '#6a8a72', lineHeight: 1.3 }}>
           {achievement.secret ? '???' : achievement.desc}

@@ -30,13 +30,13 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
   const type = OPENCODE_TO_EVENT[eventName] ?? (eventName.startsWith('tool.') ? 'tool.call' : null);
   if (!type) return null;
 
-  const agentId = (o.agentId ?? o.sessionId ?? 'opencode-1') as string;
-  const agentName = (o.agentName ?? 'OpenCode') as string;
+  const agentId = String(o.agentId ?? o.sessionId ?? 'opencode-1').slice(0, 128);
+  const agentName = String(o.agentName ?? 'OpenCode').slice(0, 64);
 
   return {
     id: nextId(),
-    agentId: String(agentId),
-    agentName: String(agentName),
+    agentId,
+    agentName,
     agentType: 'opencode',
     type,
     timestamp: (o.timestamp as number) ?? Date.now(),

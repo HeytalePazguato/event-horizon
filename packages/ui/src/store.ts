@@ -7,6 +7,15 @@ import { create } from 'zustand';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
 
+/**
+ * Tier thresholds for tiered achievements.
+ * Kept here (not imported from Achievements.tsx) to avoid circular dependency.
+ */
+const TIERED_THRESHOLDS: Record<string, number[]> = {
+  gravity_well: [1, 10, 50, 100, 1000, 10000],
+  ufo_hunter:   [1, 10, 50, 100, 500],
+};
+
 export interface LogEntry {
   ts: string;
   agentId: string;
@@ -42,6 +51,10 @@ export interface CommandCenterState {
   activeToasts: ToastEntry[];
   /** Achievement IDs that have already been unlocked (one-shot). */
   unlockedAchievements: string[];
+  /** Cumulative counts for tiered achievements (e.g. gravity_well → 42). */
+  achievementCounts: Record<string, number>;
+  /** Current tier index for tiered achievements. */
+  achievementTiers: Record<string, number>;
   /** Whether the "Connect Agent" dropdown is open. */
   connectOpen: boolean;
   /** Whether the "Spawn Agent" modal is open. */
@@ -61,8 +74,10 @@ export interface CommandCenterState {
   addLog: (entry: LogEntry) => void;
   toggleInfo: () => void;
   requestDemo: () => void;
-  /** Unlock an achievement and show a toast. No-op if already unlocked. */
+  /** Unlock an achievement and show a toast. No-op if already unlocked. For tiered achievements, use incrementTieredAchievement instead. */
   unlockAchievement: (id: string) => void;
+  /** Increment the count for a tiered achievement and upgrade tier if threshold is met. */
+  incrementTieredAchievement: (id: string) => void;
   /** Remove a toast by instanceId (called when the animation finishes). */
   dismissToast: (instanceId: string) => void;
   toggleConnect: () => void;
@@ -85,6 +100,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   demoRequested: false,
   activeToasts: [],
   unlockedAchievements: [],
+  achievementCounts: {},
+  achievementTiers: {},
   connectOpen: false,
   spawnOpen: false,
   pendingConnectAgent: null,
@@ -139,6 +156,34 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
       unlockedAchievements: [...s.unlockedAchievements, id],
       activeToasts: [...s.activeToasts, { instanceId, achievementId: id }],
     }));
+  },
+
+  incrementTieredAchievement: (id) => {
+    const tiers = TIERED_THRESHOLDS[id];
+    if (!tiers) return;
+    const state = get();
+    const newCount = (state.achievementCounts[id] ?? 0) + 1;
+    const currentTier = state.achievementTiers[id] ?? -1;
+    // Find the next tier threshold that was just reached
+    let newTier = currentTier;
+    for (let i = currentTier + 1; i < tiers.length; i++) {
+      if (newCount >= tiers[i]) newTier = i;
+      else break;
+    }
+    const tierUpgraded = newTier > currentTier;
+    const updates: Partial<CommandCenterState> = {
+      achievementCounts: { ...state.achievementCounts, [id]: newCount },
+    };
+    if (tierUpgraded) {
+      updates.achievementTiers = { ...state.achievementTiers, [id]: newTier };
+      // Ensure it's in unlockedAchievements (first unlock) or just toast on upgrade
+      if (!state.unlockedAchievements.includes(id)) {
+        updates.unlockedAchievements = [...state.unlockedAchievements, id];
+      }
+      const instanceId = `${id}-t${newTier}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      updates.activeToasts = [...state.activeToasts, { instanceId, achievementId: id }];
+    }
+    set(updates);
   },
 
   dismissToast: (instanceId) =>

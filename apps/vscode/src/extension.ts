@@ -15,11 +15,16 @@ const webviewRef: { current: vscode.Webview | null } = { current: null };
 export function activate(context: vscode.ExtensionContext): void {
   // Instantiate core services inside activate — not at module level — to avoid
   // side effects before VS Code has activated the extension.
+  const outputChannel = vscode.window.createOutputChannel('Event Horizon');
+  context.subscriptions.push(outputChannel);
+
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
 
+  let eventCount = 0;
   function onAgentEvent(event: AgentEvent): void {
+    eventCount++;
     metricsEngine.process(event);
     agentStateManager.apply(event);
     if (webviewRef.current) {
@@ -30,6 +35,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
   startEventServer({ onEvent: (event) => eventBus.emit(event) });
+  outputChannel.appendLine(`[Event Horizon] Server started on port 28765`);
   setupCopilotOutputChannel((event) => eventBus.emit(event));
 
   const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine);
@@ -70,6 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push({
     dispose: () => {
+      outputChannel.appendLine(`[Event Horizon] Deactivating — processed ${eventCount} events`);
       unsubscribeEventBus();
       stopEventServer();
       webviewRef.current = null;

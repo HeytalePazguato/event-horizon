@@ -23,18 +23,18 @@ This metaphor works because it scales naturally. One agent is a lonely planet. F
 
 - **Spaceships** — Data transfers between agents are visualized as triangle ships flying curved bezier arcs between planets. Each ship leaves a colored trail (blue for Claude, purple for Copilot, green for OpenCode, gold for others). The arcs are computed to avoid the central black hole — even anti-podal routes curve safely around it.
 
-- **Black Hole** — The singularity at the center of the universe. A layered disc (dark core, glowing accretion rings, outer halo) that exerts gravitational pull on nearby objects. Astronauts that drift too close are captured and spiral inward, shrinking and fading as they cross the event horizon.
-
-- **Astronauts** — Small figures drifting through the universe, affected by gravity from both planets and the black hole. Click anywhere in empty space to spawn one. They bounce off the viewport edges and get consumed if they spiral too close to the singularity.
-
-- **UFO** — Appears periodically, flies to a random planet, beams up a cow, then flies away in a random direction. Pure flavor.
+- **Black Hole** — The singularity at the center of the universe. A layered disc (dark core, glowing accretion rings, outer halo) that exerts gravitational pull on nearby objects.
 
 ### Command Center
 
-A StarCraft 2 Terran-inspired control panel at the bottom of the viewport with chamfered corners and LED indicators. Three sections:
+A control panel at the bottom of the viewport with chamfered corners and LED indicators. Three sections:
 - **Agent Identity** (left) — Selected agent name, type icon, and state
 - **Metrics** (center) — 5x2 grid showing Load, Tools, Prompts, Errors, Success%, Subagents, Tasks, Top Tool, Uptime, Last Active. Tabs for Info/Logs/Medals.
 - **Controls** (right) — Command buttons: Pause, Isolate, Center, Connect, Spawn, Demo, Info
+
+### Achievements
+
+Certain actions and milestones in the universe unlock achievements, displayed as medals in the Command Center. Some achievements have multiple tiers — repeating the action enough times upgrades the medal through escalating thresholds (e.g., I → II → III...), rewarding sustained engagement without requiring grinding.
 
 ## Supported Agent Ecosystems
 
@@ -51,7 +51,7 @@ pnpm + Turborepo monorepo:
 packages/
   core/        - Event model, bus, metrics engine, agent state (pure TS, no deps)
   connectors/  - Agent adapters (Claude Code, OpenCode, Copilot, mock)
-  renderer/    - PixiJS 8 universe (planets, moons, ships, singularity, stars, UFO)
+  renderer/    - PixiJS 8 universe (planets, moons, ships, singularity, stars)
   ui/          - React + Zustand Command Center overlay
 apps/
   vscode/      - VS Code extension host + webview
@@ -114,4 +114,4 @@ See [docs/e2e-testing.md](docs/e2e-testing.md) for more event sources (Claude Co
 
 ## License
 
-Private repository.
+MIT License with Commons Clause — see [LICENSE](LICENSE) for details.

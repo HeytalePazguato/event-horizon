@@ -3,7 +3,7 @@
  */
 
 import { createRoot } from 'react-dom/client';
-import { useState, useEffect, useCallback, useRef, Component, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn } from '@event-horizon/renderer';
 import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore } from '@event-horizon/ui';
@@ -129,6 +129,7 @@ function App() {
   const infoOpen             = useCommandCenterStore((s) => s.infoOpen);
   const toggleInfo           = useCommandCenterStore((s) => s.toggleInfo);
   const unlockAchievement    = useCommandCenterStore((s) => s.unlockAchievement);
+  const incrementTiered      = useCommandCenterStore((s) => s.incrementTieredAchievement);
   const selectedAgentId      = useCommandCenterStore((s) => s.selectedAgentId);
   const centerRequestedAt    = useCommandCenterStore((s) => s.centerRequestedAt);
   const connectOpen          = useCommandCenterStore((s) => s.connectOpen);
@@ -279,15 +280,17 @@ function App() {
     if (hasError) unlockAchievement('supernova');
   }, [agentMap, unlockAchievement]);
 
-  // traffic_control — count total ships launched
+  // traffic_control — count total ships launched (increment by 1 per new ship added)
+  const prevShipCountRef = useRef(0);
   useEffect(() => {
-    if (ships.length === 0) return;
-    // Each time a new ship appears in the list we count it
-    const newTotal = shipLaunchCountRef.current + ships.length;
-    shipLaunchCountRef.current = newTotal;
-    if (newTotal >= 10) unlockAchievement('traffic_control');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ships.length]);
+    const current = ships.length;
+    const prev = prevShipCountRef.current;
+    if (current > prev) {
+      shipLaunchCountRef.current += (current - prev);
+      if (shipLaunchCountRef.current >= 10) unlockAchievement('traffic_control');
+    }
+    prevShipCountRef.current = current;
+  }, [ships.length, unlockAchievement]);
 
   // abyss — selected an agent and kept it selected for 60 seconds
   useEffect(() => {
@@ -301,8 +304,8 @@ function App() {
   }, [selectedAgentId, unlockAchievement]);
 
   const handleAstronautConsumed = useCallback(() => {
-    unlockAchievement('gravity_well');
-  }, [unlockAchievement]);
+    incrementTiered('gravity_well');
+  }, [incrementTiered]);
 
   const handleAstronautSpawned = useCallback(() => {
     unlockAchievement('lone_astronaut');
@@ -311,6 +314,10 @@ function App() {
   const handleUfoAbduction = useCallback(() => {
     unlockAchievement('abduction');
   }, [unlockAchievement]);
+
+  const handleUfoClicked = useCallback(() => {
+    incrementTiered('ufo_hunter');
+  }, [incrementTiered]);
 
   // ── Planet hover / click ──────────────────────────────────────────────────
 
@@ -337,6 +344,16 @@ function App() {
   const hasAgents = agents.length > 0;
   const agentStates = Object.fromEntries(
     Object.entries(agentMap).map(([k, v]) => [k, v.state ?? 'idle'])
+  );
+
+  // Memoize derived props to avoid unnecessary re-renders (audit 2.4/2.5)
+  const metricsView = useMemo(
+    () => Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, { load: v.load }])),
+    [metricsMap],
+  );
+  const activeSubagentsView = useMemo(
+    () => Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, v.activeSubagents ?? 0])),
+    [metricsMap],
   );
 
   const [demoSimRunning, setDemoSimRunning] = useState(false);
@@ -480,8 +497,8 @@ function App() {
           width={panelSize.width}
           height={panelSize.height}
           agents={agents}
-          metrics={Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, { load: v.load }]))}
-          activeSubagents={Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, v.activeSubagents ?? 0]))}
+          metrics={metricsView}
+          activeSubagents={activeSubagentsView}
           ships={ships}
           agentStates={agentStates}
           pausedAgentIds={pausedAgentIds}
@@ -494,6 +511,7 @@ function App() {
           onAstronautConsumed={handleAstronautConsumed}
           onAstronautSpawned={handleAstronautSpawned}
           onUfoAbduction={handleUfoAbduction}
+          onUfoClicked={handleUfoClicked}
         />
       </div>
       {!hasAgents && (

@@ -66,7 +66,7 @@ export function createRandomMockEvent(): AgentEvent {
   if (type === 'task.start') payload.taskId = nextId();
   if (type === 'task.progress') payload.progress = Math.random();
   if (type === 'tool.call' || type === 'tool.result') {
-    payload.tokens = Math.floor(Math.random() * 500) + 50;
+    payload.toolName = pick(['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob']);
   }
   if (type === 'data.transfer') {
     const other = pick(MOCK_AGENTS.filter((a) => a.id !== agent.id));
@@ -105,9 +105,7 @@ export async function* mockEventStream(intervalMs = 800): AsyncGenerator<AgentEv
       payload.taskId = taskId ?? nextId();
       taskId = null;
     } else if (type === 'tool.call' || type === 'tool.result') {
-      payload.tokens = Math.floor(Math.random() * 400) + 100;
-      payload.inputTokens = Math.floor(Math.random() * 200);
-      payload.outputTokens = Math.floor(Math.random() * 200);
+      payload.toolName = pick(['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob']);
     }
 
     yield createMockEvent({
