@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build:event-horizon",
+      "type": "shell",
+      "command": "pnpm run build --filter=event-horizon-vscode",
+      "group": "build",
+      "presentation": { "reveal": "silent" }
+    }
+  ]
+}

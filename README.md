@@ -43,7 +43,25 @@ Certain actions and milestones in the universe unlock achievements, displayed as
 - **GitHub Copilot** — Connector ready, integration coming soon
 - **Cursor** — Connector ready, integration coming soon
 
-## Project Structure
+## Getting Started
+
+Install **Event Horizon** from the VS Code Marketplace (or from a `.vsix` file), then:
+
+1. **Open the view:** Click the **globe icon** in the sidebar, or **Ctrl+Shift+P** then **Event Horizon: Open Universe**.
+
+2. **Connect an agent:** Click **Connect** in the Command Center, choose **Claude Code**, click **Install**. This adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet appears automatically.
+
+3. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI (Claude Code, OpenCode, or Aider).
+
+4. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
+
+---
+
+## Development
+
+Everything below is for contributors building Event Horizon from source.
+
+### Project Structure
 
 pnpm + Turborepo monorepo:
 
@@ -60,33 +78,27 @@ tools/
 docs/          - Documentation and development plan
 ```
 
-## Prerequisites
+### Prerequisites
 
 - **Node.js** 18+
 - **pnpm** (or use `npx pnpm`)
   - Install: `npm install -g pnpm`
   - Or Corepack: `corepack enable` then `corepack prepare pnpm@latest`
 
-## Getting Started
+### Building
 
 ```bash
 pnpm install
 pnpm build
 ```
 
-## Testing the VS Code Extension
+### Running the Extension Locally
 
 1. **Build** (from repo root): `pnpm build`
 
 2. **Run:** Press **F5**. If prompted, click **Continue**. A second window opens (Extension Development Host).
 
-3. **Open the view:** Click the **globe icon** in the sidebar, or **Ctrl+Shift+P** then **Event Horizon: Open Universe**.
-
-4. **Connect an agent:** Click **Connect** in the Command Center, choose **Claude Code**, click **Install**. This adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet appears automatically.
-
-5. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI (Claude Code, OpenCode, or Aider).
-
-6. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
+3. Follow the "Getting Started" steps above to open the view, connect agents, or run the demo.
 
 **Send test events manually:**
 
@@ -103,7 +115,7 @@ curl -X POST http://127.0.0.1:28765/events \
   -d "{\"id\":\"t1\",\"agentId\":\"agent-1\",\"agentName\":\"Test Agent\",\"agentType\":\"opencode\",\"type\":\"agent.spawn\",\"timestamp\":$(date +%s)000,\"payload\":{}}"
 ```
 
-**Install from .vsix:** `cd apps/vscode && pnpm run package:vsix`, then **Extensions** > **...** > **Install from VSIX...** and reload.
+**Package a .vsix:** `cd apps/vscode && pnpm run package:vsix`, then **Extensions** > **...** > **Install from VSIX...** and reload.
 
 ### Seeing Changes After Edits
 

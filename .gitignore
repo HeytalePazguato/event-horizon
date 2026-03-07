@@ -12,7 +12,9 @@ coverage
 .vscode/*
 !.vscode/extensions.json
 !.vscode/launch.json
+!.vscode/tasks.json
 apps/vscode/webview-dist/
 .claude/
+CLAUDE.md
 docs/AUDIT.md
 docs/IMPLEMENTATION_PLAN.md

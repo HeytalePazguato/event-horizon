@@ -3,7 +3,13 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "out/**", ".next/**"]
+      "outputs": ["dist/**", "out/**", "webview-dist/**"]
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["build"]
     },
     "dev": {
       "cache": false,

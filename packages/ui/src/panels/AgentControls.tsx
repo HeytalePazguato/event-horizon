@@ -1,5 +1,5 @@
 /**
- * Right panel: command grid (StarCraft-style icon buttons + SC2 tooltip).
+ * Right panel: command grid (icon buttons + tooltip).
  * @event-horizon/ui
  */
 
@@ -82,15 +82,29 @@ interface CmdBtn {
   alwaysActive?: boolean;
 }
 
-const BUTTONS: CmdBtn[] = [
+/**
+ * Grid layout (5x3):
+ *   Row 1 — Agent actions:  Pause, Isolate, Center
+ *   Row 2 — Setup actions:  Connect, Spawn
+ *   Row 3 — Meta/utility:   (empty x3), Demo, Info
+ */
+const GRID: Array<CmdBtn | null> = [
+  // Row 1 — agent actions
   { id: 'pause',   label: 'Pause',   desc: 'Freeze agent animation and pulse.',     icon: IconPause,   requiresAgent: true },
   { id: 'isolate', label: 'Isolate', desc: 'Dim all other planets to focus.',       icon: IconIsolate,  requiresAgent: true },
   { id: 'center',  label: 'Center',  desc: 'Re-center the map.',                    icon: IconCenter,   alwaysActive: true },
+  null, null,
+  // Row 2 — setup actions
   { id: 'connect', label: 'Connect', desc: 'Connect a new agent to the universe.',  icon: IconConnect,  alwaysActive: true },
   { id: 'spawn',   label: 'Spawn',   desc: 'Open a terminal with an agent CLI.',    icon: IconSpawn,    alwaysActive: true },
+  null, null, null,
+  // Row 3 — meta/utility (bottom-right)
+  null, null, null,
   { id: 'demo',    label: 'Demo',    desc: 'Toggle demo simulation.',               icon: IconDemo,     alwaysActive: true },
   { id: 'info',    label: 'Info',    desc: 'Show the universe guide.',              icon: IconInfo,     alwaysActive: true },
 ];
+
+const BUTTONS = GRID.filter((b): b is CmdBtn => b !== null);
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -146,7 +160,7 @@ const btnDisabled: React.CSSProperties = {
   cursor: 'default',
 };
 
-// ── SC2-style tooltip ─────────────────────────────────────────────────────────
+// ── Command tooltip ──────────────────────────────────────────────────────────
 
 const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
   createPortal(
@@ -227,7 +241,10 @@ export const AgentControls: FC = () => {
       {hoveredBtn && <CmdTooltip label={hoveredBtn.label} desc={hoveredBtn.desc} />}
       <div style={labelStyle}>Commands</div>
       <div style={gridStyle}>
-        {BUTTONS.map((btn) => {
+        {GRID.map((btn, i) => {
+          if (!btn) {
+            return <button key={`empty-${i}`} type="button" style={btnDisabled} disabled tabIndex={-1} aria-hidden />;
+          }
           const active = isActive(btn);
           const lit = isLit(btn);
           const style = !active ? btnDisabled : lit ? btnLit : btnActive;
@@ -246,10 +263,6 @@ export const AgentControls: FC = () => {
             </button>
           );
         })}
-        {/* Empty slots to fill the 5x3 grid */}
-        {Array.from({ length: 15 - BUTTONS.length }).map((_, i) => (
-          <button key={`empty-${i}`} type="button" style={btnDisabled} disabled tabIndex={-1} aria-hidden />
-        ))}
       </div>
     </div>
   );

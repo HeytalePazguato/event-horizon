@@ -8,8 +8,8 @@
 - Data transfers rendered as ships flying curved arcs between planets
 - Astronauts drifting through the universe; captured by singularity gravity
 - UFO abduction event with beam and cow silhouette
-- StarCraft II-style Command Center panel with agent identity, live metrics (load, tokens, active tasks, errors), event logs, and medals tabs
-- SC2-style icon command grid with hover tooltips
+- Command Center panel with agent identity, live metrics (load, tools, active tasks, errors), event logs, and medals tabs
+- Command grid with hover tooltips
 - Connect Agent wizard: one-click Claude Code hook installation via `~/.claude/settings.json`
 - Achievements system with toast notifications and medals
 - Demo simulation mode for trying the extension without a live agent

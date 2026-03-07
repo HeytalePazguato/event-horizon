@@ -535,8 +535,7 @@ export const Universe: FC<UniverseProps> = ({
         app.destroy(true, { children: true });
       } catch { /* already destroyed */ }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // init-only effect
 
   // --- resize --------------------------------------------------------------
   useEffect(() => {
@@ -650,7 +649,6 @@ export const Universe: FC<UniverseProps> = ({
     planetPositionsRef.current = posMap;
     prevAgentsRef.current = agents;
   // metrics intentionally excluded — read via metricsRef to avoid recreating planets on every update
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, selectedAgentId, onPlanetHover, onPlanetClick]);
 
   // --- ships ---------------------------------------------------------------

@@ -3,16 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "description": "Visualize AI coding agents as a living cosmic system",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HeytalePazguato/event-horizon.git"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "HeytalePazguato",
+  "bugs": {
+    "url": "https://github.com/HeytalePazguato/event-horizon/issues"
+  },
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
-    "test": "turbo run test",
+    "test": "echo \"No tests configured yet\"",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.3",
+    "globals": "^17.4.0",
     "turbo": "^2.3.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.56.1"
   },
   "packageManager": "pnpm@9.14.2",
   "engines": {

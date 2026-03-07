@@ -6,6 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "lint": "eslint src/",
     "dev": "tsc --watch",
     "clean": "rm -rf dist"
   },

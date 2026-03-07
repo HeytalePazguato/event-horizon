@@ -5,6 +5,7 @@
   "private": true,
   "displayName": "Event Horizon",
   "description": "Visualize AI coding agents as a living cosmic system — planets, black holes, ships and more.",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "out/extension.js",
   "icon": "assets/icon.png",
   "galleryBanner": {
@@ -53,6 +54,7 @@
   },
   "scripts": {
     "build": "tsc && pnpm run build:webview",
+    "lint": "eslint src/ webview/",
     "build:webview": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic",
     "build:webview:prod": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic --minify",
     "package:vsix": "tsc && pnpm run build:webview:prod && vsce package --no-dependencies",
