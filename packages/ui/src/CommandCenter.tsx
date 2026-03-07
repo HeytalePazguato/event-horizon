@@ -16,12 +16,17 @@ import { useCommandCenterStore } from './store.js';
 
 const CHAMFER = 28;
 
-const wrapper: React.CSSProperties = {
+// Outer container: handles screen positioning only — NO clipPath so ConnectPanel isn't masked.
+const outerWrapper: React.CSSProperties = {
   position: 'absolute',
   bottom: 0,
   left: 0,
   right: 0,
   zIndex: 20,
+};
+
+// Inner chrome: visual styling + clipPath (applies only to this element's painted area).
+const wrapper: React.CSSProperties = {
   background: 'linear-gradient(180deg, #06090c 0%, #03060a 100%)',
   borderTop: '3px solid #182820',
   boxShadow: [
@@ -235,11 +240,9 @@ export const CommandCenter: FC = () => {
   const connectOpen   = useCommandCenterStore((s) => s.connectOpen);
   const toggleConnect = useCommandCenterStore((s) => s.toggleConnect);
   return (
-    <div
-      data-command-center
-      style={{ ...wrapper, minHeight: minimized ? 38 : undefined, position: 'relative' }}
-    >
+    <div data-command-center style={outerWrapper}>
       {connectOpen && <ConnectPanel onClose={toggleConnect} />}
+      <div style={{ ...wrapper, minHeight: minimized ? 38 : undefined }}>
       <div style={headerBar}>
         {/* Status LED */}
         <div
@@ -307,6 +310,7 @@ export const CommandCenter: FC = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
