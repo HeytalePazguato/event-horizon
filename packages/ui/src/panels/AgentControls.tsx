@@ -5,6 +5,7 @@
 
 import type { FC } from 'react';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useCommandCenterStore } from '../store.js';
 
 // ── Icon SVGs ─────────────────────────────────────────────────────────────────
@@ -41,13 +42,6 @@ const IconPrioritize: FC = () => (
   </svg>
 );
 
-const IconLogs: FC = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-    <rect x="2" y="2.5" width="6" height="1.4" rx="0.7" fill="currentColor" />
-    <rect x="2" y="6.3" width="10" height="1.4" rx="0.7" fill="currentColor" />
-    <rect x="2" y="10.1" width="8" height="1.4" rx="0.7" fill="currentColor" />
-  </svg>
-);
 
 const IconCenter: FC = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -81,13 +75,12 @@ interface CmdBtn {
 }
 
 const BUTTONS: CmdBtn[] = [
-  { id: 'pause',      label: 'Pause',      desc: 'Freeze agent animation and pulse.', icon: IconPause,      requiresAgent: true },
-  { id: 'restart',    label: 'Restart',    desc: 'Reset agent to idle state.',        icon: IconRestart,    requiresAgent: true },
-  { id: 'isolate',    label: 'Isolate',    desc: 'Dim all other planets.',            icon: IconIsolate,    requiresAgent: true },
-  { id: 'prioritize', label: 'Prioritize', desc: 'Temporarily boost this agent.',     icon: IconPrioritize, requiresAgent: true },
-  { id: 'logs',       label: 'Logs',       desc: 'Show event log for this agent.',    icon: IconLogs,       requiresAgent: true },
-  { id: 'center',     label: 'Center',     desc: 'Re-center the map.',               icon: IconCenter,     alwaysActive: true },
-  { id: 'connect',    label: 'Connect',    desc: 'Connect a new agent to the universe.', icon: IconConnect, alwaysActive: true },
+  { id: 'pause',      label: 'Pause',      desc: 'Freeze agent animation and pulse.',    icon: IconPause,      requiresAgent: true },
+  { id: 'restart',    label: 'Restart',    desc: 'Reset agent to idle state.',           icon: IconRestart,    requiresAgent: true },
+  { id: 'isolate',    label: 'Isolate',    desc: 'Dim all other planets.',               icon: IconIsolate,    requiresAgent: true },
+  { id: 'prioritize', label: 'Prioritize', desc: 'Temporarily boost this agent.',        icon: IconPrioritize, requiresAgent: true },
+  { id: 'center',     label: 'Center',     desc: 'Re-center the map.',                  icon: IconCenter,     alwaysActive: true },
+  { id: 'connect',    label: 'Connect',    desc: 'Connect a new agent to the universe.', icon: IconConnect,    alwaysActive: true },
 ];
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -146,31 +139,33 @@ const btnDisabled: React.CSSProperties = {
 
 // ── SC2-style tooltip ─────────────────────────────────────────────────────────
 
-const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) => (
-  <div
-    style={{
-      position: 'fixed',
-      bottom: 148,
-      right: 12,
-      width: 172,
-      background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
-      border: '1px solid #2a5a3c',
-      boxShadow: '0 -4px 16px rgba(0,0,0,0.75)',
-      padding: '7px 9px',
-      fontFamily: 'Consolas, monospace',
-      zIndex: 250,
-      pointerEvents: 'none',
-      clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
-    }}
-  >
-    <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em', marginBottom: 4 }}>
-      {label}
-    </div>
-    <div style={{ fontSize: 9, color: '#4a7a58', lineHeight: 1.5 }}>
-      {desc}
-    </div>
-  </div>
-);
+const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
+  createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 178,
+        right: 12,
+        width: 172,
+        background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+        border: '1px solid #2a5a3c',
+        boxShadow: '0 -4px 16px rgba(0,0,0,0.75)',
+        padding: '7px 9px',
+        fontFamily: 'Consolas, monospace',
+        zIndex: 9999,
+        pointerEvents: 'none',
+        clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em', marginBottom: 4 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 9, color: '#4a7a58', lineHeight: 1.5 }}>
+        {desc}
+      </div>
+    </div>,
+    document.body
+  );
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -190,7 +185,6 @@ export const AgentControls: FC = () => {
 
   function isActive(btn: CmdBtn): boolean {
     if (btn.requiresAgent) return !!selectedAgentId;
-    if (btn.id === 'connect') return connectOpen;
     return true;
   }
 

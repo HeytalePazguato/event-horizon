@@ -106,6 +106,10 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 
 function App() {
   const [agents, setAgents] = useState<Array<{ id: string; name: string; agentType?: string }>>([]);
+  const [connectedAgentTypes, setConnectedAgentTypes] = useState<string[]>(() => {
+    const w = window as unknown as Record<string, unknown>;
+    return Array.isArray(w['__ehConnectedAgents']) ? (w['__ehConnectedAgents'] as string[]) : [];
+  });
   const [metrics, setMetrics] = useState<Record<string, { load: number }>>({});
   const [agentMap, setAgentMap] = useState<Record<string, AgentState>>({});
   const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
@@ -134,6 +138,10 @@ function App() {
   useEffect(() => {
     const handler = (e: MessageEvent<EventPayload>) => {
       const msg = e.data;
+      if (msg?.type === 'connected-agents') {
+        setConnectedAgentTypes((msg as unknown as { agentTypes: string[] }).agentTypes ?? []);
+        return;
+      }
       if (msg?.type !== 'event' || !msg.payload) return;
       const raw = msg.payload as {
         agentId?: string;
@@ -202,7 +210,8 @@ function App() {
         type: string;
         payload?: { tokens?: number; inputTokens?: number; outputTokens?: number };
       };
-      const load = event.type === 'task.progress' || event.type === 'tool.call' ? 0.7 : 0.3;
+      const isHighLoad = event.type === 'task.progress' || event.type === 'tool.call' || event.type === 'tool.result';
+      const load = isHighLoad ? 0.7 : 0.3;
       setMetrics((prev) => ({
         ...prev,
         [event.agentId]: {
@@ -214,14 +223,23 @@ function App() {
         + ((event.payload?.outputTokens as number) ?? 0);
       setMetricsMap((prev) => {
         const m = prev[event.agentId];
+        const prevLoad = m?.load ?? 0.3;
+        const activeTasks = event.type === 'task.start'
+          ? (m?.activeTasks ?? 0) + 1
+          : (event.type === 'task.complete' || event.type === 'task.fail' || event.type === 'task.cancel')
+            ? Math.max(0, (m?.activeTasks ?? 0) - 1)
+            : (m?.activeTasks ?? 0);
+        const errorCount = event.type === 'agent.error'
+          ? (m?.errorCount ?? 0) + 1
+          : (m?.errorCount ?? 0);
         return {
           ...prev,
           [event.agentId]: {
             agentId: event.agentId,
-            load: m ? m.load * 0.9 + (event.type === 'agent.error' ? 0.5 : 0.2) : 0.3,
+            load: prevLoad * 0.9 + load * 0.1,
             tokenUsage: (m?.tokenUsage ?? 0) + tokens,
-            activeTasks: m?.activeTasks ?? 0,
-            errorCount: m?.errorCount ?? 0,
+            activeTasks,
+            errorCount,
             lastUpdated: Date.now(),
           },
         };
@@ -230,6 +248,16 @@ function App() {
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, []);
+
+  // ── Keep selectedMetrics/selectedAgent in sync with live data ────────────
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    const agent = agentMap[selectedAgentId];
+    const metric = metricsMap[selectedAgentId];
+    if (agent || metric) {
+      setSelectedAgentData(agent ?? null, metric ?? null);
+    }
+  }, [selectedAgentId, agentMap, metricsMap, setSelectedAgentData]);
 
   // ── Achievement detection ─────────────────────────────────────────────────
 
@@ -562,28 +590,41 @@ function App() {
               { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'auto'      as const, desc: 'Runs natively inside Cursor. No setup required.' },
               { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'soon'      as const, desc: 'OpenCode hook support coming soon.' },
               { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },
-            ].map((c) => (
-              <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid rgba(30,70,45,0.35)' }}>
-                <div style={{ fontSize: 18, lineHeight: 1, paddingTop: 1 }}>{c.planet}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, color: '#90c088', fontWeight: 700, marginBottom: 2 }}>{c.label}</div>
-                  <div style={{ fontSize: 9, color: '#3a5a44', lineHeight: 1.4 }}>{c.desc}</div>
+            ].map((c) => {
+              const isConnected = connectedAgentTypes.includes(c.id);
+              return (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid rgba(30,70,45,0.35)' }}>
+                  <div style={{ fontSize: 18, lineHeight: 1, paddingTop: 1 }}>{c.planet}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: isConnected ? '#70e898' : '#90c088', fontWeight: 700, marginBottom: 2 }}>
+                      {c.label}
+                      {isConnected && <span style={{ fontSize: 8, color: '#40b868', marginLeft: 6, letterSpacing: '0.06em' }}>● LIVE</span>}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#3a5a44', lineHeight: 1.4 }}>{c.desc}</div>
+                  </div>
+                  {isConnected ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
+                      <div style={{ fontSize: 9, color: '#40b868', letterSpacing: '0.04em' }}>Connected</div>
+                      <button type="button"
+                        onClick={() => { vscodeApi?.postMessage({ type: 'remove-agent', agentType: c.id }); }}
+                        style={{ padding: '2px 7px', border: '1px solid #4a3030', background: 'rgba(40,15,15,0.8)', color: '#805858', fontSize: 8, cursor: 'pointer' }}>
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : c.status === 'available' ? (
+                    <button type="button"
+                      onClick={() => { vscodeApi?.postMessage({ type: 'setup-agent', agentType: c.id }); toggleConnect(); }}
+                      style={{ padding: '4px 10px', border: '1px solid #25904a', background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)', color: '#50c070', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
+                      Install
+                    </button>
+                  ) : c.status === 'auto' ? (
+                    <div style={{ fontSize: 9, color: '#4a88cc', flexShrink: 0, paddingTop: 2 }}>Auto</div>
+                  ) : (
+                    <div style={{ fontSize: 9, color: '#2a3a2a', flexShrink: 0, paddingTop: 2 }}>Soon</div>
+                  )}
                 </div>
-                {c.status === 'available' && (
-                  <button type="button"
-                    onClick={() => { vscodeApi?.postMessage({ type: 'setup-agent', agentType: c.id }); toggleConnect(); }}
-                    style={{ padding: '4px 10px', border: '1px solid #25904a', background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)', color: '#50c070', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
-                    Install
-                  </button>
-                )}
-                {c.status === 'auto' && (
-                  <div style={{ fontSize: 9, color: '#4a88cc', flexShrink: 0, paddingTop: 2 }}>Auto</div>
-                )}
-                {c.status === 'soon' && (
-                  <div style={{ fontSize: 9, color: '#2a3a2a', flexShrink: 0, paddingTop: 2 }}>Soon</div>
-                )}
-              </div>
-            ))}
+              );
+            })}
             <div style={{ marginTop: 10, fontSize: 9, color: '#2a4a34', textAlign: 'center' }}>
               Event Horizon listens on port 28765 — any agent on this machine can connect
             </div>

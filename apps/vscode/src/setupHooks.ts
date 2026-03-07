@@ -19,9 +19,52 @@ const EH_HOOKS = {
   Notification:        `message.receive`,
 };
 
-function buildCurlCommand(hookEvent: string): string {
-  // Works on Windows (curl is built-in since Win10 1803) and macOS/Linux
-  return `curl -s -X POST http://127.0.0.1:${PORT}/claude -H "Content-Type: application/json" -d "{\\"event\\":\\"${hookEvent}\\"}"`;
+function buildCurlCommand(): string {
+  // Pipe Claude's full hook payload (stdin) to our endpoint — works on Win10+, macOS, Linux
+  return `curl -s -X POST http://127.0.0.1:${PORT}/claude -H "Content-Type: application/json" --data-binary @-`;
+}
+
+/** Returns true if Event Horizon hooks are already present in ~/.claude/settings.json */
+export function isClaudeCodeHooksInstalled(): boolean {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+  try {
+    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const settings = JSON.parse(raw) as Record<string, unknown>;
+    const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+    return Object.keys(EH_HOOKS).some((hookEvent) => {
+      const entries = (hooks[hookEvent] ?? []) as unknown[];
+      return entries.some((h) => {
+        const hh = h as Record<string, unknown>;
+        const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
+        return hs.some((c) => typeof c.command === 'string' && c.command.includes(`127.0.0.1:${PORT}/claude`));
+      });
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** Removes Event Horizon hooks from ~/.claude/settings.json */
+export function removeClaudeCodeHooks(): void {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+  try {
+    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const settings = JSON.parse(raw) as Record<string, unknown>;
+    const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+    const cleaned: Record<string, unknown[]> = {};
+    for (const [hookEvent, entries] of Object.entries(hooks)) {
+      const filtered = entries.filter((h) => {
+        const hh = h as Record<string, unknown>;
+        const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
+        return !hs.some((c) => typeof c.command === 'string' && c.command.includes(`127.0.0.1:${PORT}/claude`));
+      });
+      if (filtered.length > 0) cleaned[hookEvent] = filtered;
+    }
+    settings.hooks = cleaned;
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  } catch {
+    // File not found or malformed — nothing to remove
+  }
 }
 
 export async function setupClaudeCodeHooks(): Promise<void> {
@@ -43,7 +86,7 @@ export async function setupClaudeCodeHooks(): Promise<void> {
   for (const [hookEvent] of Object.entries(EH_HOOKS)) {
     const hookEntry = {
       matcher: '',
-      hooks: [{ type: 'command', command: buildCurlCommand(hookEvent) }],
+      hooks: [{ type: 'command', command: buildCurlCommand() }],
     };
 
     const current = (merged[hookEvent] ?? []) as unknown[];

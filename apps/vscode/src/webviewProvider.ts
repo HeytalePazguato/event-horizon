@@ -3,7 +3,7 @@
  */
 
 import * as vscode from 'vscode';
-import { runSetupClaudeCodeHooks } from './setupHooks.js';
+import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
 
 export function createWebviewProvider(
   context: vscode.ExtensionContext,
@@ -29,18 +29,30 @@ export function createWebviewProvider(
         vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js')
       );
 
-      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri);
+      function getConnectedAgentTypes(): string[] {
+        const types: string[] = [];
+        if (isClaudeCodeHooksInstalled()) types.push('claude-code');
+        return types;
+      }
+
+      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, getConnectedAgentTypes());
 
       webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string }) => {
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
-          void runSetupClaudeCodeHooks();
+          void runSetupClaudeCodeHooks().then(() => {
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          });
+        } else if (msg?.type === 'remove-agent' && msg.agentType === 'claude-code') {
+          removeClaudeCodeHooks();
+          vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
+          void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
         }
       });
     },
   };
 }
 
-function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri): string {
+function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, connectedAgentTypes: string[]): string {
   const csp = [
     "default-src 'none'",
     "script-src 'unsafe-inline' 'unsafe-eval' " + webview.cspSource,
@@ -66,6 +78,7 @@ function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri): string 
 <body>
   <div id="root"><div class="loading">Loading app…</div></div>
   <script>
+    window.__ehConnectedAgents = ${JSON.stringify(connectedAgentTypes)};
     window.__ehScriptLoadError = function(msg) {
       var r = document.getElementById('root');
       if (r) r.innerHTML = '<div class="err">' + msg + '</div>';
