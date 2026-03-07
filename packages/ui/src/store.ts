@@ -7,27 +7,129 @@ import { create } from 'zustand';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
 
+export interface LogEntry {
+  ts: string;
+  agentId: string;
+  agentName: string;
+  type: string;
+}
+
+export interface ToastEntry {
+  instanceId: string;
+  achievementId: string;
+}
+
 export interface CommandCenterState {
   selectedAgentId: string | null;
   selectedAgent: AgentState | null;
   selectedMetrics: AgentMetrics | null;
   centerRequestedAt: number;
+  /** Agent IDs whose pulse animation is frozen. */
+  pausedAgentIds: Record<string, boolean>;
+  /** When set, all other planets are dimmed. */
+  isolatedAgentId: string | null;
+  /** Agents with a temporary visual boost (expires automatically). */
+  boostedAgentIds: Record<string, boolean>;
+  /** Whether the center panel is showing logs vs info. */
+  logsOpen: boolean;
+  /** Event log entries (capped at 200). */
+  logs: LogEntry[];
+  /** When true, show the in-universe info overlay. */
+  infoOpen: boolean;
+  /** Whether the demo simulation is running (owned here so Commands panel can toggle it). */
+  demoRequested: boolean;
+  /** Active toast notifications. */
+  activeToasts: ToastEntry[];
+  /** Achievement IDs that have already been unlocked (one-shot). */
+  unlockedAchievements: string[];
+
   setSelectedAgent: (id: string | null) => void;
   setSelectedAgentData: (agent: AgentState | null, metrics: AgentMetrics | null) => void;
   requestCenter: () => void;
+  togglePause: (id: string) => void;
+  toggleIsolate: (id: string) => void;
+  triggerBoost: (id: string) => void;
+  clearBoost: (id: string) => void;
+  openLogs: () => void;
+  closeLogs: () => void;
+  addLog: (entry: LogEntry) => void;
+  toggleInfo: () => void;
+  requestDemo: () => void;
+  /** Unlock an achievement and show a toast. No-op if already unlocked. */
+  unlockAchievement: (id: string) => void;
+  /** Remove a toast by instanceId (called when the animation finishes). */
+  dismissToast: (instanceId: string) => void;
 }
 
-export const useCommandCenterStore = create<CommandCenterState>((set) => ({
+export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedAgentId: null,
   selectedAgent: null,
   selectedMetrics: null,
   centerRequestedAt: 0,
+  pausedAgentIds: {},
+  isolatedAgentId: null,
+  boostedAgentIds: {},
+  logsOpen: false,
+  logs: [],
+  infoOpen: false,
+  demoRequested: false,
+  activeToasts: [],
+  unlockedAchievements: [],
+
   setSelectedAgent: (id) => set({ selectedAgentId: id, selectedAgent: null, selectedMetrics: null }),
+
   setSelectedAgentData: (agent, metrics) =>
     set({
       selectedAgentId: agent?.id ?? null,
       selectedAgent: agent ?? null,
       selectedMetrics: metrics ?? null,
     }),
+
   requestCenter: () => set({ centerRequestedAt: Date.now() }),
+
+  togglePause: (id) =>
+    set((s) => ({
+      pausedAgentIds: { ...s.pausedAgentIds, [id]: !s.pausedAgentIds[id] },
+    })),
+
+  toggleIsolate: (id) =>
+    set((s) => ({ isolatedAgentId: s.isolatedAgentId === id ? null : id })),
+
+  triggerBoost: (id) => {
+    set((s) => ({ boostedAgentIds: { ...s.boostedAgentIds, [id]: true } }));
+    setTimeout(() => get().clearBoost(id), 5000);
+  },
+
+  clearBoost: (id) =>
+    set((s) => {
+      const next = { ...s.boostedAgentIds };
+      delete next[id];
+      return { boostedAgentIds: next };
+    }),
+
+  openLogs: () => set({ logsOpen: true }),
+  closeLogs: () => set({ logsOpen: false }),
+
+  addLog: (entry) =>
+    set((s) => ({
+      logs: [entry, ...s.logs].slice(0, 200),
+    })),
+
+  toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),
+
+  requestDemo: () => set((s) => ({ demoRequested: !s.demoRequested })),
+
+  unlockAchievement: (id) => {
+    if (get().unlockedAchievements.includes(id)) return;
+    const instanceId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    set((s) => ({
+      unlockedAchievements: [...s.unlockedAchievements, id],
+      activeToasts: [...s.activeToasts, { instanceId, achievementId: id }],
+    }));
+  },
+
+  dismissToast: (instanceId) =>
+    set((s) => ({
+      activeToasts: s.activeToasts.filter((t) => t.instanceId !== instanceId),
+    })),
 }));

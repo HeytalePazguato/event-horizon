@@ -1,9 +1,14 @@
 .vscode/**
 .vscodeignore
+.cursor-plugin/**
+.turbo/**
 src/**
 webview/**
-node_modules
+node_modules/**
 **/*.ts
 **/*.tsx
 **/tsconfig.json
 **/.gitignore
+*.map
+**/*.test.*
+**/*.spec.*

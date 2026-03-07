@@ -5,7 +5,8 @@
 import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, useCommandCenterStore } from '@event-horizon/ui';
+import type { ShipSpawn } from '@event-horizon/renderer';
+import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore } from '@event-horizon/ui';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
 
@@ -95,13 +96,28 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 }
 
 function App() {
-  const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
+  const [agents, setAgents] = useState<Array<{ id: string; name: string; agentType?: string }>>([]);
   const [metrics, setMetrics] = useState<Record<string, { load: number }>>({});
   const [agentMap, setAgentMap] = useState<Record<string, AgentState>>({});
   const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
+  const [ships, setShips] = useState<ShipSpawn[]>([]);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
+  const addLog               = useCommandCenterStore((s) => s.addLog);
+  const pausedAgentIds       = useCommandCenterStore((s) => s.pausedAgentIds);
+  const isolatedAgentId      = useCommandCenterStore((s) => s.isolatedAgentId);
+  const boostedAgentIds      = useCommandCenterStore((s) => s.boostedAgentIds);
+  const demoRequested        = useCommandCenterStore((s) => s.demoRequested);
+  const infoOpen             = useCommandCenterStore((s) => s.infoOpen);
+  const toggleInfo           = useCommandCenterStore((s) => s.toggleInfo);
+  const unlockAchievement    = useCommandCenterStore((s) => s.unlockAchievement);
+  const selectedAgentId      = useCommandCenterStore((s) => s.selectedAgentId);
+  const centerRequestedAt    = useCommandCenterStore((s) => s.centerRequestedAt);
+
+  // Achievement tracking state
+  const shipLaunchCountRef = useRef(0);
+  const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const handler = (e: MessageEvent<EventPayload>) => {
@@ -120,15 +136,35 @@ function App() {
       const agentType = raw.agentType ?? 'unknown';
       const type = raw.type ?? 'agent.spawn';
 
-      if (type === 'task.complete' || type === 'agent.terminate') {
+      // Log every event
+      addLog({
+        ts: new Date().toLocaleTimeString(),
+        agentId,
+        agentName,
+        type,
+      });
+
+      if (type === 'agent.terminate') {
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
+        return;
+      }
+
+      if (type === 'data.transfer') {
+        const toAgentId = raw.payload?.toAgentId as string | undefined;
+        if (toAgentId) {
+          const shipId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const payloadSize = (raw.payload?.payloadSize as number | undefined) ?? 1;
+          setShips((prev) => [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }]);
+          // Clean up ship entry after enough time for it to complete its journey
+          setTimeout(() => setShips((prev) => prev.filter((s) => s.id !== shipId)), 20000);
+        }
         return;
       }
 
       setAgents((prev) => {
         const has = prev.some((a) => a.id === agentId);
         if (has) return prev;
-        return [...prev, { id: agentId, name: agentName }];
+        return [...prev, { id: agentId, name: agentName, agentType }];
       });
       setAgentMap((prev) => ({
         ...prev,
@@ -183,6 +219,62 @@ function App() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
+  // ── Achievement detection ─────────────────────────────────────────────────
+
+  // first_contact / ground_control / the_horde — triggered by agent count
+  useEffect(() => {
+    if (agents.length >= 1)  unlockAchievement('first_contact');
+    if (agents.length >= 3)  unlockAchievement('ground_control');
+    if (agents.length >= 10) unlockAchievement('the_horde');
+  }, [agents.length, unlockAchievement]);
+
+  // supernova — any agent enters error state
+  useEffect(() => {
+    const hasError = Object.values(agentMap).some((a) => a.state === 'error');
+    if (hasError) unlockAchievement('supernova');
+  }, [agentMap, unlockAchievement]);
+
+  // traffic_control — count total ships launched
+  useEffect(() => {
+    if (ships.length === 0) return;
+    // Each time a new ship appears in the list we count it
+    const newTotal = shipLaunchCountRef.current + ships.length;
+    shipLaunchCountRef.current = newTotal;
+    if (newTotal >= 10) unlockAchievement('traffic_control');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ships.length]);
+
+  // abyss — selected an agent and kept it selected for 60 seconds
+  useEffect(() => {
+    if (abyssTimerRef.current) clearTimeout(abyssTimerRef.current);
+    if (selectedAgentId) {
+      abyssTimerRef.current = setTimeout(() => unlockAchievement('abyss'), 60_000);
+    }
+    return () => {
+      if (abyssTimerRef.current) clearTimeout(abyssTimerRef.current);
+    };
+  }, [selectedAgentId, unlockAchievement]);
+
+  const handleAstronautConsumed = useCallback(() => {
+    unlockAchievement('gravity_well');
+  }, [unlockAchievement]);
+
+  const handleAstronautSpawned = useCallback(() => {
+    unlockAchievement('lone_astronaut');
+  }, [unlockAchievement]);
+
+  const handleUfoAbduction = useCallback(() => {
+    unlockAchievement('abduction');
+  }, [unlockAchievement]);
+
+  // ── Planet hover / click ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => setMousePos({ x: e.clientX, y: e.clientY });
+    window.addEventListener('mousemove', onMove);
+    return () => window.removeEventListener('mousemove', onMove);
+  }, []);
+
   const handlePlanetHover = useCallback((agentId: string | null) => {
     setHoveredAgentId(agentId);
   }, []);
@@ -193,37 +285,39 @@ function App() {
     setSelectedAgentData(agent ?? null, metric ?? null);
   }, [agentMap, metricsMap, setSelectedAgentData]);
 
-  const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
-  const centerRequestedAt = useCommandCenterStore((s) => s.centerRequestedAt);
-
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
   const hoveredMetrics = hoveredAgentId ? metricsMap[hoveredAgentId] : null;
   const panelSize = usePanelSize();
 
   const hasAgents = agents.length > 0;
+  const agentStates = Object.fromEntries(
+    Object.entries(agentMap).map(([k, v]) => [k, v.state ?? 'idle'])
+  );
+
   const [demoSimRunning, setDemoSimRunning] = useState(false);
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const runDemoSimulation = useCallback(() => {
     const demoAgents = [
-      { id: 'demo-opencode', name: 'OpenCode' },
-      { id: 'demo-claude', name: 'Claude' },
-      { id: 'demo-copilot', name: 'Copilot' },
-      { id: 'demo-cursor', name: 'Cursor' },
-      { id: 'demo-agent', name: 'Agent' },
+      { id: 'demo-opencode', name: 'OpenCode', agentType: 'opencode' },
+      { id: 'demo-claude',   name: 'Claude',   agentType: 'claude-code' },
+      { id: 'demo-copilot',  name: 'Copilot',  agentType: 'copilot' },
+      { id: 'demo-cursor',   name: 'Cursor',   agentType: 'cursor' },
+      { id: 'demo-agent',    name: 'Agent',    agentType: 'unknown' },
     ];
     setAgents((prev) => {
       const existing = new Set(prev.map((a) => a.id));
       const toAdd = demoAgents.filter((a) => !existing.has(a.id));
       return toAdd.length ? [...prev, ...toAdd] : prev;
     });
+    const demoAgentTypeMap = Object.fromEntries(demoAgents.map((a) => [a.id, a.agentType]));
     demoAgents.forEach((a) => {
       setAgentMap((m) => ({
         ...m,
         [a.id]: {
           id: a.id,
           name: a.name,
-          type: 'demo',
+          type: a.agentType,
           state: 'idle',
           currentTaskId: null,
         },
@@ -280,6 +374,19 @@ function App() {
         });
         return next;
       });
+      // Occasionally spawn a demo ship between two random agents
+      if (Math.random() < 0.35) {
+        const ids = demoAgents.map((a) => a.id);
+        const fromIdx = Math.floor(Math.random() * ids.length);
+        let toIdx = Math.floor(Math.random() * (ids.length - 1));
+        if (toIdx >= fromIdx) toIdx++;
+        const shipId = `demo-ship-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        setShips((prev) => [
+          ...prev,
+          { id: shipId, fromAgentId: ids[fromIdx], toAgentId: ids[toIdx], payloadSize: Math.floor(Math.random() * 10) + 1, fromAgentType: demoAgentTypeMap[ids[fromIdx]] },
+        ]);
+        setTimeout(() => setShips((prev) => prev.filter((s) => s.id !== shipId)), 20000);
+      }
     }, 1400);
     setDemoSimRunning(true);
   }, []);
@@ -291,13 +398,21 @@ function App() {
     }
     setDemoSimRunning(false);
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
+    setShips((prev) => prev.filter((s) => !s.id.startsWith('demo-ship-')));
   }, []);
+
+  // Sync demo simulation with store flag (placed after callbacks are defined)
+  useEffect(() => {
+    if (demoRequested && !demoSimRunning) {
+      runDemoSimulation();
+    } else if (!demoRequested && demoSimRunning) {
+      stopDemoSimulation();
+    }
+  }, [demoRequested, demoSimRunning, runDemoSimulation, stopDemoSimulation]);
 
   useEffect(() => () => {
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
   }, []);
-
-  const psCommand = "$body = '{\"id\":\"t1\",\"agentId\":\"agent-1\",\"agentName\":\"Test Agent\",\"agentType\":\"opencode\",\"type\":\"task.start\",\"timestamp\":' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ',\"payload\":{}}'; Invoke-RestMethod -Uri http://127.0.0.1:28765/events -Method Post -Body $body -ContentType \"application/json\"";
 
   return (
     <div
@@ -311,60 +426,6 @@ function App() {
         background: 'transparent',
       }}
     >
-      <header
-        style={{
-          flexShrink: 0,
-          padding: '8px 12px',
-          background: 'linear-gradient(180deg, #1a2535 0%, #0f1620 100%)',
-          borderBottom: '2px solid #2a4a3a',
-          borderTop: '1px solid rgba(80,140,100,0.3)',
-          color: '#b8d4a0',
-          fontSize: 12,
-          fontFamily: 'system-ui',
-          boxShadow: 'inset 0 1px 0 rgba(100,180,120,0.12)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
-        }}
-      >
-        <strong style={{ color: '#c8e4b0', textShadow: '0 0 6px rgba(150,220,120,0.25)' }}>COMMAND</strong>
-        <span style={{ flex: 1 }}>Agents = planets. Send a test event or run demo.</span>
-        {!demoSimRunning ? (
-          <button
-            type="button"
-            onClick={runDemoSimulation}
-            style={{
-              padding: '4px 10px',
-              background: 'linear-gradient(180deg, #2a4a3a 0%, #1a3a2a 100%)',
-              border: '1px solid #3a6a4a',
-              borderRadius: 2,
-              color: '#b8d4a0',
-              fontSize: 11,
-              cursor: 'pointer',
-              boxShadow: 'inset 0 1px 0 rgba(100,180,120,0.2)',
-            }}
-          >
-            Simulate 5 agents
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={stopDemoSimulation}
-            style={{
-              padding: '4px 10px',
-              background: 'linear-gradient(180deg, #3a2a2a 0%, #2a1a1a 100%)',
-              border: '1px solid #6a4a4a',
-              borderRadius: 2,
-              color: '#d4a0a0',
-              fontSize: 11,
-              cursor: 'pointer',
-            }}
-          >
-            Stop demo
-          </button>
-        )}
-      </header>
       <div
         ref={panelSize.ref}
         style={{ flex: 1, minHeight: 0, position: 'relative', background: 'transparent' }}
@@ -375,57 +436,98 @@ function App() {
           height={panelSize.height}
           agents={agents}
           metrics={metrics}
+          ships={ships}
+          agentStates={agentStates}
+          pausedAgentIds={pausedAgentIds}
+          isolatedAgentId={isolatedAgentId}
+          boostedAgentIds={boostedAgentIds}
           selectedAgentId={selectedAgentId}
           centerRequestedAt={centerRequestedAt}
           onPlanetHover={handlePlanetHover}
           onPlanetClick={handlePlanetClick}
+          onAstronautConsumed={handleAstronautConsumed}
+          onAstronautSpawned={handleAstronautSpawned}
+          onUfoAbduction={handleUfoAbduction}
         />
       </div>
       {!hasAgents && (
         <div
           style={{
             position: 'absolute',
-            left: 12,
-            right: 12,
-            bottom: 148,
-            padding: '12px 14px',
-            background: 'linear-gradient(180deg, rgba(15,25,35,0.95) 0%, rgba(8,18,28,0.98) 100%)',
-            border: '1px solid rgba(80,140,100,0.4)',
-            borderRadius: 4,
-            color: '#a0c0a8',
+            left: '50%',
+            top: '40%',
+            transform: 'translate(-50%, -50%)',
+            textAlign: 'center',
+            color: '#3a5a4a',
             fontSize: 11,
             fontFamily: 'Consolas, monospace',
-            boxShadow: 'inset 0 0 20px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3)',
-            zIndex: 10,
+            pointerEvents: 'none',
+            zIndex: 5,
           }}
         >
-          <div style={{ marginBottom: 6, color: '#c8e4b0', fontWeight: 600 }}>How to see agents</div>
-          <div style={{ marginBottom: 6, color: '#8899aa' }}>Run the command below in the <strong style={{ color: '#a0c0a8' }}>Extension Development Host</strong> window (the one where this panel is open). Open Terminal there (Ctrl+`), then paste and run:</div>
-          <code
-            style={{
-              display: 'block',
-              padding: '8px 10px',
-              background: 'rgba(0,0,0,0.5)',
-              border: '1px solid rgba(80,140,100,0.3)',
-              borderRadius: 2,
-              fontSize: 10,
-              wordBreak: 'break-all',
-              color: '#b8d4a0',
-            }}
-          >
-            {psCommand}
-          </code>
-          <div style={{ marginTop: 6, color: '#6a8a7a', fontSize: 10 }}>A planet will appear in the universe. Send more events to add more agents.</div>
+          <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.3 }}>🌌</div>
+          <div>No agents yet — press Demo in the Command Center</div>
         </div>
       )}
       <CommandCenter />
+      <AchievementToasts />
+      {infoOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 300,
+            background: 'rgba(0,0,0,0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onClick={toggleInfo}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(180deg, #0e1f18 0%, #091510 100%)',
+              border: '1px solid #2a5a3c',
+              borderRadius: 4,
+              padding: '20px 24px',
+              maxWidth: 380,
+              color: '#b8d4a0',
+              fontFamily: 'system-ui',
+              fontSize: 12,
+              boxShadow: '0 4px 24px rgba(0,0,0,0.7)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#c8e4b0', marginBottom: 14, letterSpacing: '0.05em' }}>
+              EVENT HORIZON — Universe Guide
+            </div>
+            {[
+              ['🪐 Planets', 'Each AI coding agent appears as a planet. Its type determines the visual: Claude Code = gas giant (rings + storm), Copilot = icy world, OpenCode = rocky, others = volcanic.'],
+              ['⚫ Black Hole', 'The singularity at the center. Astronauts that drift too close are captured and spiral in.'],
+              ['🚀 Ships', 'Data transfers between agents are shown as ships flying curved arcs between planets.'],
+              ['👨‍🚀 Astronauts', 'Background explorers drifting through the universe. Click empty space to spawn one.'],
+              ['🛸 UFO', 'Appears periodically to abduct a cow from one of the planets. Fly-in → beam → fly-away.'],
+              ['📡 Command Center', 'Select a planet to see its metrics. Use the command buttons to pause, isolate, or boost agents.'],
+            ].map(([title, desc]) => (
+              <div key={title as string} style={{ marginBottom: 10 }}>
+                <span style={{ color: '#8fc08a', fontWeight: 600 }}>{title as string}</span>
+                <span style={{ color: '#7a9a82', marginLeft: 6 }}>{desc as string}</span>
+              </div>
+            ))}
+            <div style={{ marginTop: 14, textAlign: 'center', color: '#4a6a58', fontSize: 10 }}>
+              Click anywhere to close
+            </div>
+          </div>
+        </div>
+      )}
       {hoveredAgentId && hoveredAgent && (
         <div
           style={{
             position: 'fixed',
-            left: 20,
-            top: 20,
+            left: Math.min(mousePos.x + 14, window.innerWidth - 180),
+            top: Math.max(mousePos.y - 60, 8),
             zIndex: 1000,
+            pointerEvents: 'none',
           }}
         >
           <Tooltip
