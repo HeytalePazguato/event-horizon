@@ -123,17 +123,9 @@ function App() {
   const unlockAchievement    = useCommandCenterStore((s) => s.unlockAchievement);
   const selectedAgentId      = useCommandCenterStore((s) => s.selectedAgentId);
   const centerRequestedAt    = useCommandCenterStore((s) => s.centerRequestedAt);
-  const pendingConnectAgent  = useCommandCenterStore((s) => s.pendingConnectAgent);
-  const clearConnectAgent    = useCommandCenterStore((s) => s.clearConnectAgent);
+  const connectOpen          = useCommandCenterStore((s) => s.connectOpen);
+  const toggleConnect        = useCommandCenterStore((s) => s.toggleConnect);
 
-  // Handle pending agent connection requests
-  useEffect(() => {
-    if (!pendingConnectAgent) return;
-    if (pendingConnectAgent === 'claude-code') {
-      vscodeApi?.postMessage({ type: 'setup-agent', agentType: 'claude-code' });
-    }
-    clearConnectAgent();
-  }, [pendingConnectAgent, clearConnectAgent]);
 
   // Achievement tracking state
   const shipLaunchCountRef = useRef(0);
@@ -536,6 +528,64 @@ function App() {
             ))}
             <div style={{ marginTop: 14, textAlign: 'center', color: '#4a6a58', fontSize: 10 }}>
               Click anywhere to close
+            </div>
+          </div>
+        </div>
+      )}
+      {connectOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={toggleConnect}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(180deg, #0b1a12 0%, #060e09 100%)',
+              border: '1px solid #1e4030',
+              padding: '20px 24px',
+              width: 360,
+              fontFamily: 'Consolas, monospace',
+              boxShadow: '0 4px 32px rgba(0,0,0,0.85)',
+              clipPath: 'polygon(16px 0, 100% 0, 100% 100%, 0 100%, 0 16px)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+              <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#3a9060', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+                Connect Agent
+              </div>
+              <button type="button" onClick={toggleConnect}
+                style={{ background: 'none', border: 'none', color: '#2a5040', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+            </div>
+            {[
+              { id: 'claude-code', label: 'Claude Code',    planet: '🟤', status: 'available' as const, desc: 'Installs curl hooks into ~/.claude/settings.json. One click, no token needed.' },
+              { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'auto'      as const, desc: 'Auto-detected via VS Code output channel. No setup required.' },
+              { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'auto'      as const, desc: 'Runs natively inside Cursor. No setup required.' },
+              { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'soon'      as const, desc: 'OpenCode hook support coming soon.' },
+              { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },
+            ].map((c) => (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid rgba(30,70,45,0.35)' }}>
+                <div style={{ fontSize: 18, lineHeight: 1, paddingTop: 1 }}>{c.planet}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: '#90c088', fontWeight: 700, marginBottom: 2 }}>{c.label}</div>
+                  <div style={{ fontSize: 9, color: '#3a5a44', lineHeight: 1.4 }}>{c.desc}</div>
+                </div>
+                {c.status === 'available' && (
+                  <button type="button"
+                    onClick={() => { vscodeApi?.postMessage({ type: 'setup-agent', agentType: c.id }); toggleConnect(); }}
+                    style={{ padding: '4px 10px', border: '1px solid #25904a', background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)', color: '#50c070', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
+                    Install
+                  </button>
+                )}
+                {c.status === 'auto' && (
+                  <div style={{ fontSize: 9, color: '#4a88cc', flexShrink: 0, paddingTop: 2 }}>Auto</div>
+                )}
+                {c.status === 'soon' && (
+                  <div style={{ fontSize: 9, color: '#2a3a2a', flexShrink: 0, paddingTop: 2 }}>Soon</div>
+                )}
+              </div>
+            ))}
+            <div style={{ marginTop: 10, fontSize: 9, color: '#2a4a34', textAlign: 'center' }}>
+              Event Horizon listens on port 28765 — any agent on this machine can connect
             </div>
           </div>
         </div>

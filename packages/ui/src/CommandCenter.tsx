@@ -12,7 +12,6 @@ import { useState } from 'react';
 import { AgentIdentity } from './panels/AgentIdentity.js';
 import { MetricsPanel } from './panels/MetricsPanel.js';
 import { AgentControls } from './panels/AgentControls.js';
-import { useCommandCenterStore } from './store.js';
 
 const CHAMFER = 28;
 
@@ -140,108 +139,10 @@ const rightPanelStyle: React.CSSProperties = {
 const LED_ON = '#25904a';
 const LED_DIM = '#154a28';
 
-interface Connector {
-  id: string;
-  label: string;
-  status: 'available' | 'auto' | 'soon';
-  description: string;
-}
-
-const CONNECTORS: Connector[] = [
-  { id: 'claude-code', label: 'Claude Code',     status: 'available', description: 'Installs hooks into ~/.claude/settings.json' },
-  { id: 'copilot',     label: 'GitHub Copilot',  status: 'auto',      description: 'Auto-detected via VS Code output channel' },
-  { id: 'cursor',      label: 'Cursor',           status: 'auto',      description: 'Detected natively — runs inside Cursor' },
-  { id: 'opencode',    label: 'OpenCode',         status: 'soon',      description: 'Coming soon' },
-  { id: 'ollama',      label: 'Ollama / Local',   status: 'soon',      description: 'Coming soon' },
-];
-
-const STATUS_COLORS: Record<Connector['status'], string> = {
-  available: '#25904a',
-  auto:      '#4a88cc',
-  soon:      '#3a4a3a',
-};
-const STATUS_LABELS: Record<Connector['status'], string> = {
-  available: 'Setup',
-  auto:      'Auto',
-  soon:      'Soon',
-};
-
-const ConnectPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
-  const requestConnectAgent = useCommandCenterStore((s) => s.requestConnectAgent);
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        bottom: '100%',
-        right: 10,
-        marginBottom: 6,
-        background: 'linear-gradient(180deg, #0c1a14 0%, #060e0a 100%)',
-        border: '1px solid #1e4030',
-        boxShadow: '0 -4px 20px rgba(0,0,0,0.8), inset 0 0 0 1px rgba(30,80,50,0.2)',
-        padding: '10px 12px',
-        minWidth: 240,
-        zIndex: 40,
-        fontFamily: 'Consolas, monospace',
-        clipPath: 'polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%)',
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div style={{ fontSize: 9, color: '#3a8055', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>
-        Connect Agent
-      </div>
-      {CONNECTORS.map((c) => (
-        <div
-          key={c.id}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            paddingBottom: 6,
-            marginBottom: 6,
-            borderBottom: '1px solid rgba(30,60,40,0.4)',
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 10, color: '#90b088', fontWeight: 600 }}>{c.label}</div>
-            <div style={{ fontSize: 9, color: '#3a5a44', marginTop: 1 }}>{c.description}</div>
-          </div>
-          <button
-            type="button"
-            disabled={c.status === 'soon'}
-            onClick={() => c.status === 'available' && requestConnectAgent(c.id)}
-            style={{
-              padding: '3px 8px',
-              border: `1px solid ${c.status === 'soon' ? '#1e2e1e' : STATUS_COLORS[c.status]}`,
-              background: c.status === 'available' ? 'linear-gradient(180deg, #1a3028 0%, #0f2018 100%)' : 'transparent',
-              color: STATUS_COLORS[c.status],
-              fontSize: 9,
-              cursor: c.status === 'available' ? 'pointer' : 'default',
-              letterSpacing: '0.05em',
-              flexShrink: 0,
-              opacity: c.status === 'soon' ? 0.4 : 1,
-            }}
-          >
-            {STATUS_LABELS[c.status]}
-          </button>
-        </div>
-      ))}
-      <div
-        style={{ fontSize: 8, color: '#2a4a34', textAlign: 'right', marginTop: 2, cursor: 'pointer' }}
-        onClick={onClose}
-      >
-        Close ✕
-      </div>
-    </div>
-  );
-};
-
 export const CommandCenter: FC = () => {
   const [minimized, setMinimized] = useState(false);
-  const connectOpen   = useCommandCenterStore((s) => s.connectOpen);
-  const toggleConnect = useCommandCenterStore((s) => s.toggleConnect);
   return (
     <div data-command-center style={outerWrapper}>
-      {connectOpen && <ConnectPanel onClose={toggleConnect} />}
       <div style={{ ...wrapper, minHeight: minimized ? 38 : undefined }}>
       <div style={headerBar}>
         {/* Status LED */}
