@@ -28,6 +28,8 @@ function isRateLimited(addr: string): boolean {
   const now = Date.now();
   let entry = rateCounts.get(addr);
   if (!entry || now >= entry.resetAt) {
+    // Clean up expired entries to prevent unbounded growth
+    for (const [k, v] of rateCounts) { if (now >= v.resetAt) rateCounts.delete(k); }
     entry = { count: 0, resetAt: now + 1000 };
     rateCounts.set(addr, entry);
   }

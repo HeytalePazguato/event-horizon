@@ -59,6 +59,9 @@ export function createWebviewProvider(
           void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
           void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
         } else if (msg?.type === 'spawn-agent' && msg.command) {
+          // 1.1 — whitelist allowed commands to prevent arbitrary shell execution
+          const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
+          if (!ALLOWED_COMMANDS.includes(msg.command)) return;
           const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
           terminal.sendText(msg.command);
           terminal.show();

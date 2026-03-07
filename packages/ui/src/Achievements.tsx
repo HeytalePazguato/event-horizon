@@ -384,6 +384,7 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
         border: '1px solid #2a5a3c',
         borderLeft: '3px solid #4a9a6a',
         boxShadow: '0 2px 12px rgba(0,0,0,0.7), inset 0 1px 0 rgba(80,160,100,0.12)',
+        position: 'relative',
         width: 240,
         overflow: 'hidden',
         opacity,

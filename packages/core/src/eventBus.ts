@@ -11,7 +11,9 @@ export class EventBus {
   private listeners = new Set<EventBusListener>();
 
   emit(event: AgentEvent): void {
-    this.listeners.forEach((fn) => fn(event));
+    this.listeners.forEach((fn) => {
+      try { fn(event); } catch { /* prevent one listener from breaking others */ }
+    });
   }
 
   on(listener: EventBusListener): () => void {

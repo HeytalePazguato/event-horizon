@@ -1,43 +1,71 @@
 # Event Horizon
 
-Event Horizon is a developer tool that visualizes AI coding agents as a living cosmic system. Instead of viewing logs, terminals, or raw agent output, developers observe the behavior of AI agents in real time through an interactive universe visualization.
+Event Horizon is a VS Code extension that visualizes AI coding agents as a living cosmic system. Instead of viewing logs, terminals, or raw agent output, developers observe agent behavior in real time through an interactive universe.
 
-- **Agents** → Planets  
-- **Tasks** → Moons  
-- **Data transfers** → Spaceships  
-- **Completed tasks** → Central singularity
+## The Metaphor
 
-The system works as a visual debugging, monitoring, and orchestration interface for AI-driven development.
+> *"How would you visualize AI agents working together?"*
+
+Imagine being asked this question. The answer: **the interaction between celestial bodies in a universe is an excellent way to showcase it.** Each agent is a planet — a massive entity that consumes energy, emits output, and exerts gravitational influence on its surroundings. Tasks orbit agents like moons. Data flows between agents as spaceships traversing curved arcs through space. And at the center of it all, a black hole — the singularity where completed work collapses, pulling everything toward it.
+
+This metaphor works because it scales naturally. One agent is a lonely planet. Five agents become a solar system. The visual language — size, color, orbital speed, surface type — encodes real information without requiring labels or dashboards.
+
+### Celestial Bodies
+
+- **Planets** — Each AI agent appears as a planet. The visual style encodes the agent type:
+  - **Gas giants** (Claude Code) — Large planets with visible ring systems and storm bands. Slow, massive, deliberate. Their breathing pulse is barely perceptible — they move with weight.
+  - **Icy worlds** (Copilot) — Bright, reactive planets with a quick shimmer. Their fast pulse reflects the autocomplete nature — rapid-fire suggestions.
+  - **Rocky planets** (OpenCode) — Solid, steady worlds with an even rhythm. Deterministic tool-based agents with predictable output.
+  - **Volcanic planets** (Cursor, others) — Hot, restless surfaces that never fully settle. An irregular pulse that reflects unpredictable behavior.
+  - Planet **size** scales with agent load — busier agents grow larger. Brightness increases with activity.
+
+- **Moons** — Active subagents orbit their parent planet as small blue moons. Each subagent spawn creates a new moon at a different orbital distance and speed. When the subagent completes, the moon disappears. Up to 6 moons can orbit a single planet.
+
+- **Spaceships** — Data transfers between agents are visualized as triangle ships flying curved bezier arcs between planets. Each ship leaves a colored trail (blue for Claude, purple for Copilot, green for OpenCode, gold for others). The arcs are computed to avoid the central black hole — even anti-podal routes curve safely around it.
+
+- **Black Hole** — The singularity at the center of the universe. A layered disc (dark core, glowing accretion rings, outer halo) that exerts gravitational pull on nearby objects. Astronauts that drift too close are captured and spiral inward, shrinking and fading as they cross the event horizon.
+
+- **Astronauts** — Small figures drifting through the universe, affected by gravity from both planets and the black hole. Click anywhere in empty space to spawn one. They bounce off the viewport edges and get consumed if they spiral too close to the singularity.
+
+- **UFO** — Appears periodically, flies to a random planet, beams up a cow, then flies away in a random direction. Pure flavor.
+
+### Command Center
+
+A StarCraft 2 Terran-inspired control panel at the bottom of the viewport with chamfered corners and LED indicators. Three sections:
+- **Agent Identity** (left) — Selected agent name, type icon, and state
+- **Metrics** (center) — 5x2 grid showing Load, Tools, Prompts, Errors, Success%, Subagents, Tasks, Top Tool, Uptime, Last Active. Tabs for Info/Logs/Medals.
+- **Controls** (right) — Command buttons: Pause, Isolate, Center, Connect, Spawn, Demo, Info
 
 ## Supported Agent Ecosystems
 
-- OpenCode  
-- Claude Code  
-- GitHub Copilot  
-
-## Targets
-
-- **MVP:** VS Code extension (also runs in Cursor)
-- **Planned:** CLI, standalone desktop UI, browser dashboard, headless monitoring server
+- **Claude Code** — Full hook integration (install via Connect wizard)
+- **OpenCode** — Connector ready, hook support coming soon
+- **GitHub Copilot** — Connector ready, integration coming soon
+- **Cursor** — Connector ready, integration coming soon
 
 ## Project Structure
 
-This is a pnpm + Turborepo monorepo:
+pnpm + Turborepo monorepo:
 
-- `packages/core` — Event model, event bus, metrics engine
-- `packages/connectors` — Agent adapters (OpenCode, Claude Code, Copilot) and mock data
-- `packages/renderer` — PixiJS 2D universe visualization
-- `packages/ui` — Command Center overlay (React)
-- `apps/vscode` — VS Code extension host
-- `tools/mock-server` — Standalone mock event server for development
-- `docs` — Documentation and development plan
+```
+packages/
+  core/        - Event model, bus, metrics engine, agent state (pure TS, no deps)
+  connectors/  - Agent adapters (Claude Code, OpenCode, Copilot, mock)
+  renderer/    - PixiJS 8 universe (planets, moons, ships, singularity, stars, UFO)
+  ui/          - React + Zustand Command Center overlay
+apps/
+  vscode/      - VS Code extension host + webview
+tools/
+  mock-server/ - Standalone mock event emitter for development
+docs/          - Documentation and development plan
+```
 
 ## Prerequisites
 
 - **Node.js** 18+
-- **pnpm** (or use `npx pnpm` for each command)
+- **pnpm** (or use `npx pnpm`)
   - Install: `npm install -g pnpm`
-  - Or use Corepack: `corepack enable` then `corepack prepare pnpm@latest`
+  - Or Corepack: `corepack enable` then `corepack prepare pnpm@latest`
 
 ## Getting Started
 
@@ -46,56 +74,43 @@ pnpm install
 pnpm build
 ```
 
-If `pnpm` is not in your PATH, use `npx pnpm` instead (e.g. `npx pnpm install`, `npx pnpm run build`).
+## Testing the VS Code Extension
 
-## Testing the VS Code extension
+1. **Build** (from repo root): `pnpm build`
 
-1. **Build** (from repo root): `pnpm run build --filter=event-horizon-vscode`
+2. **Run:** Press **F5**. If prompted, click **Continue**. A second window opens (Extension Development Host).
 
-2. **Run:** Press **F5**. If a dialog appears, click **Continue**. A second window opens (Extension Development Host).
+3. **Open the view:** Click the **globe icon** in the sidebar, or **Ctrl+Shift+P** then **Event Horizon: Open Universe**.
 
-3. **Open the view:** In that second window, click the **globe icon** in the left sidebar, or **Ctrl+Shift+P** → **Event Horizon: Open Universe**.
+4. **Connect an agent:** Click **Connect** in the Command Center, choose **Claude Code**, click **Install**. This adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet appears automatically.
 
-4. **Connect an agent:** Click the **Connect** button in the Command Center to open the Connect Agent wizard. Choose **Claude Code** and click **Install** — this adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet will appear automatically.
+5. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI (Claude Code, OpenCode, or Aider).
 
-5. **Demo mode:** Click **Demo** in the Command Center to see the universe populated with simulated agents without a live connection.
+6. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
 
 **Send test events manually:**
 
-   **PowerShell (Windows):**
-   ```powershell
-   $body = ‘{“id”:”t1”,”agentId”:”agent-1”,”agentName”:”Test Agent”,”agentType”:”opencode”,”type”:”agent.spawn”,”timestamp”:’ + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ‘,”payload”:{}}’
-   Invoke-RestMethod -Uri http://127.0.0.1:28765/events -Method Post -Body $body -ContentType “application/json”
-   ```
+PowerShell:
+```powershell
+$body = '{"id":"t1","agentId":"agent-1","agentName":"Test Agent","agentType":"opencode","type":"agent.spawn","timestamp":' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + ',"payload":{}}'
+Invoke-RestMethod -Uri http://127.0.0.1:28765/events -Method Post -Body $body -ContentType "application/json"
+```
 
-   **Bash (macOS/Linux):**
-   ```bash
-   curl -X POST http://127.0.0.1:28765/events -H “Content-Type: application/json” -d “{\”id\”:\”t1\”,\”agentId\”:\”agent-1\”,\”agentName\”:\”Test Agent\”,\”agentType\”:\”opencode\”,\”type\”:\”agent.spawn\”,\”timestamp\”:$(date +%s)000,\”payload\”:{}}”
-   ```
+Bash:
+```bash
+curl -X POST http://127.0.0.1:28765/events \
+  -H "Content-Type: application/json" \
+  -d "{\"id\":\"t1\",\"agentId\":\"agent-1\",\"agentName\":\"Test Agent\",\"agentType\":\"opencode\",\"type\":\"agent.spawn\",\"timestamp\":$(date +%s)000,\"payload\":{}}"
+```
 
-**If F5 doesn’t open a second window:** install from .vsix instead — run `cd apps/vscode && pnpm run package:vsix`, then **Extensions** → **...** → **Install from VSIX...** and reload.
+**Install from .vsix:** `cd apps/vscode && pnpm run package:vsix`, then **Extensions** > **...** > **Install from VSIX...** and reload.
 
-**If the panel stays on "Loading universe…", shows a black screen, or content flashes and disappears:** Rebuild, then **fully close the Extension Development Host window** (close the window, don’t just reload), and press **F5** again in your project window so a new host starts with a fresh webview. If it still fails, in the new Extension Development Host open **Help → Toggle Developer Tools** and check the Console for errors.
+### Seeing Changes After Edits
 
-### Seeing changes after you edit the extension
+1. Rebuild: `pnpm build`
+2. In the Extension Development Host: **Ctrl+Shift+P** > **Developer: Reload Window**
 
-After you change extension or webview code, do this:
-
-1. **Rebuild** (in the window where your project is open, not the Extension Development Host):
-   ```bash
-   pnpm run build --filter=event-horizon-vscode
-   ```
-2. **Reload the Extension Development Host** so it loads the new build. Use either:
-   - **Option A — Reload (recommended):** In the **Extension Development Host** window, press **Ctrl+Shift+P** (or **Cmd+Shift+P** on Mac), type **Developer: Reload Window**, run it. The same window reloads with the updated extension.
-   - **Option B — Restart:** Close the **Extension Development Host** window, then in your main project window press **F5** again to launch a new instance.
-
-You do **not** need to close the Extension Development Host window to see changes; a reload is enough.
-
-**Console messages:** When debugging (F5), many console lines are from VS Code or other extensions (e.g. "Extension Host", "Unrecognized feature", "401" for Copilot). You can ignore those; only messages mentioning "Event Horizon" or "main.js" are from this extension.
-
-See [docs/e2e-testing.md](docs/e2e-testing.md) for more ways to send events (Claude Code hooks, OpenCode plugin).
-
-See [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) for the full implementation plan and task checklist.
+See [docs/e2e-testing.md](docs/e2e-testing.md) for more event sources (Claude Code hooks, OpenCode plugin).
 
 ## License
 
