@@ -460,26 +460,7 @@ export const Universe: FC<UniverseProps> = ({
         panContainer.addChild(world);
         worldRef.current = world;
 
-        // Pre-spawn 7 astronauts scattered around the universe with tangential velocity
-        // so they naturally drift and some will eventually spiral into the black hole
-        for (let i = 0; i < 7; i++) {
-          const angle = (i / 7) * Math.PI * 2 + Math.random() * 0.8;
-          const radius = 140 + Math.random() * 180;
-          const astro = createAstronaut();
-          astro.x = Math.cos(angle) * radius;
-          astro.y = Math.sin(angle) * radius;
-          astronautsContainer.addChildAt(astro, 0);
-          // Give each astronaut a partial tangential velocity so they spiral rather than fall straight
-          const tangentialSpeed = 0.3 + Math.random() * 0.5;
-          const radialDrift = (Math.random() - 0.5) * 0.3;
-          astronautsRef.current.push({
-            id: ++astronautIdRef.current,
-            c: astro,
-            vx: -Math.sin(angle) * tangentialSpeed + Math.cos(angle) * radialDrift,
-            vy:  Math.cos(angle) * tangentialSpeed + Math.sin(angle) * radialDrift,
-          });
-        }
-
+        // Astronauts spawn only on click — no auto-spawn
         hitArea.on('pointertap', (e: { global: { x: number; y: number } }) => {
           // Use world.toLocal so zoom scale is correctly accounted for.
           const pos = world.toLocal(e.global);

@@ -141,6 +141,8 @@ function App() {
   // Achievement tracking state
   const shipLaunchCountRef = useRef(0);
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track last event time per agent for stale-agent timeout
+  const agentLastSeenRef = useRef<Record<string, number>>({});
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
   useEffect(() => {
@@ -159,6 +161,19 @@ function App() {
         setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type })));
         setAgentMap(Object.fromEntries(init.agents.map((a) => [a.id, a])));
         setMetricsMap(Object.fromEntries(init.metrics.map((m) => [m.agentId, m])));
+        return;
+      }
+
+      // init-medals: hydrate persisted achievements from extension globalState
+      if (msg?.type === 'init-medals') {
+        const data = msg as unknown as { unlockedAchievements: string[]; achievementTiers: Record<string, number>; achievementCounts: Record<string, number> };
+        if (data.unlockedAchievements?.length > 0) {
+          useCommandCenterStore.setState({
+            unlockedAchievements: data.unlockedAchievements,
+            achievementTiers: data.achievementTiers ?? {},
+            achievementCounts: data.achievementCounts ?? {},
+          });
+        }
         return;
       }
 
@@ -229,6 +244,8 @@ function App() {
       const isSubagent = !!(raw.payload?.isSubagent);
       const isToolFailure = !!(raw.payload?.isToolFailure);
       const toolName = (raw.payload?.toolName as string) ?? undefined;
+      // Track last event time for stale-agent detection
+      agentLastSeenRef.current[agentId] = Date.now();
       setMetricsMap((prev) => {
         const m = prev[agentId];
         const isTaskStart = type === 'task.start' && !isSubagent;
@@ -277,6 +294,41 @@ function App() {
       setSelectedAgentData(agent ?? null, metric ?? null);
     }
   }, [selectedAgentId, agentMap, metricsMap, setSelectedAgentData]);
+
+  // ── Persist medal state to extension host globalState ──
+  const unlockedAchievements = useCommandCenterStore((s) => s.unlockedAchievements);
+  const achievementTiers = useCommandCenterStore((s) => s.achievementTiers);
+  const achievementCounts = useCommandCenterStore((s) => s.achievementCounts);
+  useEffect(() => {
+    if (unlockedAchievements.length === 0) return;
+    vscodeApi?.postMessage({
+      type: 'persist-medals',
+      unlockedAchievements,
+      achievementTiers,
+      achievementCounts,
+    });
+  }, [unlockedAchievements, achievementTiers, achievementCounts]);
+
+  // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
+  useEffect(() => {
+    const STALE_TIMEOUT_MS = 120_000; // 2 minutes — safety net only, exit signal is primary
+    const CHECK_INTERVAL_MS = 15_000;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      for (const [agentId, lastSeen] of Object.entries(agentLastSeenRef.current)) {
+        // Only reap non-claude agents (Claude Code sends explicit terminate)
+        const agent = agentMap[agentId];
+        if (!agent || agent.type === 'claude-code') continue;
+        if (now - lastSeen > STALE_TIMEOUT_MS) {
+          setAgents((prev) => prev.filter((a) => a.id !== agentId));
+          setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
+          setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
+          delete agentLastSeenRef.current[agentId];
+        }
+      }
+    }, CHECK_INTERVAL_MS);
+    return () => clearInterval(iv);
+  }, [agentMap]);
 
   // ── Achievement detection ─────────────────────────────────────────────────
 
@@ -623,7 +675,7 @@ function App() {
             </div>
             {[
               { id: 'claude-code', label: 'Claude Code',    planet: '🟤', status: 'available' as const, desc: 'Installs curl hooks into ~/.claude/settings.json. One click, no token needed.' },
-              { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'auto'      as const, desc: 'Automatic — detected via SSE when OpenCode is running. No setup needed.' },
+              { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'available' as const, desc: 'Installs a plugin into ~/.config/opencode/plugins/. Restart OpenCode after connecting.' },
               { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'soon'      as const, desc: 'VS Code Copilot integration coming soon.' },
               { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'soon'      as const, desc: 'Cursor connector coming soon.' },
               { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },

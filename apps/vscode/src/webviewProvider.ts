@@ -5,7 +5,7 @@
 import * as vscode from 'vscode';
 import type { AgentStateManager, MetricsEngine } from '@event-horizon/core';
 import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
-import { isOpenCodeSseConnected } from './openCodeSseClient.js';
+import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 
 export function createWebviewProvider(
   context: vscode.ExtensionContext,
@@ -38,7 +38,7 @@ export function createWebviewProvider(
       function getConnectedAgentTypes(): string[] {
         const types: string[] = [];
         if (isClaudeCodeHooksInstalled()) types.push('claude-code');
-        if (isOpenCodeSseConnected()) types.push('opencode');
+        if (isOpenCodeHooksInstalled()) types.push('opencode');
         return types;
       }
 
@@ -51,14 +51,41 @@ export function createWebviewProvider(
         void webviewView.webview.postMessage({ type: 'init-state', agents, metrics });
       }
 
-      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string }) => {
+      // Hydrate persisted medals from globalState
+      const savedMedals = context.globalState.get<{
+        unlockedAchievements: string[];
+        achievementTiers: Record<string, number>;
+        achievementCounts: Record<string, number>;
+      }>('medals');
+      if (savedMedals?.unlockedAchievements?.length) {
+        void webviewView.webview.postMessage({ type: 'init-medals', ...savedMedals });
+      }
+
+      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
+        // Persist medal state changes to globalState
+        if (msg?.type === 'persist-medals') {
+          void context.globalState.update('medals', {
+            unlockedAchievements: msg.unlockedAchievements,
+            achievementTiers: msg.achievementTiers,
+            achievementCounts: msg.achievementCounts,
+          });
+          return;
+        }
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
           void runSetupClaudeCodeHooks().then(() => {
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          });
+        } else if (msg?.type === 'setup-agent' && msg.agentType === 'opencode') {
+          void runSetupOpenCodeHooks().then(() => {
             void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
           });
         } else if (msg?.type === 'remove-agent' && msg.agentType === 'claude-code') {
           removeClaudeCodeHooks();
           void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
+          void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+        } else if (msg?.type === 'remove-agent' && msg.agentType === 'opencode') {
+          removeOpenCodeHooks();
+          void vscode.window.showInformationMessage('Event Horizon: OpenCode plugin removed.');
           void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
         } else if (msg?.type === 'spawn-agent' && msg.command) {
           // 1.1 — whitelist allowed commands to prevent arbitrary shell execution
