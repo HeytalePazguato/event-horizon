@@ -899,28 +899,22 @@ export const Universe: FC<UniverseProps> = ({
       // Manage + animate moons (subagents) — add/remove only when counts change
       const moonsContainer = moonsContainerRef.current;
       if (moonsContainer) {
-        type MoonExt = Container & { __planetId?: string; __orbitSpeed?: number; __orbitDistance?: number; __orbitAngle?: number; __taskId?: string };
+        type MoonExt = Container & { __planetId?: string; __orbitSpeed?: number; __orbitDistance?: number; __orbitAngle?: number; __taskId?: string; __moonIndex?: number };
         const posMap = planetPositionsRef.current;
         const subCounts = activeSubagentsRef.current;
         const prevCounts = moonCountsRef.current;
 
-        // Check if any agent's moon count changed
+        // Incrementally add/remove moons — never destroy existing ones
         for (const [agentId] of posMap) {
           const want = Math.min(subCounts[agentId] ?? 0, 6);
           const have = prevCounts.get(agentId) ?? 0;
-          if (want !== have) {
-            // Remove existing moons for this agent
-            for (let ci = moonsContainer.children.length - 1; ci >= 0; ci--) {
-              const child = moonsContainer.children[ci] as MoonExt;
-              if (child.__planetId === agentId) {
-                moonsContainer.removeChild(child);
-                child.destroy({ children: true });
-              }
-            }
-            // Create new moons
+          if (want === have) continue;
+
+          if (want > have) {
+            // Add only the new moons
             const parentPos = posMap.get(agentId);
             if (parentPos) {
-              for (let mi = 0; mi < want; mi++) {
+              for (let mi = have; mi < want; mi++) {
                 const orbitDistance = 28 + mi * 12;
                 const orbitSpeed = 0.012 + mi * 0.004;
                 const moon = createMoon({
@@ -929,15 +923,28 @@ export const Universe: FC<UniverseProps> = ({
                   orbitSpeed,
                   orbitDistance,
                 });
-                const initAngle = (mi / Math.max(want, 1)) * Math.PI * 2;
+                // Start at a random angle so new moons don't cluster
+                const initAngle = Math.random() * Math.PI * 2;
                 (moon as MoonExt).__orbitAngle = initAngle;
                 moon.x = parentPos.x + Math.cos(initAngle) * orbitDistance;
                 moon.y = parentPos.y + Math.sin(initAngle) * orbitDistance;
+                (moon as MoonExt).__moonIndex = mi;
                 moonsContainer.addChild(moon);
               }
             }
-            prevCounts.set(agentId, want);
+          } else {
+            // Remove excess moons (highest index first)
+            const agentMoons = moonsContainer.children
+              .filter((c) => (c as MoonExt).__planetId === agentId) as MoonExt[];
+            // Sort by moon index descending so we remove the newest first
+            agentMoons.sort((a, b) => (b.__moonIndex ?? 0) - (a.__moonIndex ?? 0));
+            const toRemove = have - want;
+            for (let ri = 0; ri < toRemove && ri < agentMoons.length; ri++) {
+              moonsContainer.removeChild(agentMoons[ri]);
+              agentMoons[ri].destroy({ children: true });
+            }
           }
+          prevCounts.set(agentId, want);
         }
         // Remove moons for agents that no longer exist
         for (const [agentId] of prevCounts) {

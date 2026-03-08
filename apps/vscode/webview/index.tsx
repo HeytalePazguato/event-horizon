@@ -199,16 +199,29 @@ function App() {
 
       // Upsert agent
       setAgents((prev) => prev.some((a) => a.id === agentId) ? prev : [...prev, { id: agentId, name: agentName, agentType }]);
-      setAgentMap((prev) => ({
-        ...prev,
-        [agentId]: {
-          id: agentId,
-          name: agentName,
-          type: agentType,
-          state: type === 'agent.error' ? 'error' : type === 'task.start' ? 'thinking' : 'idle',
-          currentTaskId: (raw.payload?.taskId as string | null) ?? null,
-        },
-      }));
+      setAgentMap((prev) => {
+        const prevAgent = prev[agentId];
+        let state: string;
+        if (type === 'agent.error') state = 'error';
+        else if (type === 'task.start') state = 'thinking';
+        else if (type === 'tool.call') state = 'tool_use';
+        else if (type === 'task.progress') state = 'working';
+        else if (type === 'tool.result') state = 'thinking';
+        else if (type === 'task.complete' || type === 'task.fail') state = 'idle';
+        else if (type === 'agent.spawn') state = 'idle';
+        else state = prevAgent?.state ?? 'idle';  // preserve current state for unknown events
+
+        return {
+          ...prev,
+          [agentId]: {
+            id: agentId,
+            name: agentName,
+            type: agentType,
+            state,
+            currentTaskId: (raw.payload?.taskId as string | null) ?? prevAgent?.currentTaskId ?? null,
+          },
+        };
+      });
 
       // Update metrics — all hook-derivable counters tracked here
       const isHighLoad = type === 'task.progress' || type === 'tool.call' || type === 'tool.result';

@@ -9,6 +9,8 @@ import { useCommandCenterStore } from '../store.js';
 const stateColors: Record<string, string> = {
   idle: '#4a8a5a',
   thinking: '#d4a84a',
+  working: '#b8a040',
+  tool_use: '#6aa0d4',
   error: '#c65858',
 };
 

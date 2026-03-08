@@ -225,6 +225,48 @@ jobs:
           prerelease: true
           generate_release_notes: true
 
+  cleanup-prereleases:
+    name: Cleanup old pre-releases
+    runs-on: ubuntu-latest
+    needs: package-prerelease
+    permissions:
+      contents: write
+
+    steps:
+      - name: Delete old pre-releases (keep latest 5)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const prereleases = releases.data
+              .filter(r => r.prerelease)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const toDelete = prereleases.slice(5);
+            for (const rel of toDelete) {
+              console.log(`Deleting old pre-release: ${rel.tag_name} (${rel.created_at})`);
+              // Delete the release
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: rel.id,
+              });
+              // Delete the tag
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `tags/${rel.tag_name}`,
+                });
+              } catch (e) {
+                console.log(`Tag ${rel.tag_name} already deleted or not found`);
+              }
+            }
+            console.log(`Kept ${Math.min(prereleases.length, 5)} pre-releases, deleted ${toDelete.length}`);
+
   # ── Stable releases (master) — tagged release on Releases page ─────────────
   release:
     name: Create Stable Release
