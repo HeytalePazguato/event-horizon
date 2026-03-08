@@ -8,6 +8,7 @@ import { createWebviewProvider } from './webviewProvider';
 import { startEventServer, stopEventServer } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks } from './setupHooks';
+import { startOpenCodeSseClient, stopOpenCodeSseClient } from './openCodeSseClient';
 import type { AgentEvent } from '@event-horizon/core';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
@@ -37,6 +38,14 @@ export function activate(context: vscode.ExtensionContext): void {
   startEventServer({ onEvent: (event) => eventBus.emit(event) });
   outputChannel.appendLine(`[Event Horizon] Server started on port 28765`);
   setupCopilotOutputChannel((event) => eventBus.emit(event));
+
+  // Connect to OpenCode's SSE stream (auto-reconnects if OpenCode is started later)
+  startOpenCodeSseClient({
+    onEvent: (event) => eventBus.emit(event),
+    onConnected: () => outputChannel.appendLine('[Event Horizon] OpenCode SSE connected'),
+    onDisconnected: () => outputChannel.appendLine('[Event Horizon] OpenCode SSE disconnected'),
+    log: (msg) => outputChannel.appendLine(msg),
+  });
 
   const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine);
   context.subscriptions.push(
@@ -79,6 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
       outputChannel.appendLine(`[Event Horizon] Deactivating — processed ${eventCount} events`);
       unsubscribeEventBus();
       stopEventServer();
+      stopOpenCodeSseClient();
       webviewRef.current = null;
     },
   });
