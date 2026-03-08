@@ -123,6 +123,14 @@ function App() {
     } catch { /* ignore */ }
     return [];
   });
+  const [extensionVersion] = useState<string>(() => {
+    try {
+      const el = document.getElementById('root');
+      const raw = el?.dataset['ehInit'];
+      if (raw) return (JSON.parse(raw) as { version?: string }).version ?? '';
+    } catch { /* ignore */ }
+    return '';
+  });
   const [agentMap, setAgentMap] = useState<Record<string, AgentState>>({});
   const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
   const [ships, setShips] = useState<ShipSpawn[]>([]);
@@ -241,6 +249,9 @@ function App() {
         else if (type === 'agent.spawn') state = 'idle';
         else state = prevAgent?.state ?? 'idle';  // preserve current state for unknown events
 
+        // Capture cwd from payload for workspace-aware cooperation detection
+        const cwd = (raw.payload?.cwd as string | undefined) ?? prevAgent?.cwd;
+
         return {
           ...prev,
           [agentId]: {
@@ -249,6 +260,7 @@ function App() {
             type: agentType,
             state,
             currentTaskId: (raw.payload?.taskId as string | null) ?? prevAgent?.currentTaskId ?? null,
+            cwd,
           },
         };
       });
@@ -325,15 +337,19 @@ function App() {
   }, [unlockedAchievements, achievementTiers, achievementCounts]);
 
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
+  // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).
+  // Claude Code (sends SessionEnd) and OpenCode (sends session.deleted) are excluded.
+  const AGENTS_WITH_EXIT_SIGNAL = new Set(['claude-code', 'opencode']);
   useEffect(() => {
-    const STALE_TIMEOUT_MS = 120_000; // 2 minutes — safety net only, exit signal is primary
-    const CHECK_INTERVAL_MS = 15_000;
+    const STALE_TIMEOUT_MS = 300_000; // 5 minutes — generous for agents without exit signals
+    const CHECK_INTERVAL_MS = 30_000;
     const iv = setInterval(() => {
       const now = Date.now();
       for (const [agentId, lastSeen] of Object.entries(agentLastSeenRef.current)) {
-        // Only reap non-claude agents (Claude Code sends explicit terminate)
         const agent = agentMapRef.current[agentId];
-        if (!agent || agent.type === 'claude-code') continue;
+        if (!agent) continue;
+        // Skip agents that send explicit terminate events
+        if (AGENTS_WITH_EXIT_SIGNAL.has(agent.type)) continue;
         if (now - lastSeen > STALE_TIMEOUT_MS) {
           setAgents((prev) => prev.filter((a) => a.id !== agentId));
           setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
@@ -677,7 +693,12 @@ function App() {
                 <span style={{ color: '#7a9a82', marginLeft: 6 }}>{desc as string}</span>
               </div>
             ))}
-            <div style={{ marginTop: 14, textAlign: 'center', color: '#4a6a58', fontSize: 10 }}>
+            {extensionVersion && (
+              <div style={{ marginTop: 14, textAlign: 'center', color: '#3a5a48', fontSize: 9, letterSpacing: '0.05em' }}>
+                v{extensionVersion}
+              </div>
+            )}
+            <div style={{ marginTop: extensionVersion ? 6 : 14, textAlign: 'center', color: '#4a6a58', fontSize: 10 }}>
               Click anywhere to close
             </div>
           </div>

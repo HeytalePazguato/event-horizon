@@ -27,7 +27,7 @@ From that answer, Event Horizon was born.
 
 - **Moons** — Active subagents orbit their parent planet as small blue moons. Each subagent spawn creates a new moon at a different orbital distance and speed. When the subagent completes, the moon disappears.
 
-- **Spaceships** — Data transfers between agents are visualized as triangle ships flying curved bezier arcs between planets. Each ship leaves a colored trail matching the agent type. The arcs curve safely around the central black hole.
+- **Spaceships** — Data transfers between agents are visualized as triangle ships flying curved bezier arcs between planets. Each ship leaves a colored trail matching the agent type. The arcs curve safely around the central black hole. Ships also appear automatically between cooperating agents (see **Agent Cooperation** below).
 
 - **Black Hole** — The singularity at the center of the universe. A layered disc (dark core, glowing accretion rings, outer halo) that exerts gravitational pull on nearby objects. Click anywhere in space to spawn astronauts that drift and spiral toward it.
 
@@ -38,6 +38,21 @@ A StarCraft-inspired control panel at the bottom of the viewport with chamfered 
 - **Agent Identity** (left) — Selected agent name, type icon, and live state indicator
 - **Metrics** (center) — 5x2 grid showing Load, Tools, Prompts, Errors, Success%, Subagents, Tasks, Top Tool, Uptime, Last Active. Tabs for Info / Logs / Medals.
 - **Controls** (right) — Command buttons: Pause, Isolate, Center, Connect, Spawn, Demo, Info
+
+### Agent Cooperation
+
+When multiple agents are running in the same workspace, Event Horizon detects this and visualizes their collaboration as ships flying between their planets at random intervals (3–10 seconds). This works across agent types — a Claude Code planet and an OpenCode planet will exchange ships if they share a workspace.
+
+Cooperation is inferred from the agents' working directories:
+
+- **Same folder** — Two agents running in the same directory are assumed to be collaborating on the same project.
+- **Nested folders** — An agent in `/project` and another in `/project/packages/core` are considered part of the same workspace.
+- **Shared VS Code workspace** — In multi-root workspaces, agents in different folders that belong to the same `.code-workspace` are detected as cooperating.
+
+Each agent reports its working directory when it connects:
+- **Claude Code** sends `cwd` in every hook payload.
+- **OpenCode** captures the `directory` and `worktree` from its plugin context.
+- As a fallback, the extension host assigns the primary VS Code workspace folder to any agent that doesn't report its own.
 
 ### Achievements
 
@@ -106,4 +121,4 @@ pnpm build
 
 ## License
 
-MIT License with Commons Clause — see [LICENSE](docs/LICENSE) for details.
+MIT License with Commons Clause — see [LICENSE](LICENSE) for details.

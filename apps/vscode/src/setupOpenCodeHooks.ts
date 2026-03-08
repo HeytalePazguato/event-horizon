@@ -60,14 +60,15 @@ function sendExit(eventName, extra) {
   } catch {}
 }
 
-export default async function EventHorizon({ project }) {
+export default async function EventHorizon({ project, directory, worktree }) {
   const sessionId = String(project?.id ?? "opencode-1");
   const agentName = "OpenCode";
+  const cwd = worktree || directory || undefined;
 
-  send("session.created", { sessionId, agentName, payload: {} });
+  send("session.created", { sessionId, agentName, cwd, payload: {} });
 
   // Send session.deleted when OpenCode exits (Ctrl+C, exit command, etc.)
-  const onExit = () => sendExit("session.deleted", { sessionId, agentName, payload: {} });
+  const onExit = () => sendExit("session.deleted", { sessionId, agentName, cwd, payload: {} });
   process.on("beforeExit", onExit);
   process.on("SIGINT", () => { onExit(); process.exit(0); });
   process.on("SIGTERM", () => { onExit(); process.exit(0); });
@@ -77,6 +78,7 @@ export default async function EventHorizon({ project }) {
       send(event?.type ?? "unknown", {
         sessionId,
         agentName,
+        cwd,
         payload: event ?? {},
       });
     },
@@ -84,6 +86,7 @@ export default async function EventHorizon({ project }) {
       send("tool.execute.before", {
         sessionId,
         agentName,
+        cwd,
         payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
       });
     },
@@ -91,6 +94,7 @@ export default async function EventHorizon({ project }) {
       send("tool.execute.after", {
         sessionId,
         agentName,
+        cwd,
         payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
       });
     },
@@ -99,11 +103,28 @@ export default async function EventHorizon({ project }) {
 `;
 }
 
-/** Returns true if the Event Horizon plugin file exists. */
+/** Returns true if the Event Horizon plugin file exists with the CURRENT token. */
 export async function isOpenCodeHooksInstalled(): Promise<boolean> {
   try {
     const content = await fsp.readFile(getPluginPath(), 'utf8');
-    return content.includes(MARKER);
+    if (!content.includes(MARKER)) return false;
+    // Verify the token matches the current session
+    const token = getAuthToken();
+    if (token) return content.includes(`token=${token}`);
+    return true; // no token = no auth required
+  } catch {
+    return false;
+  }
+}
+
+/** Returns true if the plugin file exists but with a stale token. */
+export async function hasStaleOpenCodeHooks(): Promise<boolean> {
+  try {
+    const content = await fsp.readFile(getPluginPath(), 'utf8');
+    if (!content.includes(MARKER)) return false;
+    const token = getAuthToken();
+    if (token) return !content.includes(`token=${token}`);
+    return false;
   } catch {
     return false;
   }

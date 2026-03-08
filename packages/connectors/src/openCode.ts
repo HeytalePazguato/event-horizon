@@ -35,6 +35,18 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
   const agentName = String(o.agentName ?? 'OpenCode').slice(0, 64);
   const payload = (o.payload as Record<string, unknown>) ?? (o.data as Record<string, unknown>) ?? {};
 
+  // Capture working directory for workspace-aware cooperation detection
+  const project = (o.project ?? payload.project) as Record<string, unknown> | undefined;
+  const worktree = project?.worktree as string | undefined;
+  if (worktree) payload.cwd = String(worktree).slice(0, 512);
+  // Check top-level cwd field
+  if (!payload.cwd && o.cwd) payload.cwd = String(o.cwd).slice(0, 512);
+  // Check input.cwd (OpenCode plugin environment variable injection)
+  if (!payload.cwd && o.input) {
+    const input = o.input as Record<string, unknown>;
+    if (input.cwd) payload.cwd = String(input.cwd).slice(0, 512);
+  }
+
   // Clear dedup set on session end to prevent unbounded growth
   if (eventName === 'session.deleted' || eventName === 'server.instance.disposed') {
     seenMessageIds.clear();

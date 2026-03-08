@@ -61,4 +61,16 @@ describe('mapClaudeHookToEvent', () => {
     expect(result).not.toBeNull();
     expect(result!.agentId.length).toBeLessThanOrEqual(128);
   });
+
+  it('captures cwd from top-level payload', () => {
+    const result = mapClaudeHookToEvent({ hook_event_name: 'SessionStart', session_id: 's1', cwd: '/home/user/project' });
+    expect(result).not.toBeNull();
+    expect(result!.payload.cwd).toBe('/home/user/project');
+  });
+
+  it('captures cwd from nested payload', () => {
+    const result = mapClaudeHookToEvent({ hook_event_name: 'PreToolUse', session_id: 's1', payload: { cwd: '/nested/path' } });
+    expect(result).not.toBeNull();
+    expect(result!.payload.cwd).toBe('/nested/path');
+  });
 });

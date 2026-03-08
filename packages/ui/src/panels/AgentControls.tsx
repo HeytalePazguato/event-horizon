@@ -168,7 +168,7 @@ const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
     <div
       style={{
         position: 'fixed',
-        bottom: 178,
+        bottom: 200,
         right: 12,
         width: 172,
         background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',

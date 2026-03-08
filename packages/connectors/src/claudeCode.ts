@@ -47,12 +47,15 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   if (p.taskId) safePayload.taskId = String(p.taskId).slice(0, 128);
   if (isSubagent) safePayload.isSubagent = true;
   if (isToolFailure) safePayload.isToolFailure = true;
+  // Capture working directory for workspace-aware cooperation detection
+  if (p.cwd) safePayload.cwd = String(p.cwd).slice(0, 512);
   // Only include safe metadata from the nested payload object
   const nested = p.payload as Record<string, unknown> | undefined;
   if (nested) {
     if (nested.toolName) safePayload.toolName = String(nested.toolName).slice(0, 128);
     if (nested.taskId) safePayload.taskId = String(nested.taskId).slice(0, 128);
     if (nested.isSubagent) safePayload.isSubagent = true;
+    if (nested.cwd) safePayload.cwd = String(nested.cwd).slice(0, 512);
   }
 
   return {

@@ -156,7 +156,9 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
       if (route === '/claude') {
         event = mapClaudeHookToEvent(body);
       } else if (route === '/opencode') {
+        console.log('[Event Horizon] OpenCode event received:', JSON.stringify(body).slice(0, 500));
         event = mapOpenCodeToEvent(body);
+        if (event) console.log('[Event Horizon] Mapped event cwd:', event.payload?.cwd);
       } else if (route === '/events' && typeof body === 'object' && body !== null) {
         const b = body as Record<string, unknown>;
         const eventType = typeof b.type === 'string' ? b.type : '';

@@ -126,7 +126,7 @@ function getWebviewHtml(
   const scriptSrc = scriptUri.toString() + '?v=' + version;
 
   // 1.6 — initial state injected via data attribute to avoid inline script (CSP compliance)
-  const initData = JSON.stringify({ connectedAgents: connectedAgentTypes });
+  const initData = JSON.stringify({ connectedAgents: connectedAgentTypes, version });
 
   return `<!DOCTYPE html>
 <html>

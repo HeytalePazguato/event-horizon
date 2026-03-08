@@ -112,6 +112,9 @@ const TRAIL_COLOR_DEFAULT = 0xffcc44;
  * gas-giant ring arc ≈ size * 1.35 * 1.75 ≈ 38px at avg size 16,
  * so two gas giants need ≥ 76px center-to-center + margin = 120px.
  */
+// Session-random seed — varies each time the renderer mounts but stays stable within a session.
+const SESSION_SEED = Math.random();
+
 function computePlanetPositions(
   agents: AgentView[],
 ): Map<string, { x: number; y: number }> {
@@ -132,18 +135,23 @@ function computePlanetPositions(
 
   const posArray: Array<{ id: string; x: number; y: number; origR: number }> = [];
 
+  // Session-random rotation offset — shifts all planets each session
+  const sessionAngleOffset = SESSION_SEED * Math.PI * 2;
+
   for (let b = 0; b < 3; b++) {
     const group = bands[b];
     if (group.length === 0) continue;
     const R = BAND_R[b];
 
-    // Deterministic but varied start angle per band
-    const startAngle = (hashId((group[0].id) + 'b' + b) % 628) / 100;
+    // Deterministic but varied start angle per band, plus session randomization
+    const startAngle = (hashId((group[0].id) + 'b' + b) % 628) / 100 + sessionAngleOffset;
 
     group.forEach((agent, idx) => {
       const angle = startAngle + (idx / group.length) * Math.PI * 2;
-      const radialJitter = ((hashId(agent.id + 'r') % 40) / 40 - 0.5) * 14;
-      const r = R + radialJitter;
+      // Radial jitter: deterministic base + session-random variation
+      const baseJitter = ((hashId(agent.id + 'r') % 40) / 40 - 0.5) * 14;
+      const sessionJitter = ((SESSION_SEED * hashId(agent.id) % 30) - 15);
+      const r = R + baseJitter + sessionJitter;
       posArray.push({ id: agent.id, x: Math.cos(angle) * r, y: Math.sin(angle) * r, origR: r });
     });
   }

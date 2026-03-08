@@ -115,6 +115,37 @@ Webview (index.tsx)
 <Universe> (PixiJS)  +  <CommandCenter> (React)
 ```
 
+## Agent Cooperation Detection
+
+When multiple agents connect to Event Horizon, the extension host checks whether they are working in related directories and, if so, spawns cooperation ships between them.
+
+### How `cwd` is captured
+
+- **Claude Code** — The connector extracts `cwd` from the hook payload (top-level or nested). Claude Code includes `cwd` in every hook invocation.
+- **OpenCode** — The generated plugin (`event-horizon.ts`) captures `directory` and `worktree` from the plugin context and sends them as `cwd` on every event.
+- **Fallback** — If an agent doesn't report a `cwd`, the extension host injects the primary `vscode.workspace.workspaceFolders[0]` path.
+
+The `cwd` is stored on `AgentState.cwd` and persisted in the webview's agent map.
+
+### Cooperation matching (`extension.ts`)
+
+The `areAgentsCooperating(cwdA, cwdB)` function returns true if:
+
+1. **Exact match** — Both paths are identical (case-insensitive, normalized slashes).
+2. **Nested** — One path is a prefix of the other (e.g. `/project` and `/project/packages/core`).
+3. **Same workspace folder** — Both paths fall under the same entry in `vscode.workspace.workspaceFolders` (covers multi-root workspaces).
+
+### Ship spawning
+
+A recursive timer (3–10 second random delay) runs in the extension host:
+
+1. Gets all agents with a known `cwd` from `AgentStateManager`.
+2. Finds cooperating pairs using the matching logic above.
+3. Picks one random pair, randomizes direction, and sends a `data.transfer` event directly to the webview.
+4. The webview renders the ship like any other data transfer — curved arc, colored trail, auto-cleanup.
+
+This works across agent types: a Claude Code agent and an OpenCode agent in the same folder will exchange ships.
+
 ## Persistence
 
 - **Agent state and metrics** — In-memory only. Accumulated in the extension host (`AgentStateManager`, `MetricsEngine`) and hydrated to the webview on open via `init-state` message.
@@ -130,7 +161,8 @@ Claude Code supports hook scripts in `~/.claude/settings.json`. Event Horizon re
 ### OpenCode
 
 OpenCode auto-loads TypeScript plugins from `~/.config/opencode/plugins/`. Event Horizon writes `event-horizon.ts` which:
-- Sends `session.created` on plugin init
+- Captures `directory` and `worktree` from the plugin context for cooperation detection
+- Sends `session.created` (with `cwd`) on plugin init
 - Forwards all events via the catch-all `event` hook
 - Registers `process.on('beforeExit'/'SIGINT'/'SIGTERM')` handlers to send `session.deleted` on exit
 - Uses dedicated `tool.execute.before/after` hooks for tool-specific data

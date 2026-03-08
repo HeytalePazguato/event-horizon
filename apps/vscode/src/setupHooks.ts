@@ -18,6 +18,8 @@ const EH_HOOK_EVENTS = [
   'PostToolUse',
   'UserPromptSubmit',
   'Notification',
+  'SubagentStart',
+  'SubagentStop',
 ] as const;
 
 function buildCurlCommand(): string {
@@ -36,7 +38,7 @@ function isCurrentEhCommand(cmd: string): boolean {
   return cmd === buildCurlCommand();
 }
 
-/** Returns true if Event Horizon hooks are present in ~/.claude/settings.json */
+/** Returns true if Event Horizon hooks with the CURRENT token are present in ~/.claude/settings.json */
 export async function isClaudeCodeHooksInstalled(): Promise<boolean> {
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
   try {
@@ -48,9 +50,37 @@ export async function isClaudeCodeHooksInstalled(): Promise<boolean> {
       return entries.some((h) => {
         const hh = h as Record<string, unknown>;
         const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
-        return hs.some((c) => typeof c.command === 'string' && isEhCommand(c.command));
+        return hs.some((c) => typeof c.command === 'string' && isCurrentEhCommand(c.command));
       });
     });
+  } catch {
+    return false;
+  }
+}
+
+/** Returns true if EH hooks exist but with a stale (old session) token. */
+export async function hasStaleClaudeCodeHooks(): Promise<boolean> {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+  try {
+    const raw = await fsp.readFile(settingsPath, 'utf8');
+    const settings = JSON.parse(raw) as Record<string, unknown>;
+    const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+    let hasAny = false;
+    let hasCurrent = false;
+    for (const hookEvent of EH_HOOK_EVENTS) {
+      const entries = (hooks[hookEvent] ?? []) as unknown[];
+      for (const h of entries) {
+        const hh = h as Record<string, unknown>;
+        const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
+        for (const c of hs) {
+          if (typeof c.command === 'string' && isEhCommand(c.command)) {
+            hasAny = true;
+            if (isCurrentEhCommand(c.command)) hasCurrent = true;
+          }
+        }
+      }
+    }
+    return hasAny && !hasCurrent;
   } catch {
     return false;
   }

@@ -13,6 +13,8 @@ export interface AgentState {
   type: string;
   state: AgentRuntimeState;
   currentTaskId: string | null;
+  /** Working directory reported by the agent — used for cooperation detection. */
+  cwd?: string;
 }
 
 export interface TaskState {
@@ -32,6 +34,16 @@ export class AgentStateManager {
     return `task-${++this.taskIdCounter}`;
   }
 
+  /** Ensure the agent exists — auto-create on first event if missed agent.spawn (e.g. after extension reload). */
+  private ensureAgent(agentId: string, agentName: string, agentType: string, cwd?: string): AgentState {
+    let agent = this.agents.get(agentId);
+    if (!agent) {
+      agent = { id: agentId, name: agentName, type: agentType, state: 'idle', currentTaskId: null, cwd };
+      this.agents.set(agentId, agent);
+    }
+    return agent;
+  }
+
   apply(event: AgentEvent): void {
     const { agentId, agentName, agentType, type, timestamp, payload } = event;
 
@@ -43,17 +55,18 @@ export class AgentStateManager {
           type: agentType,
           state: 'idle',
           currentTaskId: null,
+          cwd: (payload?.cwd as string) ?? undefined,
         });
         break;
       }
       case 'agent.idle': {
-        const a = this.agents.get(agentId);
-        if (a) this.agents.set(agentId, { ...a, state: 'idle', currentTaskId: null });
+        const a = this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+        this.agents.set(agentId, { ...a, state: 'idle', currentTaskId: null });
         break;
       }
       case 'agent.error': {
-        const a = this.agents.get(agentId);
-        if (a) this.agents.set(agentId, { ...a, state: 'error' });
+        const a = this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+        this.agents.set(agentId, { ...a, state: 'error' });
         break;
       }
       case 'agent.terminate': {
@@ -74,13 +87,12 @@ export class AgentStateManager {
           complexity,
           startedAt: timestamp,
         });
-        const agent = this.agents.get(agentId);
-        if (agent) {
-          this.agents.set(agentId, { ...agent, state: 'thinking', currentTaskId: taskId });
-        }
+        const agent = this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+        this.agents.set(agentId, { ...agent, state: 'thinking', currentTaskId: taskId });
         break;
       }
       case 'task.progress': {
+        this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
         const taskId = payload?.taskId as string | undefined;
         const progress = (payload?.progress as number) ?? 0;
         if (taskId) {
@@ -94,17 +106,15 @@ export class AgentStateManager {
         const taskId = payload?.taskId as string | undefined;
         if (taskId) {
           this.tasks.delete(taskId);
-          const agent = this.agents.get(agentId);
-          if (agent && agent.currentTaskId === taskId) {
+          const agent = this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+          if (agent.currentTaskId === taskId) {
             this.agents.set(agentId, { ...agent, state: 'idle', currentTaskId: null });
           }
         } else {
           // No taskId — complete the agent's current task (if any)
-          const agent = this.agents.get(agentId);
-          if (agent) {
-            if (agent.currentTaskId) this.tasks.delete(agent.currentTaskId);
-            this.agents.set(agentId, { ...agent, state: 'idle', currentTaskId: null });
-          }
+          const agent = this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+          if (agent.currentTaskId) this.tasks.delete(agent.currentTaskId);
+          this.agents.set(agentId, { ...agent, state: 'idle', currentTaskId: null });
         }
         break;
       }
@@ -112,7 +122,17 @@ export class AgentStateManager {
         // Ships are tracked exclusively in the webview (with timeout cleanup); no-op here.
         break;
       default:
+        // tool.call, tool.result, file.read, file.write, message.send, message.receive
+        this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
         break;
+    }
+
+    // Update cwd on any event if the agent exists and payload includes it
+    if (payload?.cwd && type !== 'agent.spawn' && type !== 'agent.terminate') {
+      const a = this.agents.get(agentId);
+      if (a && !a.cwd) {
+        this.agents.set(agentId, { ...a, cwd: payload.cwd as string });
+      }
     }
   }
 

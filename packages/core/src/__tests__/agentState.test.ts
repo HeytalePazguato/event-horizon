@@ -99,4 +99,23 @@ describe('AgentStateManager', () => {
     expect(manager.getAgent('a1')!.state).toBe('idle');
     expect(manager.getAgent('a1')!.currentTaskId).toBeNull();
   });
+
+  it('agent.spawn captures cwd from payload', () => {
+    manager.apply(makeEvent({ type: 'agent.spawn', agentId: 'a1', payload: { cwd: '/home/user/project' } }));
+    expect(manager.getAgent('a1')!.cwd).toBe('/home/user/project');
+  });
+
+  it('cwd is updated on subsequent events if not set at spawn', () => {
+    manager.apply(makeEvent({ type: 'agent.spawn', agentId: 'a1' }));
+    expect(manager.getAgent('a1')!.cwd).toBeUndefined();
+
+    manager.apply(makeEvent({ type: 'tool.call', agentId: 'a1', payload: { cwd: '/home/user/project' } }));
+    expect(manager.getAgent('a1')!.cwd).toBe('/home/user/project');
+  });
+
+  it('cwd is not overwritten once set', () => {
+    manager.apply(makeEvent({ type: 'agent.spawn', agentId: 'a1', payload: { cwd: '/first' } }));
+    manager.apply(makeEvent({ type: 'tool.call', agentId: 'a1', payload: { cwd: '/second' } }));
+    expect(manager.getAgent('a1')!.cwd).toBe('/first');
+  });
 });
