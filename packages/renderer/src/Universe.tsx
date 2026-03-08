@@ -60,6 +60,8 @@ export interface UniverseProps {
   onUfoAbduction?: () => void;
   /** Called when the user clicks on the UFO. */
   onUfoClicked?: () => void;
+  /** Called when the user clicks on the black hole. */
+  onSingularityClick?: () => void;
 }
 
 // --- constants -----------------------------------------------------------
@@ -82,8 +84,8 @@ const UFO_FLYBY_CHANCE = 0.4; // 40% of UFOs just fly by without abducting
 const SHOOTING_STAR_INTERVAL_MIN = 30000;  // ms between shooting stars
 const SHOOTING_STAR_INTERVAL_MAX = 90000;
 const SHOOTING_STAR_MAX_BURST = 3; // up to 3 shooting stars per event
-const ASTRONAUT_JET_MIN_MS = 180_000;     // 3 minutes minimum before jet fires
-const ASTRONAUT_JET_MAX_MS = 420_000;     // 7 minutes max
+const ASTRONAUT_JET_MIN_MS = 45_000;      // 45 seconds minimum before jet fires
+const ASTRONAUT_JET_MAX_MS = 120_000;     // 2 minutes max
 
 /** Minimum distance from singularity centre for a planet to be placed.
  *  Must clear DISK_OUTER(70) + outer-glow(20) + max-planet-size(20) + margin = ~130. */
@@ -299,6 +301,7 @@ export const Universe: FC<UniverseProps> = ({
   onAstronautSpawned,
   onUfoAbduction,
   onUfoClicked,
+  onSingularityClick,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -375,12 +378,16 @@ export const Universe: FC<UniverseProps> = ({
   onUfoAbductionRef.current = onUfoAbduction;
   const onUfoClickedRef = useRef(onUfoClicked);
   onUfoClickedRef.current = onUfoClicked;
+  const onSingularityClickRef = useRef(onSingularityClick);
+  onSingularityClickRef.current = onSingularityClick;
   const onPlanetHoverRef = useRef(onPlanetHover);
   onPlanetHoverRef.current = onPlanetHover;
   const onPlanetClickRef = useRef(onPlanetClick);
   onPlanetClickRef.current = onPlanetClick;
 
   const mountedRef = useRef(true);
+
+  const selectedAgentIdRef = useRef<string | null>(selectedAgentId);
 
   // Keep control refs in sync without triggering rerenders
   useEffect(() => { agentStatesRef.current = agentStates; }, [agentStates]);
@@ -389,6 +396,7 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { isolatedRef.current = isolatedAgentId; }, [isolatedAgentId]);
   useEffect(() => { boostedRef.current = boostedAgentIds; }, [boostedAgentIds]);
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
+  useEffect(() => { selectedAgentIdRef.current = selectedAgentId; }, [selectedAgentId]);
 
   // --- init timeout (fallback if PixiJS silently fails) --------------------
   useEffect(() => {
@@ -459,6 +467,10 @@ export const Universe: FC<UniverseProps> = ({
 
         // Z-order (back→front): singularity → astronauts → planets → ships
         const singularity = createSingularity({ x: 0, y: 0 });
+        singularity.eventMode = 'static';
+        singularity.cursor = 'pointer';
+        singularity.hitArea = { contains: (x: number, y: number) => Math.sqrt(x * x + y * y) <= 90 };
+        singularity.on('pointertap', () => onSingularityClickRef.current?.());
         world.addChild(singularity);
         singularityRef.current = singularity;
 
@@ -580,13 +592,19 @@ export const Universe: FC<UniverseProps> = ({
   // --- re-center -----------------------------------------------------------
   useEffect(() => {
     if (centerRequestedAt <= 0) return;
-    posRef.current = { x: 0, y: 0 };
     const panContainer = panContainerRef.current;
     const sz = sizeRef.current;
-    if (panContainer && sz.width && sz.height) {
-      panContainer.x = sz.width / 2;
-      panContainer.y = sz.height / 2;
-    }
+    if (!panContainer || !sz.width || !sz.height) return;
+
+    // Center on the selected planet's position, or singularity (0,0) if none selected
+    const selectedId = selectedAgentIdRef.current;
+    const targetPos = selectedId ? planetPositionsRef.current.get(selectedId) : null;
+    const tx = targetPos?.x ?? 0;
+    const ty = targetPos?.y ?? 0;
+
+    posRef.current = { x: -tx * scaleRef.current, y: -ty * scaleRef.current };
+    panContainer.x = sz.width / 2 + posRef.current.x;
+    panContainer.y = sz.height / 2 + posRef.current.y;
   }, [centerRequestedAt]);
 
   // --- planets (diff-based: reuse existing, add new, spiral removed) -------
@@ -1012,7 +1030,7 @@ export const Universe: FC<UniverseProps> = ({
         const ring = p.__thinkingRing;
         if (ring) {
           ring.visible = state === 'thinking';
-          if (state === 'thinking') {
+          if (state === 'thinking' && !isPaused) {
             const load = metricsRef.current[agentId]?.load ?? 0.3;
             ring.rotation = (ring.rotation + 0.015 + load * 0.06) % (Math.PI * 2);
             ring.alpha = 0.55 + 0.35 * Math.sin(t * 5);
@@ -1023,7 +1041,7 @@ export const Universe: FC<UniverseProps> = ({
         const eg = p.__errorGlow;
         if (eg) {
           eg.visible = state === 'error';
-          if (state === 'error') {
+          if (state === 'error' && !isPaused) {
             eg.alpha = 0.25 + 0.2 * Math.sin(t * 12);
           }
         }

@@ -66,6 +66,12 @@ export function createWebviewProvider(
         void webviewView.webview.postMessage({ type: 'init-medals', ...savedMedals });
       }
 
+      // Hydrate persisted singularity stats from globalState
+      const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
+      if (savedSingularity) {
+        void webviewView.webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
+      }
+
       webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
         // Persist medal state changes to globalState
         if (msg?.type === 'persist-medals') {
@@ -74,6 +80,11 @@ export function createWebviewProvider(
             achievementTiers: msg.achievementTiers,
             achievementCounts: msg.achievementCounts,
           });
+          return;
+        }
+        // Persist singularity stats to globalState
+        if (msg?.type === 'persist-singularity') {
+          void context.globalState.update('singularityStats', msg.stats);
           return;
         }
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {

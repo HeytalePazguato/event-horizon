@@ -152,6 +152,10 @@ function App() {
   const toggleConnect        = useCommandCenterStore((s) => s.toggleConnect);
   const spawnOpen            = useCommandCenterStore((s) => s.spawnOpen);
   const toggleSpawn          = useCommandCenterStore((s) => s.toggleSpawn);
+  const selectSingularity    = useCommandCenterStore((s) => s.selectSingularity);
+  const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
+  const setSingularityStats  = useCommandCenterStore((s) => s.setSingularityStats);
+  const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
 
 
   // Achievement tracking state
@@ -196,6 +200,15 @@ function App() {
         return;
       }
 
+      // init-singularity: hydrate persisted singularity stats
+      if (msg?.type === 'init-singularity') {
+        const data = msg as unknown as { stats: import('@event-horizon/ui').SingularityStats };
+        if (data.stats) {
+          useCommandCenterStore.getState().setSingularityStats(data.stats);
+        }
+        return;
+      }
+
       if (msg?.type !== 'event' || !msg.payload) return;
 
       const raw = msg.payload as {
@@ -212,8 +225,17 @@ function App() {
 
       addLog({ ts: new Date().toLocaleTimeString(), agentId, agentName, type });
 
+      // ── Singularity stats tracking ──
+      const store = useCommandCenterStore.getState();
+      if (!store.singularityStats.firstEventAt) store.incrementSingularityStat('firstEventAt');
+      if (type === 'tool.call') store.incrementSingularityStat('toolCallsTotal');
+      if (type === 'task.complete') store.incrementSingularityStat('tasksCompleted');
+      if (type === 'task.fail') store.incrementSingularityStat('tasksFailed');
+
       // agent.terminate: clean up all state for this agent — 2.4
       if (type === 'agent.terminate') {
+        store.incrementSingularityStat('agentsTerminated');
+        store.incrementSingularityStat('planetsSwallowed');
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
         setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
@@ -226,6 +248,7 @@ function App() {
           const shipId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const payloadSize = (raw.payload?.payloadSize as number | undefined) ?? 1;
           setShips((prev) => [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }]);
+          store.incrementSingularityStat('shipsArrived');
           const timerId = setTimeout(() => {
             setShips((prev) => prev.filter((s) => s.id !== shipId));
             shipTimerIdsRef.current.delete(timerId);
@@ -336,6 +359,12 @@ function App() {
     });
   }, [unlockedAchievements, achievementTiers, achievementCounts]);
 
+  // ── Persist singularity stats to extension host globalState ──
+  useEffect(() => {
+    if (!singularityStats.firstEventAt) return;
+    vscodeApi?.postMessage({ type: 'persist-singularity', stats: singularityStats });
+  }, [singularityStats]);
+
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
   // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).
   // Claude Code (sends SessionEnd) and OpenCode (sends session.deleted) are excluded.
@@ -401,7 +430,8 @@ function App() {
 
   const handleAstronautConsumed = useCallback(() => {
     incrementTiered('gravity_well');
-  }, [incrementTiered]);
+    incrementStat('astronautsConsumed');
+  }, [incrementTiered, incrementStat]);
 
   const handleAstronautSpawned = useCallback(() => {
     unlockAchievement('lone_astronaut');
@@ -409,11 +439,16 @@ function App() {
 
   const handleUfoAbduction = useCallback(() => {
     unlockAchievement('abduction');
-  }, [unlockAchievement]);
+    incrementStat('ufoAbductions');
+  }, [unlockAchievement, incrementStat]);
 
   const handleUfoClicked = useCallback(() => {
     incrementTiered('ufo_hunter');
   }, [incrementTiered]);
+
+  const handleSingularityClick = useCallback(() => {
+    selectSingularity();
+  }, [selectSingularity]);
 
   // ── Planet hover / click ──────────────────────────────────────────────────
 
@@ -627,6 +662,7 @@ function App() {
           onAstronautSpawned={handleAstronautSpawned}
           onUfoAbduction={handleUfoAbduction}
           onUfoClicked={handleUfoClicked}
+          onSingularityClick={handleSingularityClick}
         />
       </div>
       {!hasAgents && (

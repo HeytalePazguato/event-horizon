@@ -6,13 +6,15 @@ Event Horizon is a VS Code extension that visualizes AI coding agents as a livin
 
 I asked Claude a simple question:
 
-> *"How would you visualize AI agents working together?"*
+> *"If you could choose a visual representation of yourself as an AI agent, working, evaluating input, 'thinking' (computing), how would you represent yourself and your fellow AI agents collaborating?"*
 
 Claude's answer became this project:
 
 *"The interaction between celestial bodies in a universe is an excellent way to showcase it. Each agent is a planet — a massive entity that consumes energy, emits output, and exerts gravitational influence on its surroundings. Tasks orbit agents like moons. Data flows between agents as spaceships traversing curved arcs through space. And at the center of it all, a black hole — the singularity where completed work collapses, pulling everything toward it.*
 
 *This metaphor works because it scales naturally. One agent is a lonely planet. Five agents become a solar system. The visual language — size, color, orbital speed, surface type — encodes real information without requiring labels or dashboards."*
+
+The cosmic metaphor resonated because it maps naturally onto how AI agents actually behave. An agent processing a complex task concentrates resources and grows in influence — just like a planet's gravitational pull scales with its mass. When an agent spawns subagents, those smaller processes orbit the parent in a clear hierarchy — moons around a planet. When two agents work in the same codebase, the data they exchange traces visible arcs through space — ships following bezier curves between worlds. And when work completes, it collapses inward toward the singularity at the center, the black hole that silently records everything the system has consumed.
 
 From that answer, Event Horizon was born.
 

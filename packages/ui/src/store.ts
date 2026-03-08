@@ -29,10 +29,40 @@ export interface ToastEntry {
   achievementId: string;
 }
 
+/** Persistent stats for the black hole — everything it has consumed. */
+export interface SingularityStats {
+  agentsTerminated: number;
+  tasksCompleted: number;
+  tasksFailed: number;
+  toolCallsTotal: number;
+  astronautsConsumed: number;
+  planetsSwallowed: number;
+  shipsArrived: number;
+  ufoAbductions: number;
+  /** Timestamp of first ever event. */
+  firstEventAt: number;
+}
+
+export const EMPTY_SINGULARITY_STATS: SingularityStats = {
+  agentsTerminated: 0,
+  tasksCompleted: 0,
+  tasksFailed: 0,
+  toolCallsTotal: 0,
+  astronautsConsumed: 0,
+  planetsSwallowed: 0,
+  shipsArrived: 0,
+  ufoAbductions: 0,
+  firstEventAt: 0,
+};
+
 export interface CommandCenterState {
   selectedAgentId: string | null;
   selectedAgent: AgentState | null;
   selectedMetrics: AgentMetrics | null;
+  /** When true, the black hole is selected instead of a planet. */
+  singularitySelected: boolean;
+  /** Persistent cosmic ledger. */
+  singularityStats: SingularityStats;
   centerRequestedAt: number;
   /** Agent IDs whose pulse animation is frozen. */
   pausedAgentIds: Record<string, boolean>;
@@ -65,6 +95,9 @@ export interface CommandCenterState {
 
   setSelectedAgent: (id: string | null) => void;
   setSelectedAgentData: (agent: AgentState | null, metrics: AgentMetrics | null) => void;
+  selectSingularity: () => void;
+  incrementSingularityStat: (key: keyof SingularityStats, amount?: number) => void;
+  setSingularityStats: (stats: SingularityStats) => void;
   requestCenter: () => void;
   togglePause: (id: string) => void;
   toggleIsolate: (id: string) => void;
@@ -93,6 +126,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedAgentId: null,
   selectedAgent: null,
   selectedMetrics: null,
+  singularitySelected: false,
+  singularityStats: { ...EMPTY_SINGULARITY_STATS },
   centerRequestedAt: 0,
   pausedAgentIds: {},
   isolatedAgentId: null,
@@ -109,14 +144,46 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   spawnOpen: false,
   pendingConnectAgent: null,
 
-  setSelectedAgent: (id) => set({ selectedAgentId: id, selectedAgent: null, selectedMetrics: null }),
+  setSelectedAgent: (id) => set((s) => ({
+    selectedAgentId: id,
+    selectedAgent: null,
+    selectedMetrics: null,
+    singularitySelected: false,
+    // If isolation is active, follow the selection to the new planet
+    isolatedAgentId: s.isolatedAgentId && id ? id : s.isolatedAgentId,
+  })),
 
   setSelectedAgentData: (agent, metrics) =>
-    set({
+    set((s) => ({
       selectedAgentId: agent?.id ?? null,
       selectedAgent: agent ?? null,
       selectedMetrics: metrics ?? null,
+      singularitySelected: false,
+      // If isolation is active, follow the selection to the new planet
+      isolatedAgentId: s.isolatedAgentId && agent?.id ? agent.id : s.isolatedAgentId,
+    })),
+
+  selectSingularity: () => set((s) => ({
+    selectedAgentId: null,
+    selectedAgent: null,
+    selectedMetrics: null,
+    singularitySelected: true,
+    // If isolation is active, isolate the singularity (sentinel dims all planets)
+    isolatedAgentId: s.isolatedAgentId ? '__singularity__' : null,
+  })),
+
+  incrementSingularityStat: (key, amount = 1) =>
+    set((s) => {
+      const stats = { ...s.singularityStats };
+      if (key === 'firstEventAt') {
+        if (!stats.firstEventAt) stats.firstEventAt = Date.now();
+      } else {
+        (stats[key] as number) += amount;
+      }
+      return { singularityStats: stats };
     }),
+
+  setSingularityStats: (stats) => set({ singularityStats: stats }),
 
   requestCenter: () => set({ centerRequestedAt: Date.now() }),
 

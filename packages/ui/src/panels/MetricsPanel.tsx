@@ -6,7 +6,7 @@
 import type { FC } from 'react';
 import { useState } from 'react';
 import { useCommandCenterStore } from '../store.js';
-import type { LogEntry } from '../store.js';
+import type { LogEntry, SingularityStats } from '../store.js';
 import { ACHIEVEMENTS, Medal, TIER_LABELS, tierBorderColor } from '../Achievements.js';
 
 const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
@@ -144,11 +144,61 @@ const cellStyle: React.CSSProperties = {
 const valStyle: React.CSSProperties = { color: '#b0d0a8', fontSize: 10, fontWeight: 600 };
 const errStyle: React.CSSProperties = { ...valStyle, color: '#c65858' };
 
+const SingularityView: FC<{ stats: SingularityStats }> = ({ stats }) => {
+  const uptime = stats.firstEventAt ? formatDuration(Date.now() - stats.firstEventAt) : '-';
+  return (
+    <div style={gridStyle}>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Agents</div>
+        <div style={valStyle}>{stats.agentsTerminated}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Tasks</div>
+        <div style={valStyle}>{stats.tasksCompleted}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Failed</div>
+        <div style={stats.tasksFailed > 0 ? errStyle : valStyle}>{stats.tasksFailed}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Tools</div>
+        <div style={valStyle}>{stats.toolCallsTotal}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Ships</div>
+        <div style={valStyle}>{stats.shipsArrived}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Planets</div>
+        <div style={{ ...valStyle, color: '#d4844a' }}>{stats.planetsSwallowed}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Astros</div>
+        <div style={{ ...valStyle, color: '#d4844a' }}>{stats.astronautsConsumed}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>UFOs</div>
+        <div style={valStyle}>{stats.ufoAbductions}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Uptime</div>
+        <div style={valStyle}>{uptime}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Total</div>
+        <div style={{ ...valStyle, fontSize: 9 }}>{stats.agentsTerminated + stats.tasksCompleted + stats.astronautsConsumed + stats.planetsSwallowed}</div>
+      </div>
+    </div>
+  );
+};
+
 type View = 'info' | 'logs' | 'medals';
 
 export const MetricsPanel: FC = () => {
   const selectedMetrics = useCommandCenterStore((s) => s.selectedMetrics);
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
+  const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
+  const singularityStats    = useCommandCenterStore((s) => s.singularityStats);
   const logsOpen        = useCommandCenterStore((s) => s.logsOpen);
   const closeLogs       = useCommandCenterStore((s) => s.closeLogs);
   const allLogs         = useCommandCenterStore((s) => s.logs);
@@ -183,7 +233,8 @@ export const MetricsPanel: FC = () => {
         {tabs}
         {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
         {effectiveView === 'medals' && <MedalsView />}
-        {effectiveView === 'info' && (
+        {effectiveView === 'info' && singularitySelected && <SingularityView stats={singularityStats} />}
+        {effectiveView === 'info' && !singularitySelected && (
           <div style={{ color: '#4a5a52', fontSize: 11, padding: 8, border: '1px dashed #2a4a3a' }}>
             Select an agent
           </div>
