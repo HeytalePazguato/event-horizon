@@ -56,6 +56,7 @@ curl -X POST http://127.0.0.1:28765/events \
 
 ## Pull Request Guidelines
 
+- **Target the `develop` branch** — never PR directly to `master`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full branching and release strategy.
 - Keep PRs focused — one feature or fix per PR
 - Make sure `pnpm build` passes before submitting
 - Write a clear description of what changed and why

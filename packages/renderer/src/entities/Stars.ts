@@ -38,12 +38,27 @@ export function createStars(width: number, height: number): Container {
   container.addChild(farLayer);
 
   const g = new Graphics();
+  // Colored star tints — subtle, dim so they read as distant background stars
+  const COLORED_STARS: Array<{ color: number; alpha: [number, number] }> = [
+    { color: 0x88aaff, alpha: [0.20, 0.45] },  // blue
+    { color: 0xff9988, alpha: [0.18, 0.40] },  // red
+    { color: 0xffdd88, alpha: [0.18, 0.38] },  // yellow
+  ];
+  const COLORED_RATIO = 0.08; // ~8 % of near-layer stars get a colour tint
+
   for (let i = 0; i < starCount; i++) {
     const x = random(0, width);
     const y = random(0, height);
     const r = random(0.25, MAX_RADIUS);
-    const alpha = random(0.35, 1);
-    g.circle(x, y, r).fill({ color: 0xffffff, alpha });
+    if (Math.random() < COLORED_RATIO) {
+      const cs = COLORED_STARS[Math.floor(Math.random() * COLORED_STARS.length)];
+      const a = random(cs.alpha[0], cs.alpha[1]);
+      // Keep colored stars small so they can't be mistaken for planets
+      g.circle(x, y, Math.min(r, 1.0)).fill({ color: cs.color, alpha: a });
+    } else {
+      const alpha = random(0.35, 1);
+      g.circle(x, y, r).fill({ color: 0xffffff, alpha });
+    }
   }
   container.addChild(g);
   return container;

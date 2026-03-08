@@ -135,6 +135,52 @@ OpenCode auto-loads TypeScript plugins from `~/.config/opencode/plugins/`. Event
 - Registers `process.on('beforeExit'/'SIGINT'/'SIGTERM')` handlers to send `session.deleted` on exit
 - Uses dedicated `tool.execute.before/after` hooks for tool-specific data
 
+## Branching and Release Strategy
+
+The project uses a 3-tier branch model with automated CI/CD via GitHub Actions:
+
+```
+develop ──────────── Dev builds (artifacts only)
+    │
+    └── release/X.Y.Z ── Pre-releases (GitHub Releases, pre-release flag)
+            │
+            └── master ── Stable releases (GitHub Releases, git tags)
+```
+
+### Branches
+
+| Branch | Purpose | Output |
+|--------|---------|--------|
+| `develop` | Active development. All feature work merges here. | Dev `.vsix` artifact (not a Release). Named `0.0.0.{N}-dev`. Latest 3 kept. |
+| `release/X.Y.Z` | Release candidates. Created from `develop` when preparing a release. | GitHub Pre-release with `.vsix`. Tagged `vX.Y.Z-{stage}.{N}`. Latest 5 kept. |
+| `master` | Stable releases only. Merged from `release/*` when ready. | GitHub Release with `.vsix`. Tagged `vX.Y.Z`. Kept forever. |
+
+### Versioning
+
+VS Code extensions require strict **3-digit SemVer** (`X.Y.Z`) internally — 4-digit versions are rejected by `vsce package`. The strategy handles this:
+
+- **Dev builds**: Internal version is `0.0.{RUN_NUMBER}` (valid for vsce). Artifact name includes 4-digit display version `0.0.0.{N}-dev` for human readability.
+- **Pre-releases**: Internal version is `X.Y.Z` (from the branch name). The pre-release stage and number are in the git tag and GitHub Release name only (e.g. `v0.1.0-alpha.3`).
+- **Stable releases**: Version is read from `apps/vscode/package.json` as-is.
+
+### Pre-release Stages
+
+Pre-release stage is determined by commit message tags:
+
+| Tag in commit message | Stage | Example tag |
+|----------------------|-------|-------------|
+| (default / `[alpha]`) | alpha | `v0.1.0-alpha.1` |
+| `[beta]` | beta | `v0.1.0-beta.2` |
+| `[rc]` | rc | `v0.1.0-rc.1` |
+
+Stage numbers auto-increment by counting existing tags of that stage for the version.
+
+### Cleanup
+
+- **Dev artifacts**: Latest 3 kept, older ones auto-deleted after each dev build.
+- **Pre-releases**: Latest 5 kept (both the GitHub Release and its git tag are deleted).
+- **Stable releases**: Never deleted.
+
 ## Adding a New Agent Connector
 
 1. Create `packages/connectors/src/<name>.ts` with a mapper: `(raw: unknown) => AgentEvent | null`

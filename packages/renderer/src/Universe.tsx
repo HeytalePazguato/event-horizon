@@ -78,6 +78,12 @@ const SHIP_AVOID_RADIUS = 95; // must clear singularity outer glow (DISK_OUTER 7
 const MAX_TRAIL_POINTS = 32;
 const UFO_INTERVAL_MIN_MS = 25000;
 const UFO_INTERVAL_MAX_MS = 55000;
+const UFO_FLYBY_CHANCE = 0.4; // 40% of UFOs just fly by without abducting
+const SHOOTING_STAR_INTERVAL_MIN = 30000;  // ms between shooting stars
+const SHOOTING_STAR_INTERVAL_MAX = 90000;
+const SHOOTING_STAR_MAX_BURST = 3; // up to 3 shooting stars per event
+const ASTRONAUT_JET_MIN_MS = 180_000;     // 3 minutes minimum before jet fires
+const ASTRONAUT_JET_MAX_MS = 420_000;     // 7 minutes max
 
 /** Minimum distance from singularity centre for a planet to be placed.
  *  Must clear DISK_OUTER(70) + outer-glow(20) + max-planet-size(20) + margin = ~130. */
@@ -295,7 +301,7 @@ export const Universe: FC<UniverseProps> = ({
   const astronautsContainerRef = useRef<Container | null>(null);
   const singularityRef = useRef<Container | null>(null);
   const starsRef = useRef<Container | null>(null);
-  const astronautsRef = useRef<Array<{ id: number; c: Container; vx: number; vy: number; doomed?: boolean }>>([]);
+  const astronautsRef = useRef<Array<{ id: number; c: Container; vx: number; vy: number; doomed?: boolean; nextJetTime?: number }>>([]);
   const activeShipsRef = useRef<ActiveShip[]>([]);
   const spawnedShipIdsRef = useRef<Set<string>>(new Set());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -310,7 +316,7 @@ export const Universe: FC<UniverseProps> = ({
   const moonCountsRef = useRef<Map<string, number>>(new Map());
   const ufoRef = useRef<Container | null>(null);
   const ufoStateRef = useRef<{
-    phase: 'idle' | 'fly' | 'beam' | 'flyaway';
+    phase: 'idle' | 'fly' | 'beam' | 'flyaway' | 'flyby';
     t: number;
     targetX: number;
     targetY: number;
@@ -319,8 +325,21 @@ export const Universe: FC<UniverseProps> = ({
     cow?: Container;
     beam?: Container;
     beamLen?: number;
+    /** Fly-by waypoints for curved path */
+    waypoints?: Array<{ x: number; y: number }>;
+    waypointIndex?: number;
+    segT?: number;
   }>({ phase: 'idle', t: 0, targetX: 0, targetY: 0 });
   const ufoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shootingStarsRef = useRef<Array<{
+    g: Graphics; x: number; y: number; vx: number; vy: number;
+    life: number; maxLife: number;
+  }>>([]);
+  const shootingStarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jetSprayRef = useRef<Array<{
+    g: Graphics; x: number; y: number; vx: number; vy: number;
+    life: number; maxLife: number;
+  }>>([]);
   const scaleRef = useRef(1);
   const posRef = useRef({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -766,33 +785,137 @@ export const Universe: FC<UniverseProps> = ({
       const delay = UFO_INTERVAL_MIN_MS + Math.random() * (UFO_INTERVAL_MAX_MS - UFO_INTERVAL_MIN_MS);
       ufoTimerRef.current = setTimeout(() => {
         const kids = planetsContainer.children;
-        if (kids.length === 0) { scheduleUfo(); return; }
-        const planet = kids[Math.floor(Math.random() * kids.length)] as Container & { __radius?: number };
-        const radius = planet.__radius ?? 18;
-        const beamLen = radius + 52; // beam reaches planet surface
         const eufo = ufo as ExtendedUfo;
+        const isFlyby = Math.random() < UFO_FLYBY_CHANCE || kids.length === 0;
+
+        // Random entry point along the viewport edge
+        const entryAngle = Math.random() * Math.PI * 2;
+        const entryDist = 280 + Math.random() * 60;
+        const startX = Math.cos(entryAngle) * entryDist;
+        const startY = Math.sin(entryAngle) * entryDist;
+
         ufo.visible = true;
-        ufo.x = -280;
-        ufo.y = -220;
+        ufo.x = startX;
+        ufo.y = startY;
+        ufo.rotation = 0; // reset any tilt from previous fly-by
         if (eufo.__beam) eufo.__beam.visible = false;
-        if (eufo.__cow) {
-          eufo.__cow.visible = false;
-          eufo.__cow.y = beamLen; // start at planet surface
+        if (eufo.__cow) eufo.__cow.visible = false;
+
+        if (isFlyby) {
+          // Fly-by: curved path through the visible area using 3-5 waypoints
+          const wpCount = 3 + Math.floor(Math.random() * 3); // 3–5 waypoints
+          const waypoints: Array<{ x: number; y: number }> = [{ x: startX, y: startY }];
+          // Generate waypoints within the visible area for an interesting curve
+          for (let wi = 0; wi < wpCount; wi++) {
+            const frac = (wi + 1) / (wpCount + 1);
+            // Oscillate around a rough path across the viewport
+            const baseAngle = entryAngle + Math.PI; // general direction: toward opposite side
+            const perpAngle = baseAngle + Math.PI / 2;
+            const along = 60 + frac * 180;
+            const wave = Math.sin(frac * Math.PI * (1.5 + Math.random())) * (80 + Math.random() * 60);
+            waypoints.push({
+              x: startX + Math.cos(baseAngle) * along + Math.cos(perpAngle) * wave,
+              y: startY + Math.sin(baseAngle) * along + Math.sin(perpAngle) * wave,
+            });
+          }
+          // Exit point — far off the opposite edge
+          const exitAngle = entryAngle + Math.PI + (Math.random() - 0.5) * 0.6;
+          const exitDist = 300 + Math.random() * 100;
+          waypoints.push({
+            x: startX + Math.cos(exitAngle) * exitDist,
+            y: startY + Math.sin(exitAngle) * exitDist,
+          });
+          ufoStateRef.current = {
+            phase: 'flyby',
+            t: 0,
+            targetX: 0,
+            targetY: 0,
+            waypoints,
+            waypointIndex: 0,
+            segT: 0,
+          };
+        } else {
+          // Abduction: fly to a random planet
+          const planet = kids[Math.floor(Math.random() * kids.length)] as Container & { __radius?: number };
+          const radius = planet.__radius ?? 18;
+          const beamLen = radius + 52;
+          if (eufo.__cow) eufo.__cow.y = beamLen;
+          setUfoBeam(eufo, beamLen);
+          ufoStateRef.current = {
+            phase: 'fly',
+            t: 0,
+            startX,
+            startY,
+            targetX: planet.x,
+            targetY: planet.y - (radius + 52),
+            cow: eufo.__cow as Container,
+            beam: eufo.__beam as Container,
+            beamLen,
+          };
         }
-        setUfoBeam(eufo, beamLen);
-        ufoStateRef.current = {
-          phase: 'fly',
-          t: 0,
-          targetX: planet.x,
-          targetY: planet.y - (radius + 52),
-          cow: eufo.__cow as Container,
-          beam: eufo.__beam as Container,
-          beamLen,
-        };
         scheduleUfo();
       }, delay);
     };
     scheduleUfo();
+
+    // Shooting star spawner — 1 to 3 at once, random direction, every 30-90s
+    // Stars container is behind panContainer in stage coords. We add shooting stars
+    // to the world container instead so they render in world-space (visible & pan-aware).
+    const spawnShootingStars = () => {
+      const delay = SHOOTING_STAR_INTERVAL_MIN + Math.random() * (SHOOTING_STAR_INTERVAL_MAX - SHOOTING_STAR_INTERVAL_MIN);
+      shootingStarTimerRef.current = setTimeout(() => {
+        const sz = sizeRef.current;
+        const scale = scaleRef.current;
+        const pan = posRef.current;
+        // Compute world-space visible bounds
+        const left   = -(sz.width  / 2 + pan.x) / scale;
+        const right  =  (sz.width  / 2 - pan.x) / scale;
+        const top    = -(sz.height / 2 + pan.y) / scale;
+        const bottom =  (sz.height / 2 - pan.y) / scale;
+        const vw = right - left;
+        const vh = bottom - top;
+
+        const count = 1 + Math.floor(Math.random() * SHOOTING_STAR_MAX_BURST);
+
+        for (let si = 0; si < count; si++) {
+          // Start within the visible viewport (with some margin)
+          const x = left + Math.random() * vw;
+          const y = top + Math.random() * vh;
+          // Fully random direction (0-360°)
+          const angle = Math.random() * Math.PI * 2;
+          const speed = 2 + Math.random() * 3;
+          const length = 20 + Math.random() * 30;
+          const vx = Math.cos(angle) * speed;
+          const vy = Math.sin(angle) * speed;
+
+          const g = new Graphics();
+          const colors = [0xffffff, 0xddeeff, 0xffeedd];
+          const color = colors[Math.floor(Math.random() * colors.length)];
+          // Tail trails behind the head
+          g.moveTo(0, 0)
+           .lineTo(-Math.cos(angle) * length, -Math.sin(angle) * length)
+           .stroke({ width: 1.2, color, alpha: 0.7 });
+          // Bright head dot
+          g.circle(0, 0, 1.5).fill({ color, alpha: 0.9 });
+          g.x = x;
+          g.y = y;
+          g.alpha = 0;
+          // Add behind planets (index 1 = right after singularity)
+          if (world.children.length > 1) {
+            world.addChildAt(g, 1);
+          } else {
+            world.addChild(g);
+          }
+
+          const maxLife = 0.6 + Math.random() * 0.8;
+          const startDelay = si * (0.1 + Math.random() * 0.3);
+          shootingStarsRef.current.push({ g, x, y, vx, vy, life: -startDelay, maxLife });
+        }
+
+        spawnShootingStars();
+      }, delay);
+    };
+    spawnShootingStars();
 
     const tick = () => {
       if (!world || !planetsContainer) return;
@@ -1063,6 +1186,49 @@ export const Universe: FC<UniverseProps> = ({
         a.c.x += a.vx;
         a.c.y += a.vy;
 
+        // Jet spray: fire on a pure timer (5-10 min after spawn or last jet)
+        const now = Date.now();
+        if (!a.nextJetTime) {
+          a.nextJetTime = now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
+        }
+        if (now >= a.nextJetTime) {
+          // Random thrust direction — strong enough to be clearly visible
+          const jetAngle = Math.random() * Math.PI * 2;
+          const jetPower = 2.5 + Math.random() * 1.5;
+          a.vx += Math.cos(jetAngle) * jetPower;
+          a.vy += Math.sin(jetAngle) * jetPower;
+          a.nextJetTime = now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
+
+          // Spawn visible spray/exhaust in the OPPOSITE direction of thrust
+          const sprayAngle = jetAngle + Math.PI;
+          const astroContainer = astronautsContainerRef.current;
+          if (astroContainer) {
+            const particleCount = 10 + Math.floor(Math.random() * 6);
+            for (let pi = 0; pi < particleCount; pi++) {
+              const pAngle = sprayAngle + (Math.random() - 0.5) * 1.0; // ±~29° cone
+              const pSpeed = 2 + Math.random() * 3;
+              const pg = new Graphics();
+              const pSize = 1.5 + Math.random() * 2.5;
+              // Mix of orange, yellow, and white-hot particles
+              const pColors = [0xff6622, 0xff8822, 0xffaa33, 0xffcc44, 0xffeeaa];
+              const pColor = pColors[Math.floor(Math.random() * pColors.length)];
+              pg.circle(0, 0, pSize).fill({ color: pColor, alpha: 0.8 + Math.random() * 0.2 });
+              pg.x = a.c.x;
+              pg.y = a.c.y;
+              astroContainer.addChild(pg);
+              jetSprayRef.current.push({
+                g: pg,
+                x: a.c.x,
+                y: a.c.y,
+                vx: Math.cos(pAngle) * pSpeed,
+                vy: Math.sin(pAngle) * pSpeed,
+                life: 0,
+                maxLife: 0.6 + Math.random() * 0.8,
+              });
+            }
+          }
+        }
+
         const sz = sizeRef.current;
         const scale = scaleRef.current;
         const pan = posRef.current;
@@ -1077,14 +1243,56 @@ export const Universe: FC<UniverseProps> = ({
         else if (a.c.y > bottom - margin) { a.c.y = bottom - margin; a.vy = -Math.abs(a.vy) * 0.6; }
       }
 
+      // Jet spray particles
+      const jets = jetSprayRef.current;
+      for (let ji = jets.length - 1; ji >= 0; ji--) {
+        const jp = jets[ji];
+        jp.life += 0.016;
+        jp.x += jp.vx;
+        jp.y += jp.vy;
+        jp.vx *= 0.96; // decelerate
+        jp.vy *= 0.96;
+        jp.g.x = jp.x;
+        jp.g.y = jp.y;
+        const frac = jp.life / jp.maxLife;
+        jp.g.alpha = (1 - frac) * 0.8;
+        jp.g.scale.set(1 - frac * 0.5);
+        if (jp.life >= jp.maxLife) {
+          jp.g.destroy();
+          jets.splice(ji, 1);
+        }
+      }
+
+      // Shooting stars
+      const sstars = shootingStarsRef.current;
+      for (let si = sstars.length - 1; si >= 0; si--) {
+        const ss = sstars[si];
+        ss.life += 0.016;
+        if (ss.life < 0) { ss.g.alpha = 0; continue; } // staggered start
+        ss.x += ss.vx;
+        ss.y += ss.vy;
+        ss.g.x = ss.x;
+        ss.g.y = ss.y;
+        const frac = ss.life / ss.maxLife;
+        const alpha = frac < 0.15 ? frac / 0.15 : 1 - (frac - 0.15) / 0.85;
+        ss.g.alpha = alpha * 0.7;
+        if (ss.life >= ss.maxLife) {
+          ss.g.destroy();
+          sstars.splice(si, 1);
+        }
+      }
+
       // UFO behaviour
       const ufoState = ufoStateRef.current;
       if (ufoState.phase === 'fly') {
         ufoState.t += 0.016;
+        ufo.rotation = 0; // always upright during abduction
         const tv = Math.min(1, ufoState.t * 0.5);
         const ease = tv * tv * (3 - 2 * tv);
-        ufo.x = -250 + (ufoState.targetX - -250) * ease;
-        ufo.y = -200 + (ufoState.targetY - -200) * ease;
+        const sx = ufoState.startX ?? -250;
+        const sy = ufoState.startY ?? -200;
+        ufo.x = sx + (ufoState.targetX - sx) * ease;
+        ufo.y = sy + (ufoState.targetY - sy) * ease;
         if (tv >= 1) {
           ufoState.phase = 'beam';
           ufoState.t = 0;
@@ -1096,11 +1304,12 @@ export const Universe: FC<UniverseProps> = ({
         }
       } else if (ufoState.phase === 'beam') {
         ufoState.t += 0.016;
+        ufo.rotation = 0; // always upright during beam
         const beamLen = ufoState.beamLen ?? 70;
-        // Cow travels from planet surface (beamLen) up to UFO belly (y=8)
+        // Cow travels from planet surface (beamLen) up into the saucer body (y=-2)
         const beamT = Math.min(1, ufoState.t / 2.0);
         const cow = ufoState.cow;
-        if (cow) cow.y = beamLen - beamT * (beamLen - 8);
+        if (cow) cow.y = beamLen - beamT * (beamLen + 2);
         if (ufoState.t > 2.4) {
           if (ufoState.beam) ufoState.beam.visible = false;
           if (cow) { cow.visible = false; cow.y = beamLen; }
@@ -1126,6 +1335,33 @@ export const Universe: FC<UniverseProps> = ({
           ufo.visible = false;
           ufoState.phase = 'idle';
         }
+      } else if (ufoState.phase === 'flyby') {
+        // Curved path through waypoints — smooth interpolation between each segment
+        const wps = ufoState.waypoints;
+        let idx = ufoState.waypointIndex ?? 0;
+        let segT = (ufoState.segT ?? 0) + 0.012; // speed per segment
+        if (!wps || wps.length < 2) { ufo.visible = false; ufoState.phase = 'idle'; }
+        else {
+          if (segT >= 1) {
+            segT = 0;
+            idx++;
+            ufoState.waypointIndex = idx;
+          }
+          if (idx >= wps.length - 1) {
+            ufo.visible = false;
+            ufoState.phase = 'idle';
+          } else {
+            ufoState.segT = segT;
+            const from = wps[idx];
+            const to = wps[idx + 1];
+            // Smooth ease per segment
+            const ease = segT * segT * (3 - 2 * segT);
+            ufo.x = from.x + (to.x - from.x) * ease;
+            ufo.y = from.y + (to.y - from.y) * ease;
+            // Tilt UFO slightly in movement direction
+            ufo.rotation = Math.atan2(to.y - from.y, to.x - from.x) * 0.15;
+          }
+        }
       }
     };
 
@@ -1136,6 +1372,18 @@ export const Universe: FC<UniverseProps> = ({
         clearTimeout(ufoTimerRef.current);
         ufoTimerRef.current = null;
       }
+      if (shootingStarTimerRef.current) {
+        clearTimeout(shootingStarTimerRef.current);
+        shootingStarTimerRef.current = null;
+      }
+      for (const ss of shootingStarsRef.current) {
+        try { ss.g.destroy(); } catch { /* ignore */ }
+      }
+      shootingStarsRef.current = [];
+      for (const jp of jetSprayRef.current) {
+        try { jp.g.destroy(); } catch { /* ignore */ }
+      }
+      jetSprayRef.current = [];
     };
   }, [canvasReady]);
 

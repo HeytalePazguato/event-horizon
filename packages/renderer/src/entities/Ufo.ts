@@ -15,7 +15,19 @@ export type ExtendedUfo = Container & {
 export function createUfo(): ExtendedUfo {
   const c = new Container() as ExtendedUfo;
 
-  // ── Saucer body ─────────────────────────────────────────────────────────────
+  // ── Tractor beam (behind body, hidden until activated) ─────────────────────
+  const beam = new Graphics();
+  beam.visible = false;
+  c.addChild(beam);
+  c.__beam = beam;
+
+  // ── Cow (behind body so it disappears "into" the saucer) ──────────────────
+  const cow = buildCow();
+  cow.visible = false;
+  c.addChild(cow);
+  c.__cow = cow;
+
+  // ── Saucer body (on top — cow slides behind it) ───────────────────────────
   const body = new Graphics();
   body.ellipse(0, 0, 18, 8).fill({ color: 0x9a9aaa, alpha: 0.95 });
   // Lights around rim
@@ -28,18 +40,6 @@ export function createUfo(): ExtendedUfo {
   // Cockpit dome highlight
   body.ellipse(-2, -6, 3, 2).fill({ color: 0x88ddaa, alpha: 0.55 });
   c.addChild(body);
-
-  // ── Tractor beam (hidden until activated, redrawn per target) ─────────────
-  const beam = new Graphics();
-  beam.visible = false;
-  c.addChild(beam);
-  c.__beam = beam;
-
-  // ── Cow (hidden until beam phase) ─────────────────────────────────────────
-  const cow = buildCow();
-  cow.visible = false;
-  c.addChild(cow);
-  c.__cow = cow;
 
   c.visible = false;
   c.eventMode = 'none';

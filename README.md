@@ -70,7 +70,7 @@ Install **Event Horizon** from the VS Code Marketplace (or from a `.vsix` file),
 
 ## Development
 
-Everything below is for contributors building Event Horizon from source. See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for full guidelines.
+Everything below is for contributors building Event Horizon from source. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for full guidelines.
 
 ### Prerequisites
 
@@ -106,4 +106,4 @@ pnpm build
 
 ## License
 
-MIT License with Commons Clause — see [docs/LICENSE](docs/LICENSE) for details.
+MIT License with Commons Clause — see [LICENSE](docs/LICENSE) for details.
