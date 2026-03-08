@@ -13,8 +13,8 @@ const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
   <div style={{ fontFamily: 'Consolas, monospace', fontSize: 9, color: '#7a9a82', overflowY: 'auto', maxHeight: 80, lineHeight: 1.5 }}>
     {entries.length === 0 ? (
       <span style={{ color: '#4a5a52' }}>No events yet.</span>
-    ) : entries.map((e, i) => (
-      <div key={i} style={{ borderBottom: '1px solid rgba(50,80,60,0.3)', paddingBottom: 1, marginBottom: 1 }}>
+    ) : entries.map((e) => (
+      <div key={e.id} style={{ borderBottom: '1px solid rgba(50,80,60,0.3)', paddingBottom: 1, marginBottom: 1 }}>
         <span style={{ color: '#4a8a6a' }}>{e.ts}</span>
         {' '}
         <span style={{ color: '#8ab880' }}>[{e.agentName}]</span>

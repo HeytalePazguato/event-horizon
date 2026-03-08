@@ -17,6 +17,7 @@ const TIERED_THRESHOLDS: Record<string, number[]> = {
 };
 
 export interface LogEntry {
+  id: string;
   ts: string;
   agentId: string;
   agentName: string;
@@ -86,6 +87,8 @@ export interface CommandCenterState {
   clearConnectAgent: () => void;
 }
 
+const boostTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedAgentId: null,
   selectedAgent: null,
@@ -127,7 +130,14 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
 
   triggerBoost: (id) => {
     set((s) => ({ boostedAgentIds: { ...s.boostedAgentIds, [id]: true } }));
-    setTimeout(() => get().clearBoost(id), 5000);
+    // Clear any existing boost timer for this agent
+    const existing = boostTimers.get(id);
+    if (existing) clearTimeout(existing);
+    const timerId = setTimeout(() => {
+      boostTimers.delete(id);
+      get().clearBoost(id);
+    }, 5000);
+    boostTimers.set(id, timerId);
   },
 
   clearBoost: (id) =>
@@ -142,7 +152,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
 
   addLog: (entry) =>
     set((s) => ({
-      logs: [entry, ...s.logs].slice(0, 200),
+      logs: [{ ...entry, id: entry.id || `log-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` }, ...s.logs].slice(0, 200),
     })),
 
   toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),

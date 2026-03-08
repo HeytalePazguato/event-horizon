@@ -23,6 +23,7 @@ function nextId(): string {
 
 /** Track seen message IDs to deduplicate message.updated events. */
 const seenMessageIds = new Set<string>();
+const SEEN_IDS_MAX = 10_000;
 
 export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -34,6 +35,11 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
   const agentName = String(o.agentName ?? 'OpenCode').slice(0, 64);
   const payload = (o.payload as Record<string, unknown>) ?? (o.data as Record<string, unknown>) ?? {};
 
+  // Clear dedup set on session end to prevent unbounded growth
+  if (eventName === 'session.deleted' || eventName === 'server.instance.disposed') {
+    seenMessageIds.clear();
+  }
+
   // message.updated: only create task.start for NEW user messages, task.progress for assistant
   if (eventName === 'message.updated') {
     const info = (payload.properties as Record<string, unknown>)?.info as Record<string, unknown> | undefined;
@@ -41,6 +47,11 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     const messageId = info?.id as string | undefined;
 
     if (role === 'user' && messageId && !seenMessageIds.has(messageId)) {
+      // Evict oldest entries if set is too large
+      if (seenMessageIds.size >= SEEN_IDS_MAX) {
+        const first = seenMessageIds.values().next().value;
+        if (first !== undefined) seenMessageIds.delete(first);
+      }
       seenMessageIds.add(messageId);
       return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'task.start', timestamp: Date.now(), payload };
     }
@@ -83,7 +94,7 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     agentName,
     agentType: 'opencode',
     type,
-    timestamp: (o.timestamp as number) ?? Date.now(),
+    timestamp: Number(o.timestamp) || Date.now(),
     payload: enrichedPayload,
   };
 }

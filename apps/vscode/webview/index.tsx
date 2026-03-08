@@ -97,6 +97,14 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
       return (
         <div style={{ padding: 16, color: '#e88', fontFamily: 'system-ui', fontSize: 13, background: '#1a0a0a' }}>
           <strong>Event Horizon error</strong>: {this.state.error}
+          <br />
+          <button
+            type="button"
+            onClick={() => this.setState({ error: null })}
+            style={{ marginTop: 10, padding: '4px 12px', background: '#2a1a1a', border: '1px solid #c66', color: '#e88', cursor: 'pointer', fontSize: 12 }}
+          >
+            Retry
+          </button>
         </div>
       );
     }
@@ -143,6 +151,9 @@ function App() {
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track last event time per agent for stale-agent timeout
   const agentLastSeenRef = useRef<Record<string, number>>({});
+  const agentMapRef = useRef(agentMap);
+  agentMapRef.current = agentMap;
+  const shipTimerIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
   useEffect(() => {
@@ -207,7 +218,11 @@ function App() {
           const shipId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const payloadSize = (raw.payload?.payloadSize as number | undefined) ?? 1;
           setShips((prev) => [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }]);
-          setTimeout(() => setShips((prev) => prev.filter((s) => s.id !== shipId)), 20000);
+          const timerId = setTimeout(() => {
+            setShips((prev) => prev.filter((s) => s.id !== shipId));
+            shipTimerIdsRef.current.delete(timerId);
+          }, 20000);
+          shipTimerIdsRef.current.add(timerId);
         }
         return;
       }
@@ -317,7 +332,7 @@ function App() {
       const now = Date.now();
       for (const [agentId, lastSeen] of Object.entries(agentLastSeenRef.current)) {
         // Only reap non-claude agents (Claude Code sends explicit terminate)
-        const agent = agentMap[agentId];
+        const agent = agentMapRef.current[agentId];
         if (!agent || agent.type === 'claude-code') continue;
         if (now - lastSeen > STALE_TIMEOUT_MS) {
           setAgents((prev) => prev.filter((a) => a.id !== agentId));
@@ -328,7 +343,7 @@ function App() {
       }
     }, CHECK_INTERVAL_MS);
     return () => clearInterval(iv);
-  }, [agentMap]);
+  }, []);
 
   // ── Achievement detection ─────────────────────────────────────────────────
 
@@ -387,9 +402,19 @@ function App() {
   // ── Planet hover / click ──────────────────────────────────────────────────
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => setMousePos({ x: e.clientX, y: e.clientY });
+    let rafId = 0;
+    const onMove = (e: MouseEvent) => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        setMousePos({ x: e.clientX, y: e.clientY });
+        rafId = 0;
+      });
+    };
     window.addEventListener('mousemove', onMove);
-    return () => window.removeEventListener('mousemove', onMove);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   const handlePlanetHover = useCallback((agentId: string | null) => {
@@ -512,7 +537,11 @@ function App() {
           ...prev,
           { id: shipId, fromAgentId: ids[fromIdx], toAgentId: ids[toIdx], payloadSize: Math.floor(Math.random() * 10) + 1, fromAgentType: demoAgentTypeMap[ids[fromIdx]] },
         ]);
-        setTimeout(() => setShips((prev) => prev.filter((s) => s.id !== shipId)), 20000);
+        const timerId = setTimeout(() => {
+          setShips((prev) => prev.filter((s) => s.id !== shipId));
+          shipTimerIdsRef.current.delete(timerId);
+        }, 20000);
+        shipTimerIdsRef.current.add(timerId);
       }
     }, 1400);
     setDemoSimRunning(true);
@@ -539,6 +568,11 @@ function App() {
 
   useEffect(() => () => {
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+  }, []);
+
+  // Clean up ship timers on unmount
+  useEffect(() => () => {
+    for (const id of shipTimerIdsRef.current) clearTimeout(id);
   }, []);
 
   return (

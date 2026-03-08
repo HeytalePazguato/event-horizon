@@ -58,6 +58,10 @@ export class AgentStateManager {
       }
       case 'agent.terminate': {
         this.agents.delete(agentId);
+        // Clean up orphaned tasks for terminated agent
+        for (const [taskId, task] of this.tasks) {
+          if (task.agentId === agentId) this.tasks.delete(taskId);
+        }
         break;
       }
       case 'task.start': {
@@ -92,6 +96,13 @@ export class AgentStateManager {
           this.tasks.delete(taskId);
           const agent = this.agents.get(agentId);
           if (agent && agent.currentTaskId === taskId) {
+            this.agents.set(agentId, { ...agent, state: 'idle', currentTaskId: null });
+          }
+        } else {
+          // No taskId — complete the agent's current task (if any)
+          const agent = this.agents.get(agentId);
+          if (agent) {
+            if (agent.currentTaskId) this.tasks.delete(agent.currentTaskId);
             this.agents.set(agentId, { ...agent, state: 'idle', currentTaskId: null });
           }
         }

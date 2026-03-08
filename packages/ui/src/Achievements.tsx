@@ -524,11 +524,10 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
 };
 
 // Inject keyframe once
-let keyframeInjected = false;
 function ensureKeyframe() {
-  if (keyframeInjected) return;
-  keyframeInjected = true;
+  if (document.getElementById('eh-toast-keyframe')) return;
   const style = document.createElement('style');
+  style.id = 'eh-toast-keyframe';
   style.textContent = `@keyframes eh-toast-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }`;
   document.head.appendChild(style);
 }

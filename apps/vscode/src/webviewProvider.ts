@@ -35,14 +35,19 @@ export function createWebviewProvider(
         vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js')
       );
 
-      function getConnectedAgentTypes(): string[] {
+      async function getConnectedAgentTypes(): Promise<string[]> {
         const types: string[] = [];
-        if (isClaudeCodeHooksInstalled()) types.push('claude-code');
-        if (isOpenCodeHooksInstalled()) types.push('opencode');
+        if (await isClaudeCodeHooksInstalled()) types.push('claude-code');
+        if (await isOpenCodeHooksInstalled()) types.push('opencode');
         return types;
       }
 
-      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, version, getConnectedAgentTypes());
+      // Kick off async detection; render HTML with empty list first, then update via message
+      const connectedPromise = getConnectedAgentTypes();
+      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, version, []);
+      void connectedPromise.then((agentTypes) => {
+        void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes });
+      });
 
       // 2.2 — hydrate webview with accumulated state on (re)open
       const agents = agentStateManager.getAllAgents();
@@ -72,21 +77,23 @@ export function createWebviewProvider(
           return;
         }
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
-          void runSetupClaudeCodeHooks().then(() => {
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          void runSetupClaudeCodeHooks().then(async () => {
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
           });
         } else if (msg?.type === 'setup-agent' && msg.agentType === 'opencode') {
-          void runSetupOpenCodeHooks().then(() => {
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          void runSetupOpenCodeHooks().then(async () => {
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
           });
         } else if (msg?.type === 'remove-agent' && msg.agentType === 'claude-code') {
-          removeClaudeCodeHooks();
-          void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
-          void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          void removeClaudeCodeHooks().then(async () => {
+            void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+          });
         } else if (msg?.type === 'remove-agent' && msg.agentType === 'opencode') {
-          removeOpenCodeHooks();
-          void vscode.window.showInformationMessage('Event Horizon: OpenCode plugin removed.');
-          void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          void removeOpenCodeHooks().then(async () => {
+            void vscode.window.showInformationMessage('Event Horizon: OpenCode plugin removed.');
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+          });
         } else if (msg?.type === 'spawn-agent' && msg.command) {
           // 1.1 — whitelist allowed commands to prevent arbitrary shell execution
           const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];

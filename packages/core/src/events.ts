@@ -32,6 +32,11 @@ export interface AgentEvent {
   payload: Record<string, unknown>;
 }
 
+/** All agent types for validation. */
+export const AGENT_TYPES: readonly AgentType[] = [
+  'opencode', 'claude-code', 'copilot', 'cursor', 'unknown',
+] as const;
+
 /** All event types for validation and iteration. */
 export const AGENT_EVENT_TYPES: readonly AgentEventType[] = [
   'agent.spawn',

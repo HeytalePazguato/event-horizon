@@ -8,7 +8,8 @@
     "build": "tsc",
     "lint": "eslint src/",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "dependencies": {
     "@event-horizon/core": "workspace:*"

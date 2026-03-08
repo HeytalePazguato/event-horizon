@@ -43,7 +43,6 @@ jobs:
 
       - name: Test
         run: pnpm test
-        continue-on-error: true  # no tests yet — remove this once tests exist
 
   # ── Dev builds (develop) — artifact only, not on Releases ──────────────────
   package-dev:
@@ -69,14 +68,17 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Stamp dev version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          DEV_VERSION="0.0.${GITHUB_RUN_NUMBER}"
-          DISPLAY_VERSION="0.0.0.${GITHUB_RUN_NUMBER}-dev"
+          DEV_VERSION="0.0.${RUN_NUMBER}"
+          DISPLAY_VERSION="0.0.0.${RUN_NUMBER}-dev"
           echo "VERSION=${DISPLAY_VERSION}" >> $GITHUB_ENV
+          echo "DEV_VERSION=${DEV_VERSION}" >> $GITHUB_ENV
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('./apps/vscode/package.json', 'utf8'));
-            pkg.version = '${DEV_VERSION}';
+            pkg.version = process.env.DEV_VERSION;
             fs.writeFileSync('./apps/vscode/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "Stamped dev version: ${DEV_VERSION} (artifact: ${DISPLAY_VERSION})"
@@ -192,7 +194,7 @@ jobs:
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('./apps/vscode/package.json', 'utf8'));
-            pkg.version = '${VSCE_VERSION}';
+            pkg.version = process.env.VSCE_VERSION;
             fs.writeFileSync('./apps/vscode/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
@@ -306,12 +308,19 @@ jobs:
 
       - name: Create git tag
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${VERSION}"
-          git push origin "v${VERSION}"
+          git fetch --tags
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION} already exists — skipping release"
+            echo "TAG_EXISTS=true" >> $GITHUB_ENV
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "v${VERSION}"
+            git push origin "v${VERSION}"
+          fi
 
       - name: Create GitHub Release
+        if: env.TAG_EXISTS != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}

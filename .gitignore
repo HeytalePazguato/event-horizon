@@ -9,6 +9,8 @@ out
 .env.local
 coverage
 .idea
+.cursor-plugin/
+%localappdata%/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/launch.json

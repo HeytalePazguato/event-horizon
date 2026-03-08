@@ -153,7 +153,7 @@ export const AgentIdentity: FC = () => {
           <div style={{ width: 54, height: 54, border: '2px solid #3a6a4a', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,20,15,0.6)', boxShadow: 'inset 0 0 12px rgba(80,140,100,0.2), 0 0 8px rgba(60,120,80,0.15)', overflow: 'visible' }} aria-hidden>
             <PlanetIcon type={selectedAgent.type} size={48} />
           </div>
-          <span style={{ fontSize: 9, color: '#8fc08a', fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span style={{ fontSize: 9, color: '#8fc08a', fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {selectedAgent.name}
           </span>
           <span style={{ fontSize: 8, color: stateColors[selectedAgent.state] ?? '#7a8a82' }}>

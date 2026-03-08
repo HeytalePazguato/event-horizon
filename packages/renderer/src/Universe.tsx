@@ -348,6 +348,7 @@ export const Universe: FC<UniverseProps> = ({
   const spiralRef = useRef<Array<{ c: Container; vx: number; vy: number }>>([]);
   const spiralContainerRef = useRef<Container | null>(null);
   const prevAgentsRef = useRef<AgentView[]>([]);
+  const planetMapRef = useRef<Map<string, ExtendedPlanet>>(new Map());
   const tickTimeRef = useRef(0);
   const [initError, setInitError] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -366,6 +367,10 @@ export const Universe: FC<UniverseProps> = ({
   onUfoAbductionRef.current = onUfoAbduction;
   const onUfoClickedRef = useRef(onUfoClicked);
   onUfoClickedRef.current = onUfoClicked;
+  const onPlanetHoverRef = useRef(onPlanetHover);
+  onPlanetHoverRef.current = onPlanetHover;
+  const onPlanetClickRef = useRef(onPlanetClick);
+  onPlanetClickRef.current = onPlanetClick;
 
   const mountedRef = useRef(true);
 
@@ -576,80 +581,92 @@ export const Universe: FC<UniverseProps> = ({
     }
   }, [centerRequestedAt]);
 
-  // --- planets -------------------------------------------------------------
+  // --- planets (diff-based: reuse existing, add new, spiral removed) -------
   useEffect(() => {
     const planetsContainer = planetsContainerRef.current;
     const spiralContainer = spiralContainerRef.current;
     if (!planetsContainer) return;
 
     const currentIds = new Set(agents.map((a) => a.id));
-    const removedIds = new Set(
-      prevAgentsRef.current.filter((a) => !currentIds.has(a.id)).map((a) => a.id),
-    );
+    const planetMap = planetMapRef.current;
 
-    if (spiralContainer && removedIds.size > 0) {
-      for (const child of planetsContainer.children.slice()) {
-        const id = (child as ExtendedPlanet).__agentId;
-        if (id && removedIds.has(id)) {
-          planetsContainer.removeChild(child);
-          const dx = 0 - child.x;
-          const dy = 0 - child.y;
+    // 1. Spiral-out removed agents
+    for (const [id, planet] of planetMap) {
+      if (!currentIds.has(id)) {
+        planetsContainer.removeChild(planet);
+        planetMap.delete(id);
+        if (spiralContainer) {
+          const dx = 0 - planet.x;
+          const dy = 0 - planet.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
           spiralRef.current.push({
-            c: child as Container,
+            c: planet as Container,
             vx: (dx / dist) * 0.8,
             vy: (dy / dist) * 0.8,
           });
-          spiralContainer.addChild(child as Container);
+          spiralContainer.addChild(planet as Container);
+        } else {
+          planet.destroy({ children: true });
         }
       }
     }
 
-    planetsContainer.removeChildren();
-
-    // Compute non-overlapping positions for this exact agent set
+    // 2. Compute positions
     const posMap = computePlanetPositions(agents);
 
+    // 3. Add new planets, update existing
     agents.forEach((agent) => {
       const pos = posMap.get(agent.id) ?? { x: 0, y: PLANET_MIN_RADIUS };
       const m = metricsRef.current[agent.id];
       const load = m?.load ?? 0.5;
       const size = 12 + load * 8;
-      const planet = createPlanet({
-        agentId: agent.id,
-        x: pos.x,
-        y: pos.y,
-        size,
-        brightness: 0.3 + load * 0.7,
-        agentType: agent.agentType,
-      });
 
-      // Name label beneath planet
-      const label = new Text({
-        text: agent.name,
-        style: { fontSize: 8, fill: '#6688aa', fontFamily: 'system-ui', align: 'center' },
-      });
-      label.anchor.set(0.5, 0);
-      label.x = 0;
-      label.y = (planet.__radius ?? 16) + 5;
-      planet.addChild(label);
+      let planet = planetMap.get(agent.id);
+      if (!planet) {
+        // New planet
+        planet = createPlanet({
+          agentId: agent.id,
+          x: pos.x,
+          y: pos.y,
+          size,
+          brightness: 0.3 + load * 0.7,
+          agentType: agent.agentType,
+        });
 
-      planet.on('pointerover', () => onPlanetHover?.(agent.id));
-      planet.on('pointerout', () => onPlanetHover?.(null));
-      planet.on('pointertap', () => onPlanetClick?.(agent.id));
+        // Name label beneath planet
+        const label = new Text({
+          text: agent.name,
+          style: { fontSize: 8, fill: '#6688aa', fontFamily: 'system-ui', align: 'center' },
+        });
+        label.anchor.set(0.5, 0);
+        label.x = 0;
+        label.y = (planet.__radius ?? 16) + 5;
+        planet.addChild(label);
 
-      if (selectedAgentId && selectedAgentId !== agent.id) {
-        planet.alpha = 0.4;
+        planet.on('pointerover', () => onPlanetHoverRef.current?.(agent.id));
+        planet.on('pointerout', () => onPlanetHoverRef.current?.(null));
+        planet.on('pointertap', () => onPlanetClickRef.current?.(agent.id));
+
+        planetsContainer.addChild(planet);
+        planetMap.set(agent.id, planet);
+      } else {
+        // Update existing planet position
+        planet.x = pos.x;
+        planet.y = pos.y;
       }
 
-      // __radius is set inside createPlanet (accounts for per-variant size multiplier)
-      planetsContainer.addChild(planet);
+      // Update alpha for selection
+      if (selectedAgentId && selectedAgentId !== agent.id) {
+        planet.alpha = 0.4;
+      } else {
+        planet.alpha = 1;
+      }
     });
 
     planetPositionsRef.current = posMap;
     prevAgentsRef.current = agents;
   // metrics intentionally excluded — read via metricsRef to avoid recreating planets on every update
-  }, [agents, selectedAgentId, onPlanetHover, onPlanetClick]);
+  }, [agents, selectedAgentId]);
 
   // --- ships ---------------------------------------------------------------
   useEffect(() => {
@@ -853,7 +870,6 @@ export const Universe: FC<UniverseProps> = ({
             beamLen,
           };
         }
-        scheduleUfo();
       }, delay);
     };
     scheduleUfo();
@@ -919,21 +935,26 @@ export const Universe: FC<UniverseProps> = ({
 
     const tick = () => {
       if (!world || !planetsContainer) return;
-      tickTimeRef.current += 0.016;
+      const dt = app.ticker.deltaMS / 1000;
+      tickTimeRef.current += dt;
       const singPos = { x: 0, y: 0 };
 
       // Spiral-in removed agents
       const spiral = spiralRef.current;
       for (let i = spiral.length - 1; i >= 0; i--) {
         const s = spiral[i];
+        // Directional acceleration toward center instead of exponential
+        const dx0 = -s.c.x;
+        const dy0 = -s.c.y;
+        const dist0 = Math.sqrt(dx0 * dx0 + dy0 * dy0) || 1;
+        s.vx += (dx0 / dist0) * 0.15;
+        s.vy += (dy0 / dist0) * 0.15;
         s.c.x += s.vx;
         s.c.y += s.vy;
-        s.vx *= 1.02;
-        s.vy *= 1.02;
         s.c.alpha *= 0.98;
         s.c.scale.set((s.c.scale.x ?? 1) * 0.99);
         const d = Math.sqrt(s.c.x * s.c.x + s.c.y * s.c.y);
-        if (d < 25) {
+        if (d < 25 || s.c.alpha < 0.01) {
           s.c.destroy({ children: true });
           spiral.splice(i, 1);
         }
@@ -985,7 +1006,7 @@ export const Universe: FC<UniverseProps> = ({
           ring.visible = state === 'thinking';
           if (state === 'thinking') {
             const load = metricsRef.current[agentId]?.load ?? 0.3;
-            ring.rotation += 0.015 + load * 0.06;
+            ring.rotation = (ring.rotation + 0.015 + load * 0.06) % (Math.PI * 2);
             ring.alpha = 0.55 + 0.35 * Math.sin(t * 5);
           }
         }
@@ -1154,8 +1175,8 @@ export const Universe: FC<UniverseProps> = ({
         }
 
         // Normal physics
-        let ax = (dx / r) * (SINGULARITY_PULL / r2) * 60 * 0.016;
-        let ay = (dy / r) * (SINGULARITY_PULL / r2) * 60 * 0.016;
+        let ax = (dx / r) * (SINGULARITY_PULL / r2) * dt * 60;
+        let ay = (dy / r) * (SINGULARITY_PULL / r2) * dt * 60;
 
         let removed = false;
         for (const p of planets) {
@@ -1163,8 +1184,8 @@ export const Universe: FC<UniverseProps> = ({
           const py = p.y - a.c.y;
           const pr2 = px * px + py * py + 1;
           const pr = Math.sqrt(pr2);
-          ax += (px / pr) * (GRAVITY_STRENGTH / pr2) * 60 * 0.016;
-          ay += (py / pr) * (GRAVITY_STRENGTH / pr2) * 60 * 0.016;
+          ax += (px / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
+          ay += (py / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
           if (pr < (p.__radius ?? 15) + 8) {
             a.c.destroy({ children: true });
             astros.splice(i, 1);
@@ -1247,7 +1268,7 @@ export const Universe: FC<UniverseProps> = ({
       const jets = jetSprayRef.current;
       for (let ji = jets.length - 1; ji >= 0; ji--) {
         const jp = jets[ji];
-        jp.life += 0.016;
+        jp.life += dt;
         jp.x += jp.vx;
         jp.y += jp.vy;
         jp.vx *= 0.96; // decelerate
@@ -1267,7 +1288,7 @@ export const Universe: FC<UniverseProps> = ({
       const sstars = shootingStarsRef.current;
       for (let si = sstars.length - 1; si >= 0; si--) {
         const ss = sstars[si];
-        ss.life += 0.016;
+        ss.life += dt;
         if (ss.life < 0) { ss.g.alpha = 0; continue; } // staggered start
         ss.x += ss.vx;
         ss.y += ss.vy;
@@ -1285,7 +1306,7 @@ export const Universe: FC<UniverseProps> = ({
       // UFO behaviour
       const ufoState = ufoStateRef.current;
       if (ufoState.phase === 'fly') {
-        ufoState.t += 0.016;
+        ufoState.t += dt;
         ufo.rotation = 0; // always upright during abduction
         const tv = Math.min(1, ufoState.t * 0.5);
         const ease = tv * tv * (3 - 2 * tv);
@@ -1303,7 +1324,7 @@ export const Universe: FC<UniverseProps> = ({
           }
         }
       } else if (ufoState.phase === 'beam') {
-        ufoState.t += 0.016;
+        ufoState.t += dt;
         ufo.rotation = 0; // always upright during beam
         const beamLen = ufoState.beamLen ?? 70;
         // Cow travels from planet surface (beamLen) up into the saucer body (y=-2)
@@ -1324,7 +1345,7 @@ export const Universe: FC<UniverseProps> = ({
           ufoState.targetY = ufo.y + Math.sin(angle) * dist;
         }
       } else if (ufoState.phase === 'flyaway') {
-        ufoState.t += 0.016;
+        ufoState.t += dt;
         const tv = Math.min(1, ufoState.t * 0.6);
         const ease = tv * tv * (3 - 2 * tv);
         const sx = ufoState.startX ?? ufo.x;
@@ -1334,13 +1355,14 @@ export const Universe: FC<UniverseProps> = ({
         if (tv >= 1) {
           ufo.visible = false;
           ufoState.phase = 'idle';
+          scheduleUfo();
         }
       } else if (ufoState.phase === 'flyby') {
         // Curved path through waypoints — smooth interpolation between each segment
         const wps = ufoState.waypoints;
         let idx = ufoState.waypointIndex ?? 0;
         let segT = (ufoState.segT ?? 0) + 0.012; // speed per segment
-        if (!wps || wps.length < 2) { ufo.visible = false; ufoState.phase = 'idle'; }
+        if (!wps || wps.length < 2) { ufo.visible = false; ufoState.phase = 'idle'; scheduleUfo(); }
         else {
           if (segT >= 1) {
             segT = 0;
@@ -1350,6 +1372,7 @@ export const Universe: FC<UniverseProps> = ({
           if (idx >= wps.length - 1) {
             ufo.visible = false;
             ufoState.phase = 'idle';
+            scheduleUfo();
           } else {
             ufoState.segT = segT;
             const from = wps[idx];

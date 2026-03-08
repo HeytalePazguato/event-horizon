@@ -27,8 +27,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
-  startEventServer({ onEvent: (event) => eventBus.emit(event) });
-  setupCopilotOutputChannel((event) => eventBus.emit(event));
+  startEventServer({ onEvent: (event) => eventBus.emit(event) }).catch(() => {
+    // Error already shown to user via showErrorMessage in eventServer
+  });
+  const copilotDisposable = setupCopilotOutputChannel((event) => eventBus.emit(event));
+  context.subscriptions.push(copilotDisposable);
 
   const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine);
   context.subscriptions.push(
@@ -76,6 +79,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  // stopEventServer is called by the subscription dispose registered in activate()
+  stopEventServer();
   webviewRef.current = null;
 }
