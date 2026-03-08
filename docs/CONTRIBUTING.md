@@ -27,34 +27,9 @@ pnpm build
 
 After making changes, rebuild with `pnpm build` and reload the Extension Development Host (**Ctrl+Shift+P** > **Developer: Reload Window**).
 
-## Architecture Overview
+## Architecture
 
-The project is a pnpm + Turborepo monorepo. Build order matters:
-
-```
-core --> connectors, renderer, ui --> vscode
-```
-
-| Package | What it does |
-|---------|-------------|
-| `packages/core` | Pure TS — EventBus, AgentStateManager, MetricsEngine, shared types. No runtime deps. |
-| `packages/connectors` | Adapters mapping raw agent payloads (Claude Code, OpenCode, Copilot) into `AgentEvent` |
-| `packages/renderer` | PixiJS 8 universe — planets, moons, ships, singularity, stars. Exported as a React component. |
-| `packages/ui` | React + Zustand — CommandCenter panels, Tooltip, Achievements, store |
-| `apps/vscode` | VS Code extension host + webview. HTTP server on port 28765 receives events. |
-| `tools/mock-server` | Standalone mock event emitter for development |
-
-### Data Flow
-
-1. Agent hooks send HTTP POST to `127.0.0.1:28765` (extension host)
-2. Connector maps raw payload to `AgentEvent`
-3. `EventBus.emit()` > `MetricsEngine.process()` + `AgentStateManager.apply()`
-4. Event forwarded to webview via `postMessage`
-5. Webview React state updates > `<Universe>` re-renders via PixiJS ticker
-
-### Webview Constraints
-
-The webview runs in a sandboxed browser context — no Node.js APIs. It's bundled separately from the extension host using esbuild (IIFE format).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design, data flow, and package structure.
 
 ## Common Tasks
 

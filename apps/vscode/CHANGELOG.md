@@ -1,18 +1,21 @@
 # Changelog
 
-## [0.1.0] — 2026-03-07
+All notable changes to the Event Horizon VS Code extension will be documented in this file.
+
+## [0.0.0] — Unreleased (Development)
 
 ### Added
-- Live universe visualization: AI coding agents appear as planets (Claude Code = gas giant with rings, Copilot = icy world, OpenCode = rocky, Cursor = ocean world)
-- Central black hole / singularity with gravitational lensing
-- Data transfers rendered as ships flying curved arcs between planets
-- Astronauts drifting through the universe; captured by singularity gravity
-- UFO abduction event with beam and cow silhouette
-- Command Center panel with agent identity, live metrics (load, tools, active tasks, errors), event logs, and medals tabs
-- Command grid with hover tooltips
-- Connect Agent wizard: one-click Claude Code hook installation via `~/.claude/settings.json`
-- Achievements system with toast notifications and medals
-- Demo simulation mode for trying the extension without a live agent
-- Planet name labels and ring rotation speed tied to agent load
-- Camera pan/zoom and Center map button
-- Minimize/expand Command Center header
+- Live universe visualization: AI coding agents appear as planets with type-specific styles (gas giant, rocky, icy, volcanic)
+- Central black hole with gravitational pull on astronauts
+- Data transfers rendered as ships flying curved bezier arcs between planets
+- Astronauts spawned on click, affected by black hole gravity
+- Subagents shown as orbiting moons with stable animation
+- Command Center panel with agent identity, live metrics, event logs, and medals tabs
+- StarCraft-inspired control grid with hover tooltips
+- Connect wizard: one-click Claude Code hook installation
+- Connect wizard: one-click OpenCode plugin installation
+- Achievements system with tiered medals and toast notifications (persisted across sessions)
+- Demo simulation mode
+- Camera pan/zoom with Center button
+- Agent state transitions (idle, thinking, tool_use, working, error)
+- Stale-agent cleanup for agents that exit without sending termination events
