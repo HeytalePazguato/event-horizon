@@ -623,9 +623,9 @@ function App() {
             </div>
             {[
               { id: 'claude-code', label: 'Claude Code',    planet: '🟤', status: 'available' as const, desc: 'Installs curl hooks into ~/.claude/settings.json. One click, no token needed.' },
+              { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'available' as const, desc: 'Installs curl hooks into ~/.opencode/config.json. One click, no token needed.' },
               { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'soon'      as const, desc: 'VS Code Copilot integration coming soon.' },
               { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'soon'      as const, desc: 'Cursor connector coming soon.' },
-              { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'soon'      as const, desc: 'OpenCode hook support coming soon.' },
               { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },
             ].map((c) => {
               const isConnected = connectedAgentTypes.includes(c.id);
