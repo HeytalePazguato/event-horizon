@@ -7,7 +7,13 @@ import type { FC } from 'react';
 import { useState } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import type { LogEntry, SingularityStats } from '../store.js';
-import { ACHIEVEMENTS, Medal, TIER_LABELS, tierBorderColor } from '../Achievements.js';
+import { ACHIEVEMENTS, getMedal, TIER_LABELS, tierBorderColor } from '../achievements/index.js';
+
+/** Renders a medal by achievement ID. */
+const MedalById: FC<{ id: string; size?: number }> = ({ id, size }) => {
+  const Medal = getMedal(id);
+  return <Medal size={size} />;
+};
 
 const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
   <div style={{ fontFamily: 'Consolas, monospace', fontSize: 9, color: '#7a9a82', overflowY: 'auto', maxHeight: 80, lineHeight: 1.5 }}>
@@ -58,7 +64,7 @@ const MedalsView: FC = () => {
                 ...(borderColor ? { border: `2px solid ${borderColor}`, borderRadius: 4, boxShadow: `0 0 6px ${borderColor}66` } : {}),
               }}
             >
-              <Medal id={id} size={28} />
+              <MedalById id={id} size={28} />
               {ach?.tiers && tier != null && (
                 <span style={{
                   position: 'absolute',

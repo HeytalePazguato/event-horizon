@@ -6,25 +6,7 @@
 import { create } from 'zustand';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
-
-/**
- * Tier thresholds for tiered achievements.
- * Kept here (not imported from Achievements.tsx) to avoid circular dependency.
- */
-const TIERED_THRESHOLDS: Record<string, number[]> = {
-  gravity_well:    [1, 10, 50, 100, 1000, 10000],
-  ufo_hunter:      [1, 10, 50, 100, 500],
-  supernova:       [1, 5, 10, 50],
-  traffic_control: [10, 50, 100, 500, 1000],
-  abduction:       [1, 5, 25, 100],
-  event_horizon:   [1, 5, 25, 100],
-  slingshot:       [1, 5, 25, 100],
-  agent_connected: [1, 3, 5, 10],
-  trick_shot:      [1, 5, 25],
-  rocket_man:      [1, 10, 50, 100, 500],
-  kamikaze:        [1, 5, 25],
-  cow_drop:        [1, 5, 25, 100],
-};
+import { TIERED_THRESHOLDS } from './achievements/registry.js';
 
 export interface LogEntry {
   id: string;
