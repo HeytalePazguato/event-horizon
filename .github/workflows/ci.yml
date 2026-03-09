@@ -87,7 +87,9 @@ jobs:
         run: pnpm build
 
       - name: Package VSIX
-        run: cd apps/vscode && tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
+        run: |
+          cp LICENSE apps/vscode/LICENSE
+          cd apps/vscode && tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
@@ -202,7 +204,9 @@ jobs:
         run: pnpm build
 
       - name: Package VSIX
-        run: cd apps/vscode && tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
+        run: |
+          cp LICENSE apps/vscode/LICENSE
+          cd apps/vscode && tsc && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
@@ -304,7 +308,9 @@ jobs:
         run: pnpm build
 
       - name: Package VSIX
-        run: cd apps/vscode && pnpm run package:vsix
+        run: |
+          cp LICENSE apps/vscode/LICENSE
+          cd apps/vscode && pnpm run package:vsix
 
       - name: Create git tag
         run: |
