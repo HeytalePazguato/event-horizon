@@ -41,10 +41,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design, data flow, an
 
 ### Adding an Achievement
 
-1. Add the definition to `ACHIEVEMENTS` in `packages/ui/src/Achievements.tsx`
-2. Add a `Medal` SVG case for the new ID
-3. Add detection logic in `apps/vscode/webview/index.tsx` (achievement detection section)
-4. For tiered achievements, also add thresholds to `TIERED_THRESHOLDS` in `packages/ui/src/store.ts`
+See [`packages/ui/src/achievements/README.md`](../packages/ui/src/achievements/README.md) for the full guide. In short:
+
+1. Create `packages/ui/src/achievements/defs/<name>.tsx` — exports `{ id, name, desc, tiers?, secret?, Medal }`
+2. Import and add it to `ALL_DEFS` in `registry.tsx`
+3. Add trigger logic in `apps/vscode/webview/index.tsx` using `unlockAchievement()` (one-shot) or `incrementTiered()` (tiered)
 
 ### Sending Test Events
 
@@ -68,7 +69,7 @@ curl -X POST http://127.0.0.1:28765/events \
 - React functional components with hooks
 - PixiJS entities are plain functions returning `Container` (not React components)
 - Zustand for UI state management
-- No test framework is currently configured — manual testing via Demo mode and the Extension Development Host
+- Vitest for unit tests — run `pnpm test` from the repo root
 
 ## Questions?
 
