@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Visualize AI coding agents as a living cosmic system — planets, black holes, ships and more.",
@@ -57,9 +57,11 @@
   "scripts": {
     "build": "tsc && pnpm run build:webview",
     "lint": "eslint src/ webview/",
+    "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap",
+    "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked",
     "build:webview": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic",
     "build:webview:prod": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic --minify --sourcemap=linked",
-    "package:vsix": "tsc && pnpm run build:webview:prod && vsce package --no-dependencies",
+    "package:vsix": "pnpm run build:ext:prod && pnpm run build:webview:prod && vsce package --no-dependencies",
     "test": "vitest run",
     "dev": "tsc --watch",
     "clean": "rm -rf out webview-dist"
