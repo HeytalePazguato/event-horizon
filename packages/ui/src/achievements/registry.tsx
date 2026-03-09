@@ -5,7 +5,9 @@
  * To add a new achievement:
  *   1. Create a file in defs/ (copy an existing one as template)
  *   2. Import and add it to the ALL_DEFS array below
- *   3. Add trigger logic in apps/vscode/webview/useAchievementTracking.ts
+ *   3. Add trigger logic in apps/vscode/webview/index.tsx
+ *
+ * See packages/ui/src/achievements/README.md for the full guide.
  */
 
 import type { FC } from 'react';
