@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore } from '@event-horizon/ui';
+import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
 
@@ -154,7 +154,6 @@ function App() {
   const toggleSpawn          = useCommandCenterStore((s) => s.toggleSpawn);
   const selectSingularity    = useCommandCenterStore((s) => s.selectSingularity);
   const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
-  const setSingularityStats  = useCommandCenterStore((s) => s.setSingularityStats);
   const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
 
 
@@ -179,6 +178,7 @@ function App() {
 
       // init-state: hydrate from extension host accumulated state on (re)open — 2.2
       if (msg?.type === 'init-state') {
+        clearAllBoostTimers(); // Clear stale boost timers from previous webview lifecycle
         const init = msg as unknown as { agents: AgentState[]; metrics: AgentMetrics[] };
         setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type })));
         setAgentMap(Object.fromEntries(init.agents.map((a) => [a.id, a])));
@@ -237,6 +237,7 @@ function App() {
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
         setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
+        delete agentLastSeenRef.current[agentId];
         return;
       }
 
@@ -645,6 +646,10 @@ function App() {
     setDemoSimRunning(false);
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
     setShips((prev) => prev.filter((s) => !s.id.startsWith('demo-ship-')));
+    // Clean up demo agent entries from lastSeen tracking
+    for (const id of Object.keys(agentLastSeenRef.current)) {
+      if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
+    }
   }, []);
 
   // Sync demo simulation with store flag (placed after callbacks are defined)

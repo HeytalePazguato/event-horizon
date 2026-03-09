@@ -68,7 +68,3 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     payload: safePayload,
   };
 }
-
-export function createClaudeCodeAdapter(): (payload: unknown) => AgentEvent | null {
-  return mapClaudeHookToEvent;
-}

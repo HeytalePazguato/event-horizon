@@ -35,7 +35,3 @@ export function mapCopilotOutputToEvent(output: string): AgentEvent | null {
     payload: { raw: line.slice(0, 200) },
   };
 }
-
-export function createCopilotAdapter(): (output: string) => AgentEvent | null {
-  return mapCopilotOutputToEvent;
-}

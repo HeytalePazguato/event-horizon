@@ -125,6 +125,12 @@ export interface CommandCenterState {
 
 const boostTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/** Clear all pending boost timers — call on webview init/reload to prevent stale timeouts. */
+export function clearAllBoostTimers(): void {
+  for (const t of boostTimers.values()) clearTimeout(t);
+  boostTimers.clear();
+}
+
 export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedAgentId: null,
   selectedAgent: null,

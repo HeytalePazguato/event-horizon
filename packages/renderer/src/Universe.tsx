@@ -609,6 +609,7 @@ export const Universe: FC<UniverseProps> = ({
       spiralContainerRef.current = null;
       astronautsContainerRef.current = null;
       astronautsRef.current = [];
+      for (const s of spiralRef.current) { try { s.c.destroy({ children: true }); } catch { /* already destroyed */ } }
       spiralRef.current = [];
       activeShipsRef.current = [];
       spawnedShipIdsRef.current = new Set();

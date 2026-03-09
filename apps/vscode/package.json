@@ -21,7 +21,9 @@
     "type": "git",
     "url": "https://github.com/HeytalePazguato/event-horizon.git"
   },
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:eventHorizon.open"
+  ],
   "contributes": {
     "commands": [
       {
@@ -56,8 +58,9 @@
     "build": "tsc && pnpm run build:webview",
     "lint": "eslint src/ webview/",
     "build:webview": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic",
-    "build:webview:prod": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic --minify",
+    "build:webview:prod": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic --minify --sourcemap=linked",
     "package:vsix": "tsc && pnpm run build:webview:prod && vsce package --no-dependencies",
+    "test": "vitest run",
     "dev": "tsc --watch",
     "clean": "rm -rf out webview-dist"
   },

@@ -110,7 +110,3 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     payload: enrichedPayload,
   };
 }
-
-export function createOpenCodeAdapter(): (raw: unknown) => AgentEvent | null {
-  return mapOpenCodeToEvent;
-}

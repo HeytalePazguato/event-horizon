@@ -57,9 +57,6 @@ export function activate(context: vscode.ExtensionContext): void {
       const primaryFolder = vscode.workspace.workspaceFolders?.[0];
       if (primaryFolder) {
         event = { ...event, payload: { ...event.payload, cwd: primaryFolder.uri.fsPath } };
-        console.log('[Event Horizon] Injected cwd:', primaryFolder.uri.fsPath);
-      } else {
-        console.log('[Event Horizon] No workspace folder available for cwd injection');
       }
     }
 

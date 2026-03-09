@@ -10,13 +10,15 @@ import type { AgentEvent } from '@event-horizon/core';
 import { AGENT_EVENT_TYPES, AGENT_TYPES } from '@event-horizon/core';
 import { mapOpenCodeToEvent, mapClaudeHookToEvent } from '@event-horizon/connectors';
 
-const DEFAULT_PORT = 28765;
-const MAX_BODY_BYTES = 1_048_576;
-const RATE_LIMIT_RPS = 200;
+export const DEFAULT_PORT = 28765;
+export const MAX_BODY_BYTES = 1_048_576;
+export const RATE_LIMIT_RPS = 200;
+/** Abort requests that stall mid-stream after this many milliseconds. */
+export const REQUEST_TIMEOUT_MS = 10_000;
 /** Maximum nesting depth for payload objects to prevent stack-overflow on serialization. */
-const MAX_PAYLOAD_DEPTH = 10;
+export const MAX_PAYLOAD_DEPTH = 10;
 /** Maximum JSON-stringified size of the payload field (bytes). */
-const MAX_PAYLOAD_SIZE = 65_536;
+export const MAX_PAYLOAD_SIZE = 65_536;
 
 export interface EventServerCallbacks {
   onEvent: (event: AgentEvent) => void;
@@ -35,7 +37,8 @@ export function getAuthToken(): string | null {
 
 // Sliding-window rate limiter
 const rateCounts = new Map<string, { count: number; resetAt: number }>();
-function isRateLimited(addr: string): boolean {
+
+export function isRateLimited(addr: string): boolean {
   const now = Date.now();
   let entry = rateCounts.get(addr);
   if (!entry || now >= entry.resetAt) {
@@ -47,12 +50,12 @@ function isRateLimited(addr: string): boolean {
   return entry.count > RATE_LIMIT_RPS;
 }
 
-function clamp(s: unknown, max: number): string {
+export function clamp(s: unknown, max: number): string {
   return typeof s === 'string' ? s.slice(0, max) : String(s ?? '').slice(0, max);
 }
 
 /** Check that an object's nesting depth doesn't exceed the limit. */
-function checkDepth(obj: unknown, maxDepth: number, current = 0): boolean {
+export function checkDepth(obj: unknown, maxDepth: number, current = 0): boolean {
   if (current > maxDepth) return false;
   if (obj && typeof obj === 'object') {
     for (const val of Object.values(obj as Record<string, unknown>)) {
@@ -63,7 +66,7 @@ function checkDepth(obj: unknown, maxDepth: number, current = 0): boolean {
 }
 
 /** Validate and constrain a payload object. Returns null if invalid. */
-function sanitizePayload(raw: unknown): Record<string, unknown> | null {
+export function sanitizePayload(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== 'object') return {};
   if (!checkDepth(raw, MAX_PAYLOAD_DEPTH)) return null;
   try {
@@ -75,11 +78,21 @@ function sanitizePayload(raw: unknown): Record<string, unknown> | null {
   return raw as Record<string, unknown>;
 }
 
-function parseBody(req: http.IncomingMessage): Promise<unknown> {
+export function parseBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
     let settled = false;
+
+    // Abort stalled requests (slow-client protection)
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      if (!settled) {
+        settled = true;
+        req.destroy();
+        reject(new Error('Request timeout'));
+      }
+    });
+
     req.on('data', (chunk: Buffer) => {
       totalBytes += chunk.length;
       if (totalBytes > MAX_BODY_BYTES) {
@@ -108,7 +121,7 @@ function parseBody(req: http.IncomingMessage): Promise<unknown> {
   });
 }
 
-function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+export function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
   const send = (status: number, body: string) => {
     if (!res.headersSent) {
       res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -156,9 +169,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
       if (route === '/claude') {
         event = mapClaudeHookToEvent(body);
       } else if (route === '/opencode') {
-        console.log('[Event Horizon] OpenCode event received:', JSON.stringify(body).slice(0, 500));
         event = mapOpenCodeToEvent(body);
-        if (event) console.log('[Event Horizon] Mapped event cwd:', event.payload?.cwd);
       } else if (route === '/events' && typeof body === 'object' && body !== null) {
         const b = body as Record<string, unknown>;
         const eventType = typeof b.type === 'string' ? b.type : '';
@@ -245,8 +256,24 @@ export function stopEventServer(): void {
   }
   callbacks = null;
   authToken = null;
+  rateCounts.clear();
 }
 
 export function getEventServerPort(): number {
   return DEFAULT_PORT;
+}
+
+/** @internal — exposed for testing only. */
+export function _setAuthToken(token: string | null): void {
+  authToken = token;
+}
+
+/** @internal — exposed for testing only. */
+export function _setCallbacks(cbs: EventServerCallbacks | null): void {
+  callbacks = cbs;
+}
+
+/** @internal — exposed for testing only. */
+export function _clearRateLimits(): void {
+  rateCounts.clear();
 }
