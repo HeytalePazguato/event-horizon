@@ -9,6 +9,8 @@ node_modules/**
 **/*.tsx
 **/tsconfig.json
 **/.gitignore
-*.map
+**/*.map
 **/*.test.*
 **/*.spec.*
+%localappdata%/**
+vitest.config.*
