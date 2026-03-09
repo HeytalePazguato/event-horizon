@@ -71,7 +71,7 @@ jobs:
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          DEV_VERSION="0.0.${RUN_NUMBER}"
+          export DEV_VERSION="0.0.${RUN_NUMBER}"
           DISPLAY_VERSION="0.0.0.${RUN_NUMBER}-dev"
           echo "VERSION=${DISPLAY_VERSION}" >> $GITHUB_ENV
           echo "DEV_VERSION=${DEV_VERSION}" >> $GITHUB_ENV
