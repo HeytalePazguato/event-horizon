@@ -490,6 +490,27 @@ function App() {
     incrementTiered('cow_drop');
   }, [incrementTiered]);
 
+  const handleShootingStarClicked = useCallback(() => {
+    incrementTiered('star_catcher');
+  }, [incrementTiered]);
+
+  const handleAstronautGrazed = useCallback(() => {
+    incrementTiered('grazing_shot');
+  }, [incrementTiered]);
+
+  const handleAstronautLanded = useCallback((agentId: string) => {
+    const agent = agents.find((a) => a.id === agentId);
+    const type = agent?.agentType ?? 'unknown';
+    const achievementMap: Record<string, string> = {
+      'claude-code': 'conqueror_claude',
+      'opencode': 'conqueror_opencode',
+      'copilot': 'conqueror_copilot',
+      'unknown': 'conqueror_unknown',
+    };
+    const id = achievementMap[type] ?? 'conqueror_unknown';
+    unlockAchievement(id);
+  }, [agents, unlockAchievement]);
+
   // ── Planet hover / click ──────────────────────────────────────────────────
 
   useEffect(() => {
@@ -713,11 +734,14 @@ function App() {
           onUfoConsumed={handleUfoConsumed}
           onAstronautTrapped={handleAstronautTrapped}
           onAstronautEscaped={handleAstronautEscaped}
+          onAstronautGrazed={handleAstronautGrazed}
+          onAstronautLanded={handleAstronautLanded}
           onAstronautBounced={handleAstronautBounced}
           onRocketMan={handleRocketMan}
           onTrickShot={handleTrickShot}
           onKamikaze={handleKamikaze}
           onCowDrop={handleCowDrop}
+          onShootingStarClicked={handleShootingStarClicked}
         />
       </div>
       {!hasAgents && (

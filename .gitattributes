@@ -1,0 +1,20 @@
+# Normalize line endings to LF on commit, regardless of OS
+* text=auto eol=lf
+
+# Ensure these are always LF (scripts, configs)
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# Binary files — don't touch
+*.png binary
+*.ico binary
+*.vsix binary
+*.woff binary
+*.woff2 binary

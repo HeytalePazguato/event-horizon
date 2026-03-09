@@ -33,7 +33,9 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
 
   const agentId = String(o.agentId ?? o.sessionId ?? 'opencode-1').slice(0, 128);
   const agentName = String(o.agentName ?? 'OpenCode').slice(0, 64);
-  const payload = (o.payload as Record<string, unknown>) ?? (o.data as Record<string, unknown>) ?? {};
+  const rawPayload = (o.payload as Record<string, unknown>) ?? (o.data as Record<string, unknown>) ?? {};
+  // Shallow copy to avoid mutating the caller's input object
+  const payload = { ...rawPayload };
 
   // Capture working directory for workspace-aware cooperation detection
   const project = (o.project ?? payload.project) as Record<string, unknown> | undefined;
