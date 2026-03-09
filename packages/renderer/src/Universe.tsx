@@ -68,6 +68,16 @@ export interface UniverseProps {
   onAstronautTrapped?: () => void;
   /** Called when an astronaut escapes the gravity well via jet propulsion. */
   onAstronautEscaped?: () => void;
+  /** Called when an astronaut bounces off an edge. */
+  onAstronautBounced?: (astronautId: number, bounceCount: number, edgesHit: Set<string>) => void;
+  /** Called when an astronaut fires its jetpack. */
+  onRocketMan?: () => void;
+  /** Called when an astronaut bounces off an edge then falls into the black hole. */
+  onTrickShot?: () => void;
+  /** Called when an astronaut jets straight into the black hole without bouncing. */
+  onKamikaze?: () => void;
+  /** Called when the UFO beam is interrupted and the cow falls back. */
+  onCowDrop?: () => void;
 }
 
 // --- constants -----------------------------------------------------------
@@ -311,6 +321,11 @@ export const Universe: FC<UniverseProps> = ({
   onUfoConsumed,
   onAstronautTrapped,
   onAstronautEscaped,
+  onAstronautBounced,
+  onRocketMan,
+  onTrickShot,
+  onKamikaze,
+  onCowDrop,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -321,7 +336,12 @@ export const Universe: FC<UniverseProps> = ({
   const astronautsContainerRef = useRef<Container | null>(null);
   const singularityRef = useRef<Container | null>(null);
   const starsRef = useRef<Container | null>(null);
-  const astronautsRef = useRef<Array<{ id: number; c: Container; vx: number; vy: number; inGravityWell?: boolean; escapeCount?: number; nextJetTime?: number }>>([]);
+  const astronautsRef = useRef<Array<{
+    id: number; c: Container; vx: number; vy: number;
+    inGravityWell?: boolean; escapeCount?: number; nextJetTime?: number;
+    bounceCount: number; edgesHit: Set<string>;
+    jetFiredAt: number; hasBouncedSinceJet: boolean;
+  }>>([]);
   const activeShipsRef = useRef<ActiveShip[]>([]);
   const spawnedShipIdsRef = useRef<Set<string>>(new Set());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -336,7 +356,7 @@ export const Universe: FC<UniverseProps> = ({
   const moonCountsRef = useRef<Map<string, number>>(new Map());
   const ufoRef = useRef<Container | null>(null);
   const ufoStateRef = useRef<{
-    phase: 'idle' | 'fly' | 'beam' | 'flyaway' | 'flyby' | 'sucked';
+    phase: 'idle' | 'fly' | 'beam' | 'flyaway' | 'flyby' | 'sucked' | 'cow_falling';
     t: number;
     targetX: number;
     targetY: number;
@@ -349,6 +369,9 @@ export const Universe: FC<UniverseProps> = ({
     waypoints?: Array<{ x: number; y: number }>;
     waypointIndex?: number;
     segT?: number;
+    /** Cow-drop animation fields */
+    cowFallFromY?: number;
+    cowFallToY?: number;
   }>({ phase: 'idle', t: 0, targetX: 0, targetY: 0 });
   const ufoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shootingStarsRef = useRef<Array<{
@@ -395,6 +418,16 @@ export const Universe: FC<UniverseProps> = ({
   onAstronautTrappedRef.current = onAstronautTrapped;
   const onAstronautEscapedRef = useRef(onAstronautEscaped);
   onAstronautEscapedRef.current = onAstronautEscaped;
+  const onAstronautBouncedRef = useRef(onAstronautBounced);
+  onAstronautBouncedRef.current = onAstronautBounced;
+  const onRocketManRef = useRef(onRocketMan);
+  onRocketManRef.current = onRocketMan;
+  const onTrickShotRef = useRef(onTrickShot);
+  onTrickShotRef.current = onTrickShot;
+  const onKamikazeRef = useRef(onKamikaze);
+  onKamikazeRef.current = onKamikaze;
+  const onCowDropRef = useRef(onCowDrop);
+  onCowDropRef.current = onCowDrop;
   const onPlanetHoverRef = useRef(onPlanetHover);
   onPlanetHoverRef.current = onPlanetHover;
   const onPlanetClickRef = useRef(onPlanetClick);
@@ -512,7 +545,21 @@ export const Universe: FC<UniverseProps> = ({
         const ufo = createUfo();
         ufo.eventMode = 'static';
         ufo.cursor = 'pointer';
-        ufo.on('pointertap', () => { onUfoClickedRef.current?.(); });
+        ufo.on('pointertap', () => {
+          const state = ufoStateRef.current;
+          if (state.phase === 'beam') {
+            // Interrupt beam — cow falls back to planet
+            if (state.beam) state.beam.visible = false;
+            if (state.cow) {
+              state.cowFallFromY = state.cow.y;
+              state.cowFallToY = state.beamLen ?? 70;
+            }
+            state.phase = 'cow_falling';
+            state.t = 0;
+            onCowDropRef.current?.();
+          }
+          onUfoClickedRef.current?.();
+        });
         world.addChild(ufo);
         ufoRef.current = ufo;
 
@@ -533,6 +580,10 @@ export const Universe: FC<UniverseProps> = ({
             c: astro,
             vx: (Math.random() - 0.5) * 1.2,
             vy: (Math.random() - 0.5) * 1.2,
+            bounceCount: 0,
+            edgesHit: new Set(),
+            jetFiredAt: 0,
+            hasBouncedSinceJet: false,
           });
           onAstronautSpawnedRef.current?.();
         });
@@ -1233,6 +1284,14 @@ export const Universe: FC<UniverseProps> = ({
         }
 
         if (r < ASTRONAUT_DESTROY_RADIUS) {
+          // Check for trick_shot (bounced then fell in) or kamikaze (jetted straight in)
+          if (a.jetFiredAt > 0) {
+            if (a.hasBouncedSinceJet) {
+              onTrickShotRef.current?.();
+            } else {
+              onKamikazeRef.current?.();
+            }
+          }
           a.c.destroy({ children: true });
           astros.splice(i, 1);
           onAstronautConsumedRef.current?.();
@@ -1306,6 +1365,9 @@ export const Universe: FC<UniverseProps> = ({
             : 2.5 + Math.random() * 1.5;
           a.vx += Math.cos(jetAngle) * jetPower;
           a.vy += Math.sin(jetAngle) * jetPower;
+          a.jetFiredAt = now;
+          a.hasBouncedSinceJet = false;
+          onRocketManRef.current?.();
           // Next jet sooner when trapped (15-30s) vs normal (45-120s)
           a.nextJetTime = inWell
             ? now + 15_000 + Math.random() * 15_000
@@ -1349,10 +1411,16 @@ export const Universe: FC<UniverseProps> = ({
         const top    = -(sz.height / 2 + pan.y) / scale;
         const bottom =  (sz.height / 2 - pan.y) / scale;
         const margin = 8;
-        if (a.c.x < left   + margin) { a.c.x = left   + margin; a.vx =  Math.abs(a.vx) * 0.6; }
-        else if (a.c.x > right  - margin) { a.c.x = right  - margin; a.vx = -Math.abs(a.vx) * 0.6; }
-        if (a.c.y < top    + margin) { a.c.y = top    + margin; a.vy =  Math.abs(a.vy) * 0.6; }
-        else if (a.c.y > bottom - margin) { a.c.y = bottom - margin; a.vy = -Math.abs(a.vy) * 0.6; }
+        let bounced = false;
+        if (a.c.x < left + margin) { a.c.x = left + margin; a.vx = Math.abs(a.vx) * 0.6; bounced = true; a.edgesHit.add('left'); }
+        else if (a.c.x > right - margin) { a.c.x = right - margin; a.vx = -Math.abs(a.vx) * 0.6; bounced = true; a.edgesHit.add('right'); }
+        if (a.c.y < top + margin) { a.c.y = top + margin; a.vy = Math.abs(a.vy) * 0.6; bounced = true; a.edgesHit.add('top'); }
+        else if (a.c.y > bottom - margin) { a.c.y = bottom - margin; a.vy = -Math.abs(a.vy) * 0.6; bounced = true; a.edgesHit.add('bottom'); }
+        if (bounced) {
+          a.bounceCount++;
+          a.hasBouncedSinceJet = true;
+          onAstronautBouncedRef.current?.(a.id, a.bounceCount, a.edgesHit);
+        }
       }
 
       // Jet spray particles
@@ -1514,6 +1582,31 @@ export const Universe: FC<UniverseProps> = ({
           ufoState.phase = 'idle';
           onUfoConsumedRef.current?.();
           scheduleUfo();
+        }
+      } else if (ufoState.phase === 'cow_falling') {
+        // Cow drops back to planet surface with gravity-like acceleration
+        ufoState.t += dt;
+        const fallDuration = 0.8;
+        const fallT = Math.min(1, ufoState.t / fallDuration);
+        const cow = ufoState.cow;
+        if (cow) {
+          const fromY = ufoState.cowFallFromY ?? 0;
+          const toY = ufoState.cowFallToY ?? 70;
+          const eased = fallT * fallT; // accelerating fall
+          cow.y = fromY + (toY - fromY) * eased;
+          cow.visible = true;
+        }
+        if (fallT >= 1) {
+          if (ufoState.cow) ufoState.cow.visible = false;
+          // UFO flies away after cow drops
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 280 + Math.random() * 120;
+          ufoState.phase = 'flyaway';
+          ufoState.t = 0;
+          ufoState.startX = ufo.x;
+          ufoState.startY = ufo.y;
+          ufoState.targetX = ufo.x + Math.cos(angle) * dist;
+          ufoState.targetY = ufo.y + Math.sin(angle) * dist;
         }
       }
     };

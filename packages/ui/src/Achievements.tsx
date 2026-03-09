@@ -42,15 +42,23 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'first_contact',    name: 'First Contact',         desc: 'Your first agent appeared in the universe.' },
   { id: 'ground_control',   name: 'Ground Control',        desc: '3 or more agents active simultaneously.' },
   { id: 'the_horde',        name: 'The Horde',             desc: '10 agents active at the same time.' },
-  { id: 'traffic_control',  name: 'Traffic Control',       desc: '10 ships launched across the system.' },
-  { id: 'supernova',        name: 'Supernova',             desc: 'An agent entered an error state.' },
+  { id: 'traffic_control',  name: 'Traffic Control',       desc: 'Ships launched across the system.', tiers: [10, 50, 100, 500, 1000] },
+  { id: 'supernova',        name: 'Supernova',             desc: 'An agent entered an error state.', tiers: [1, 5, 10, 50] },
   { id: 'gravity_well',     name: 'Gravity Well',          desc: 'An astronaut was consumed by the black hole.', tiers: [1, 10, 50, 100, 1000, 10000] },
   { id: 'ufo_hunter',       name: 'UFO Hunter',            desc: 'You captured a UFO by clicking on it.', tiers: [1, 10, 50, 100, 500] },
-  { id: 'abduction',        name: 'Close Encounter',       desc: 'The UFO completed a successful extraction.' },
+  { id: 'abduction',        name: 'Close Encounter',       desc: 'The UFO completed a successful extraction.', tiers: [1, 5, 25, 100] },
+  { id: 'agent_connected',  name: 'Uplink',                desc: 'An agent connected to Event Horizon.', tiers: [1, 3, 5, 10] },
   { id: 'lone_astronaut',   name: 'One Small Step',        desc: 'You spawned an astronaut.', secret: true },
   { id: 'abyss',            name: 'Staring Into The Abyss',desc: 'You stared at an agent for a very long time.', secret: true },
-  { id: 'event_horizon',    name: 'Event Horizon',         desc: 'An astronaut was trapped in the gravitational pull of the black hole.', secret: true },
-  { id: 'slingshot',        name: 'Slingshot',             desc: 'An astronaut escaped the black hole\'s gravity well with a desperate jet burst.', secret: true },
+  { id: 'demo_activated',   name: 'Simulation Theory',     desc: 'You activated the demo simulation.', secret: true },
+  { id: 'event_horizon',    name: 'Event Horizon',         desc: 'An astronaut was trapped in the gravitational pull of the black hole.', secret: true, tiers: [1, 5, 25, 100] },
+  { id: 'slingshot',        name: 'Slingshot',             desc: 'An astronaut escaped the black hole\'s gravity well with a desperate jet burst.', secret: true, tiers: [1, 5, 25, 100] },
+  { id: 'trick_shot',       name: 'Trick Shot',            desc: 'An astronaut bounced off the edge and fell into the black hole.', secret: true, tiers: [1, 5, 25] },
+  { id: 'rocket_man',       name: 'Rocket Man',            desc: 'An astronaut fired its jetpack.', secret: true, tiers: [1, 10, 50, 100, 500] },
+  { id: 'bouncy_boy',       name: 'Bouncy Boy',            desc: 'An astronaut bounced off the edges 4 or more times.', secret: true },
+  { id: 'traveler',         name: 'Traveler',              desc: 'An astronaut bounced off all 4 edges of the universe.', secret: true },
+  { id: 'kamikaze',         name: 'Kamikaze',              desc: 'An astronaut jetted straight into the black hole without bouncing.', secret: true, tiers: [1, 5, 25] },
+  { id: 'cow_drop',         name: 'Butterfingers',         desc: 'You interrupted the UFO beam and the cow fell back to safety.', secret: true, tiers: [1, 5, 25, 100] },
 ];
 
 // ── Medal SVG icons ───────────────────────────────────────────────────────────
@@ -340,6 +348,182 @@ const Medal: FC<{ id: string; size?: number }> = ({ id, size = 36 }) => {
           {/* Speed lines */}
           <line x1="28" y1="8" x2="32" y2="5" stroke="white" strokeWidth="0.5" strokeOpacity="0.3" />
           <line x1="29" y1="11" x2="33" y2="9" stroke="white" strokeWidth="0.5" strokeOpacity="0.2" />
+        </svg>
+      );
+
+    case 'demo_activated':
+      // Matrix/simulation vibe
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#001a00" />
+          {/* Falling code rain */}
+          {[5,10,15,20,25,30].map((x,i) => (
+            <g key={i}>
+              <text x={x} y={8 + (i * 7) % 28} fontSize="7" fill="#00ff44" fillOpacity={0.3 + (i % 3) * 0.2} fontFamily="monospace">
+                {['0','1','0','1','0','1'][i]}
+              </text>
+              <text x={x} y={18 + (i * 11) % 20} fontSize="6" fill="#00cc33" fillOpacity={0.2 + (i % 2) * 0.15} fontFamily="monospace">
+                {['1','0','1','0','1','0'][i]}
+              </text>
+            </g>
+          ))}
+          {/* Center eye/pill */}
+          <ellipse cx="18" cy="18" rx="8" ry="5" fill="none" stroke="#00ff44" strokeWidth="1.2" strokeOpacity="0.7" />
+          <circle cx="18" cy="18" r="2.5" fill="#00ff44" fillOpacity="0.6" />
+          <circle cx="17" cy="17" r="0.8" fill="#aaffaa" fillOpacity="0.8" />
+        </svg>
+      );
+
+    case 'agent_connected':
+      // Uplink antenna/signal
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#081018" />
+          {/* Antenna */}
+          <line x1="18" y1="28" x2="18" y2="14" stroke="#6090c0" strokeWidth="2" />
+          <circle cx="18" cy="13" r="2" fill="#88bbff" />
+          {/* Signal arcs */}
+          <path d="M 12 10 Q 18 4 24 10" fill="none" stroke="#44aaff" strokeWidth="1.2" strokeOpacity="0.7" />
+          <path d="M 9 8 Q 18 0 27 8" fill="none" stroke="#44aaff" strokeWidth="1" strokeOpacity="0.45" />
+          <path d="M 6 6 Q 18 -4 30 6" fill="none" stroke="#44aaff" strokeWidth="0.8" strokeOpacity="0.25" />
+          {/* Base */}
+          <rect x="14" y="28" width="8" height="3" rx="1" fill="#3a5a7a" />
+          {/* Status dot */}
+          <circle cx="18" cy="22" r="1.5" fill="#44ff88" fillOpacity="0.8" />
+        </svg>
+      );
+
+    case 'trick_shot':
+      // Astronaut bouncing off edge into black hole
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#0a0810" />
+          {/* Edge wall */}
+          <line x1="32" y1="2" x2="32" y2="34" stroke="#4a4a6a" strokeWidth="2" strokeOpacity="0.6" />
+          {/* Bounce path */}
+          <path d="M 20 6 L 30 14 L 14 26" fill="none" stroke="#ffcc44" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="2 2" />
+          {/* Bounce flash */}
+          <circle cx="30" cy="14" r="3" fill="#ffee44" fillOpacity="0.3" />
+          {/* Black hole */}
+          <circle cx="10" cy="28" r="5" fill="#000" />
+          <circle cx="10" cy="28" r="7" fill="none" stroke="#ff6622" strokeWidth="1" strokeOpacity="0.4" />
+          {/* Astronaut mid-trajectory */}
+          <circle cx="20" cy="20" r="2" fill="white" />
+          <circle cx="20" cy="20" r="1" fill="#88ccff" />
+          {/* Motion lines */}
+          <line x1="22" y1="18" x2="26" y2="15" stroke="white" strokeWidth="0.5" strokeOpacity="0.3" />
+        </svg>
+      );
+
+    case 'rocket_man':
+      // Astronaut with blazing jet exhaust
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#080c18" />
+          {/* Stars */}
+          {[[5,5],[30,7],[8,28],[28,30]].map(([x,y],i) => (
+            <circle key={i} cx={x} cy={y} r="0.6" fill="white" fillOpacity="0.4" />
+          ))}
+          {/* Astronaut */}
+          <circle cx="18" cy="14" r="4" fill="#c8ddf0" fillOpacity="0.9" />
+          <ellipse cx="18.5" cy="13.5" rx="2.5" ry="2" fill="#0a1830" fillOpacity="0.9" />
+          <rect x="15" y="17" width="6" height="5" rx="1" fill="#e2ecf8" fillOpacity="0.9" />
+          {/* Jet exhaust (big, dramatic) */}
+          <polygon points="16,22 20,22 22,30 14,30" fill="#ff6622" fillOpacity="0.7" />
+          <polygon points="17,22 19,22 20,28 16,28" fill="#ffaa33" fillOpacity="0.8" />
+          <polygon points="17.5,23 18.5,23 19,26 17,26" fill="#ffee88" fillOpacity="0.9" />
+          {/* Speed lines */}
+          <line x1="12" y1="16" x2="8" y2="18" stroke="white" strokeWidth="0.5" strokeOpacity="0.25" />
+          <line x1="24" y1="16" x2="28" y2="18" stroke="white" strokeWidth="0.5" strokeOpacity="0.25" />
+        </svg>
+      );
+
+    case 'bouncy_boy':
+      // Astronaut bouncing around edges
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#0a0a14" />
+          {/* Edge walls */}
+          <rect x="2" y="2" width="32" height="32" rx="1" fill="none" stroke="#3a3a5a" strokeWidth="1" strokeOpacity="0.5" />
+          {/* Bounce trajectory */}
+          <path d="M 8 4 L 30 12 L 6 22 L 28 30" fill="none" stroke="#88ffaa" strokeWidth="1" strokeOpacity="0.5" strokeDasharray="2 2" />
+          {/* Bounce flashes at walls */}
+          {[[8,4],[30,12],[6,22],[28,30]].map(([x,y],i) => (
+            <circle key={i} cx={x} cy={y} r="2.5" fill="#88ffaa" fillOpacity={0.2 + i * 0.05} />
+          ))}
+          {/* Astronaut */}
+          <circle cx="18" cy="17" r="2.5" fill="white" fillOpacity="0.9" />
+          <circle cx="18" cy="17" r="1.2" fill="#88ccff" />
+          {/* "4x" badge */}
+          <text x="28" y="10" fontSize="8" fill="#88ffaa" fillOpacity="0.7" fontFamily="monospace" fontWeight="bold">4×</text>
+        </svg>
+      );
+
+    case 'traveler':
+      // Astronaut that visited all 4 edges
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#080810" />
+          {/* 4 edge markers — compass points */}
+          <polygon points="18,3 16,7 20,7" fill="#44aaff" fillOpacity="0.7" /> {/* top */}
+          <polygon points="18,33 16,29 20,29" fill="#44aaff" fillOpacity="0.7" /> {/* bottom */}
+          <polygon points="3,18 7,16 7,20" fill="#44aaff" fillOpacity="0.7" /> {/* left */}
+          <polygon points="33,18 29,16 29,20" fill="#44aaff" fillOpacity="0.7" /> {/* right */}
+          {/* Path connecting them */}
+          <path d="M 18 7 L 29 18 L 18 29 L 7 18 Z" fill="none" stroke="#44aaff" strokeWidth="0.8" strokeOpacity="0.35" strokeDasharray="3 2" />
+          {/* Center astronaut */}
+          <circle cx="18" cy="18" r="3" fill="white" fillOpacity="0.85" />
+          <circle cx="18" cy="18" r="1.5" fill="#88ccff" />
+          {/* Completion glow */}
+          <circle cx="18" cy="18" r="8" fill="none" stroke="#44aaff" strokeWidth="0.6" strokeOpacity="0.2" />
+        </svg>
+      );
+
+    case 'kamikaze':
+      // Astronaut jetting straight at black hole
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#100404" />
+          {/* Black hole */}
+          <circle cx="18" cy="26" r="6" fill="#000" />
+          <circle cx="18" cy="26" r="8" fill="none" stroke="#ff4422" strokeWidth="1.2" strokeOpacity="0.5" />
+          {/* Astronaut diving in */}
+          <circle cx="18" cy="10" r="2.5" fill="white" />
+          <circle cx="18" cy="10" r="1.2" fill="#88ccff" />
+          {/* Jet exhaust pointing UP (astronaut accelerating downward) */}
+          <line x1="18" y1="8" x2="18" y2="3" stroke="#ff8822" strokeWidth="2" strokeOpacity="0.8" />
+          <line x1="17" y1="7" x2="16" y2="3" stroke="#ffcc44" strokeWidth="1" strokeOpacity="0.5" />
+          <line x1="19" y1="7" x2="20" y2="3" stroke="#ffcc44" strokeWidth="1" strokeOpacity="0.5" />
+          {/* Direct path line */}
+          <line x1="18" y1="12" x2="18" y2="20" stroke="#ff6644" strokeWidth="1" strokeOpacity="0.4" strokeDasharray="2 2" />
+          {/* Danger symbol */}
+          <text x="26" y="14" fontSize="8" fill="#ff4422" fillOpacity="0.5" fontFamily="sans-serif">⚠</text>
+        </svg>
+      );
+
+    case 'cow_drop':
+      // UFO beam interrupted, cow falling
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#080c10" />
+          {/* UFO (smaller, top) */}
+          <ellipse cx="18" cy="8" rx="7" ry="3" fill="#8a8aaa" />
+          <ellipse cx="18" cy="6.5" rx="4" ry="2.5" fill="#4a8a5a" />
+          {/* Broken beam (dashed/fading) */}
+          <line x1="15" y1="11" x2="14" y2="18" stroke="#ffee44" strokeWidth="1" strokeOpacity="0.2" strokeDasharray="2 3" />
+          <line x1="21" y1="11" x2="22" y2="18" stroke="#ffee44" strokeWidth="1" strokeOpacity="0.2" strokeDasharray="2 3" />
+          {/* Cow falling */}
+          <ellipse cx="18" cy="23" rx="3" ry="1.8" fill="#f4f4ec" />
+          <ellipse cx="20.5" cy="22.5" rx="2" ry="1.5" fill="#f0efdf" />
+          {/* Fall motion lines */}
+          <line x1="15" y1="19" x2="15" y2="21" stroke="white" strokeWidth="0.5" strokeOpacity="0.3" />
+          <line x1="21" y1="18" x2="21" y2="20" stroke="white" strokeWidth="0.5" strokeOpacity="0.3" />
+          <line x1="18" y1="17" x2="18" y2="20" stroke="white" strokeWidth="0.5" strokeOpacity="0.4" />
+          {/* Planet surface */}
+          <ellipse cx="18" cy="31" rx="12" ry="3" fill="#5a4a3a" fillOpacity="0.6" />
+          {/* Click indicator */}
+          <circle cx="28" cy="8" r="3" fill="none" stroke="#ff6644" strokeWidth="1" strokeOpacity="0.5" />
+          <line x1="28" y1="6" x2="28" y2="10" stroke="#ff6644" strokeWidth="1" strokeOpacity="0.5" />
         </svg>
       );
 

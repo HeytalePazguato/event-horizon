@@ -12,8 +12,18 @@ import type { AgentMetrics } from '@event-horizon/core';
  * Kept here (not imported from Achievements.tsx) to avoid circular dependency.
  */
 const TIERED_THRESHOLDS: Record<string, number[]> = {
-  gravity_well: [1, 10, 50, 100, 1000, 10000],
-  ufo_hunter:   [1, 10, 50, 100, 500],
+  gravity_well:    [1, 10, 50, 100, 1000, 10000],
+  ufo_hunter:      [1, 10, 50, 100, 500],
+  supernova:       [1, 5, 10, 50],
+  traffic_control: [10, 50, 100, 500, 1000],
+  abduction:       [1, 5, 25, 100],
+  event_horizon:   [1, 5, 25, 100],
+  slingshot:       [1, 5, 25, 100],
+  agent_connected: [1, 3, 5, 10],
+  trick_shot:      [1, 5, 25],
+  rocket_man:      [1, 10, 50, 100, 500],
+  kamikaze:        [1, 5, 25],
+  cow_drop:        [1, 5, 25, 100],
 };
 
 export interface LogEntry {
@@ -86,6 +96,8 @@ export interface CommandCenterState {
   infoOpen: boolean;
   /** Whether the demo simulation is running (owned here so Commands panel can toggle it). */
   demoRequested: boolean;
+  /** True while demo simulation is active — guards achievements from firing. */
+  demoMode: boolean;
   /** Active toast notifications. */
   activeToasts: ToastEntry[];
   /** Achievement IDs that have already been unlocked (one-shot). */
@@ -116,6 +128,7 @@ export interface CommandCenterState {
   addLog: (entry: LogEntry) => void;
   toggleInfo: () => void;
   requestDemo: () => void;
+  setDemoMode: (active: boolean) => void;
   /** Unlock an achievement and show a toast. No-op if already unlocked. For tiered achievements, use incrementTieredAchievement instead. */
   unlockAchievement: (id: string) => void;
   /** Increment the count for a tiered achievement and upgrade tier if threshold is met. */
@@ -144,6 +157,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   logs: [],
   infoOpen: false,
   demoRequested: false,
+  demoMode: false,
   activeToasts: [],
   unlockedAchievements: [],
   achievementCounts: {},
@@ -233,8 +247,11 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),
 
   requestDemo: () => set((s) => ({ demoRequested: !s.demoRequested })),
+  setDemoMode: (active) => set({ demoMode: active }),
 
   unlockAchievement: (id) => {
+    // Demo guard: only demo_activated can fire during demo mode
+    if (get().demoMode && id !== 'demo_activated') return;
     if (get().unlockedAchievements.includes(id)) return;
     const instanceId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     set((s) => ({
@@ -244,6 +261,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   },
 
   incrementTieredAchievement: (id) => {
+    // Demo guard: no tiered achievements during demo mode
+    if (get().demoMode) return;
     const tiers = TIERED_THRESHOLDS[id];
     if (!tiers) return;
     const state = get();

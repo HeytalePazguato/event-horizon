@@ -159,7 +159,6 @@ function App() {
 
 
   // Achievement tracking state
-  const shipLaunchCountRef = useRef(0);
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track last event time per agent for stale-agent timeout
   const agentLastSeenRef = useRef<Record<string, number>>({});
@@ -230,7 +229,7 @@ function App() {
       if (!store.singularityStats.firstEventAt) store.incrementSingularityStat('firstEventAt');
       store.incrementSingularityStat('eventsWitnessed');
       if (type === 'agent.error') store.incrementSingularityStat('errorsWitnessed');
-      if (type === 'agent.spawn') store.incrementSingularityStat('agentsSeen');
+      // agentsSeen is now tracked at upsert time (below) to catch all agent types
 
       // agent.terminate: clean up all state for this agent — 2.4
       if (type === 'agent.terminate') {
@@ -257,8 +256,13 @@ function App() {
         return;
       }
 
-      // Upsert agent
-      setAgents((prev) => prev.some((a) => a.id === agentId) ? prev : [...prev, { id: agentId, name: agentName, agentType }]);
+      // Upsert agent — fire agent_connected when a genuinely new agent appears
+      setAgents((prev) => {
+        if (prev.some((a) => a.id === agentId)) return prev;
+        store.incrementTieredAchievement('agent_connected');
+        store.incrementSingularityStat('agentsSeen');
+        return [...prev, { id: agentId, name: agentName, agentType }];
+      });
       setAgentMap((prev) => {
         const prevAgent = prev[agentId];
         let state: string;
@@ -398,23 +402,26 @@ function App() {
     if (agents.length >= 10) unlockAchievement('the_horde');
   }, [agents.length, unlockAchievement]);
 
-  // supernova — any agent enters error state
+  // supernova — any agent enters error state (now tiered)
+  const prevErrorCountRef = useRef(0);
   useEffect(() => {
-    const hasError = Object.values(agentMap).some((a) => a.state === 'error');
-    if (hasError) unlockAchievement('supernova');
-  }, [agentMap, unlockAchievement]);
+    const errorCount = Object.values(agentMap).filter((a) => a.state === 'error').length;
+    if (errorCount > prevErrorCountRef.current) {
+      for (let i = 0; i < errorCount - prevErrorCountRef.current; i++) incrementTiered('supernova');
+    }
+    prevErrorCountRef.current = errorCount;
+  }, [agentMap, incrementTiered]);
 
-  // traffic_control — count total ships launched (increment by 1 per new ship added)
+  // traffic_control — count total ships launched (now tiered)
   const prevShipCountRef = useRef(0);
   useEffect(() => {
     const current = ships.length;
     const prev = prevShipCountRef.current;
     if (current > prev) {
-      shipLaunchCountRef.current += (current - prev);
-      if (shipLaunchCountRef.current >= 10) unlockAchievement('traffic_control');
+      for (let i = 0; i < current - prev; i++) incrementTiered('traffic_control');
     }
     prevShipCountRef.current = current;
-  }, [ships.length, unlockAchievement]);
+  }, [ships.length, incrementTiered]);
 
   // abyss — selected an agent and kept it selected for 60 seconds
   useEffect(() => {
@@ -437,9 +444,9 @@ function App() {
   }, [unlockAchievement]);
 
   const handleUfoAbduction = useCallback(() => {
-    unlockAchievement('abduction');
+    incrementTiered('abduction');
     incrementStat('cowsAbducted');
-  }, [unlockAchievement, incrementStat]);
+  }, [incrementTiered, incrementStat]);
 
   const handleUfoClicked = useCallback(() => {
     incrementTiered('ufo_hunter');
@@ -454,12 +461,33 @@ function App() {
   }, [incrementStat]);
 
   const handleAstronautTrapped = useCallback(() => {
-    unlockAchievement('event_horizon');
-  }, [unlockAchievement]);
+    incrementTiered('event_horizon');
+  }, [incrementTiered]);
 
   const handleAstronautEscaped = useCallback(() => {
-    unlockAchievement('slingshot');
+    incrementTiered('slingshot');
+  }, [incrementTiered]);
+
+  const handleAstronautBounced = useCallback((astronautId: number, bounceCount: number, edgesHit: Set<string>) => {
+    if (bounceCount >= 4) unlockAchievement('bouncy_boy');
+    if (edgesHit.size >= 4) unlockAchievement('traveler');
   }, [unlockAchievement]);
+
+  const handleRocketMan = useCallback(() => {
+    incrementTiered('rocket_man');
+  }, [incrementTiered]);
+
+  const handleTrickShot = useCallback(() => {
+    incrementTiered('trick_shot');
+  }, [incrementTiered]);
+
+  const handleKamikaze = useCallback(() => {
+    incrementTiered('kamikaze');
+  }, [incrementTiered]);
+
+  const handleCowDrop = useCallback(() => {
+    incrementTiered('cow_drop');
+  }, [incrementTiered]);
 
   // ── Planet hover / click ──────────────────────────────────────────────────
 
@@ -622,11 +650,14 @@ function App() {
   // Sync demo simulation with store flag (placed after callbacks are defined)
   useEffect(() => {
     if (demoRequested && !demoSimRunning) {
+      unlockAchievement('demo_activated');
+      useCommandCenterStore.getState().setDemoMode(true);
       runDemoSimulation();
     } else if (!demoRequested && demoSimRunning) {
       stopDemoSimulation();
+      useCommandCenterStore.getState().setDemoMode(false);
     }
-  }, [demoRequested, demoSimRunning, runDemoSimulation, stopDemoSimulation]);
+  }, [demoRequested, demoSimRunning, runDemoSimulation, stopDemoSimulation, unlockAchievement]);
 
   useEffect(() => () => {
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
@@ -677,6 +708,11 @@ function App() {
           onUfoConsumed={handleUfoConsumed}
           onAstronautTrapped={handleAstronautTrapped}
           onAstronautEscaped={handleAstronautEscaped}
+          onAstronautBounced={handleAstronautBounced}
+          onRocketMan={handleRocketMan}
+          onTrickShot={handleTrickShot}
+          onKamikaze={handleKamikaze}
+          onCowDrop={handleCowDrop}
         />
       </div>
       {!hasAgents && (
