@@ -49,6 +49,8 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'abduction',        name: 'Close Encounter',       desc: 'The UFO completed a successful extraction.' },
   { id: 'lone_astronaut',   name: 'One Small Step',        desc: 'You spawned an astronaut.', secret: true },
   { id: 'abyss',            name: 'Staring Into The Abyss',desc: 'You stared at an agent for a very long time.', secret: true },
+  { id: 'event_horizon',    name: 'Event Horizon',         desc: 'An astronaut was trapped in the gravitational pull of the black hole.', secret: true },
+  { id: 'slingshot',        name: 'Slingshot',             desc: 'An astronaut escaped the black hole\'s gravity well with a desperate jet burst.', secret: true },
 ];
 
 // ── Medal SVG icons ───────────────────────────────────────────────────────────
@@ -296,6 +298,48 @@ const Medal: FC<{ id: string; size?: number }> = ({ id, size = 36 }) => {
           {/* Eyelids / lashes suggestion */}
           <path d="M 8 18 Q 18 10 28 18" fill="none" stroke="#cc9900" strokeWidth="1" strokeOpacity="0.5" />
           <path d="M 8 18 Q 18 26 28 18" fill="none" stroke="#cc9900" strokeWidth="1" strokeOpacity="0.5" />
+        </svg>
+      );
+
+    case 'event_horizon':
+      // Astronaut caught in spiral around black hole
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#0a0404" />
+          {/* Black hole core */}
+          <circle cx="18" cy="18" r="6" fill="#000" />
+          <circle cx="18" cy="18" r="8" fill="none" stroke="#ff6622" strokeWidth="1.5" strokeOpacity="0.6" />
+          <circle cx="18" cy="18" r="11" fill="none" stroke="#cc4400" strokeWidth="0.8" strokeOpacity="0.35" />
+          {/* Spiral path */}
+          <path d="M 28 14 Q 24 8 18 10 Q 12 12 14 18 Q 16 24 22 22" fill="none" stroke="#ffaa44" strokeWidth="0.8" strokeOpacity="0.5" strokeDasharray="2 2" />
+          {/* Astronaut dot on spiral */}
+          <circle cx="22" cy="22" r="2" fill="#ffffff" />
+          <circle cx="22" cy="22" r="1" fill="#88ccff" />
+          {/* Danger glow */}
+          <circle cx="18" cy="18" r="14" fill="none" stroke="#ff4422" strokeWidth="0.5" strokeOpacity="0.2" />
+        </svg>
+      );
+
+    case 'slingshot':
+      // Astronaut escaping with jet burst
+      return (
+        <svg width={s} height={s} viewBox="0 0 36 36">
+          <rect width="36" height="36" rx="4" fill="#040810" />
+          {/* Black hole (small, receding) */}
+          <circle cx="12" cy="22" r="4" fill="#000" />
+          <circle cx="12" cy="22" r="6" fill="none" stroke="#ff6622" strokeWidth="1" strokeOpacity="0.4" />
+          {/* Escape trajectory */}
+          <path d="M 14 20 Q 18 16 26 10" fill="none" stroke="#ffcc44" strokeWidth="0.8" strokeOpacity="0.5" strokeDasharray="2 1" />
+          {/* Astronaut escaping */}
+          <circle cx="26" cy="10" r="2.5" fill="#ffffff" />
+          <circle cx="26" cy="10" r="1.2" fill="#88ccff" />
+          {/* Jet exhaust */}
+          <line x1="24" y1="12" x2="20" y2="16" stroke="#ff8822" strokeWidth="1.5" strokeOpacity="0.8" />
+          <line x1="23" y1="11" x2="19" y2="14" stroke="#ffcc44" strokeWidth="1" strokeOpacity="0.6" />
+          <circle cx="19" cy="15" r="1.5" fill="#ffaa33" fillOpacity="0.5" />
+          {/* Speed lines */}
+          <line x1="28" y1="8" x2="32" y2="5" stroke="white" strokeWidth="0.5" strokeOpacity="0.3" />
+          <line x1="29" y1="11" x2="33" y2="9" stroke="white" strokeWidth="0.5" strokeOpacity="0.2" />
         </svg>
       );
 

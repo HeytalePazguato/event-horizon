@@ -38,7 +38,7 @@ function isCurrentEhCommand(cmd: string): boolean {
   return cmd === buildCurlCommand();
 }
 
-/** Returns true if Event Horizon hooks with the CURRENT token are present in ~/.claude/settings.json */
+/** Returns true if Event Horizon hooks exist in ~/.claude/settings.json (any token version). */
 export async function isClaudeCodeHooksInstalled(): Promise<boolean> {
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
   try {
@@ -50,7 +50,7 @@ export async function isClaudeCodeHooksInstalled(): Promise<boolean> {
       return entries.some((h) => {
         const hh = h as Record<string, unknown>;
         const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
-        return hs.some((c) => typeof c.command === 'string' && isCurrentEhCommand(c.command));
+        return hs.some((c) => typeof c.command === 'string' && isEhCommand(c.command));
       });
     });
   } catch {

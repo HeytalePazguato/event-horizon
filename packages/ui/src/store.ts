@@ -31,27 +31,35 @@ export interface ToastEntry {
 
 /** Persistent stats for the black hole — everything it has consumed. */
 export interface SingularityStats {
-  agentsTerminated: number;
-  tasksCompleted: number;
-  tasksFailed: number;
-  toolCallsTotal: number;
-  astronautsConsumed: number;
+  /** Agents that terminated — their planet was consumed. */
   planetsSwallowed: number;
-  shipsArrived: number;
-  ufoAbductions: number;
+  /** Astronauts that drifted into the gravity well. */
+  astronautsConsumed: number;
+  /** UFOs that flew too close and spiralled in. */
+  ufosConsumed: number;
+  /** Cows abducted by UFOs (cosmic event witnessed from the center). */
+  cowsAbducted: number;
+  /** Data-transfer ships observed flying between planets. */
+  shipsObserved: number;
+  /** Total unique agents that ever connected to the universe. */
+  agentsSeen: number;
+  /** Total events processed across all agents. */
+  eventsWitnessed: number;
+  /** Total errors witnessed across all agents. */
+  errorsWitnessed: number;
   /** Timestamp of first ever event. */
   firstEventAt: number;
 }
 
 export const EMPTY_SINGULARITY_STATS: SingularityStats = {
-  agentsTerminated: 0,
-  tasksCompleted: 0,
-  tasksFailed: 0,
-  toolCallsTotal: 0,
-  astronautsConsumed: 0,
   planetsSwallowed: 0,
-  shipsArrived: 0,
-  ufoAbductions: 0,
+  astronautsConsumed: 0,
+  ufosConsumed: 0,
+  cowsAbducted: 0,
+  shipsObserved: 0,
+  agentsSeen: 0,
+  eventsWitnessed: 0,
+  errorsWitnessed: 0,
   firstEventAt: 0,
 };
 

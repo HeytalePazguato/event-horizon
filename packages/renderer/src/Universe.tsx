@@ -62,6 +62,12 @@ export interface UniverseProps {
   onUfoClicked?: () => void;
   /** Called when the user clicks on the black hole. */
   onSingularityClick?: () => void;
+  /** Called when a UFO gets consumed by the singularity. */
+  onUfoConsumed?: () => void;
+  /** Called when an astronaut enters the gravity well (suck radius). */
+  onAstronautTrapped?: () => void;
+  /** Called when an astronaut escapes the gravity well via jet propulsion. */
+  onAstronautEscaped?: () => void;
 }
 
 // --- constants -----------------------------------------------------------
@@ -302,6 +308,9 @@ export const Universe: FC<UniverseProps> = ({
   onUfoAbduction,
   onUfoClicked,
   onSingularityClick,
+  onUfoConsumed,
+  onAstronautTrapped,
+  onAstronautEscaped,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -312,7 +321,7 @@ export const Universe: FC<UniverseProps> = ({
   const astronautsContainerRef = useRef<Container | null>(null);
   const singularityRef = useRef<Container | null>(null);
   const starsRef = useRef<Container | null>(null);
-  const astronautsRef = useRef<Array<{ id: number; c: Container; vx: number; vy: number; doomed?: boolean; nextJetTime?: number }>>([]);
+  const astronautsRef = useRef<Array<{ id: number; c: Container; vx: number; vy: number; inGravityWell?: boolean; escapeCount?: number; nextJetTime?: number }>>([]);
   const activeShipsRef = useRef<ActiveShip[]>([]);
   const spawnedShipIdsRef = useRef<Set<string>>(new Set());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -327,7 +336,7 @@ export const Universe: FC<UniverseProps> = ({
   const moonCountsRef = useRef<Map<string, number>>(new Map());
   const ufoRef = useRef<Container | null>(null);
   const ufoStateRef = useRef<{
-    phase: 'idle' | 'fly' | 'beam' | 'flyaway' | 'flyby';
+    phase: 'idle' | 'fly' | 'beam' | 'flyaway' | 'flyby' | 'sucked';
     t: number;
     targetX: number;
     targetY: number;
@@ -380,6 +389,12 @@ export const Universe: FC<UniverseProps> = ({
   onUfoClickedRef.current = onUfoClicked;
   const onSingularityClickRef = useRef(onSingularityClick);
   onSingularityClickRef.current = onSingularityClick;
+  const onUfoConsumedRef = useRef(onUfoConsumed);
+  onUfoConsumedRef.current = onUfoConsumed;
+  const onAstronautTrappedRef = useRef(onAstronautTrapped);
+  onAstronautTrappedRef.current = onAstronautTrapped;
+  const onAstronautEscapedRef = useRef(onAstronautEscaped);
+  onAstronautEscapedRef.current = onAstronautEscaped;
   const onPlanetHoverRef = useRef(onPlanetHover);
   onPlanetHoverRef.current = onPlanetHover;
   const onPlanetClickRef = useRef(onPlanetClick);
@@ -845,22 +860,50 @@ export const Universe: FC<UniverseProps> = ({
         if (eufo.__cow) eufo.__cow.visible = false;
 
         if (isFlyby) {
+          // ~20% of fly-bys route dangerously close to the singularity
+          const dangerousPath = Math.random() < 0.20;
+
           // Fly-by: curved path through the visible area using 3-5 waypoints
           const wpCount = 3 + Math.floor(Math.random() * 3); // 3–5 waypoints
           const waypoints: Array<{ x: number; y: number }> = [{ x: startX, y: startY }];
-          // Generate waypoints within the visible area for an interesting curve
-          for (let wi = 0; wi < wpCount; wi++) {
-            const frac = (wi + 1) / (wpCount + 1);
-            // Oscillate around a rough path across the viewport
-            const baseAngle = entryAngle + Math.PI; // general direction: toward opposite side
-            const perpAngle = baseAngle + Math.PI / 2;
-            const along = 60 + frac * 180;
-            const wave = Math.sin(frac * Math.PI * (1.5 + Math.random())) * (80 + Math.random() * 60);
-            waypoints.push({
-              x: startX + Math.cos(baseAngle) * along + Math.cos(perpAngle) * wave,
-              y: startY + Math.sin(baseAngle) * along + Math.sin(perpAngle) * wave,
-            });
+
+          if (dangerousPath) {
+            // Route through singularity center — one waypoint near (0,0) with slight offset
+            const midIdx = Math.floor(wpCount / 2);
+            for (let wi = 0; wi < wpCount; wi++) {
+              if (wi === midIdx) {
+                // Pass through singularity danger zone (within ~25px of center)
+                waypoints.push({
+                  x: (Math.random() - 0.5) * 50,
+                  y: (Math.random() - 0.5) * 50,
+                });
+              } else {
+                const frac = (wi + 1) / (wpCount + 1);
+                const baseAngle = entryAngle + Math.PI;
+                const perpAngle = baseAngle + Math.PI / 2;
+                const along = 60 + frac * 180;
+                const wave = Math.sin(frac * Math.PI * (1.5 + Math.random())) * (80 + Math.random() * 60);
+                waypoints.push({
+                  x: startX + Math.cos(baseAngle) * along + Math.cos(perpAngle) * wave,
+                  y: startY + Math.sin(baseAngle) * along + Math.sin(perpAngle) * wave,
+                });
+              }
+            }
+          } else {
+            // Safe path — generate waypoints avoiding the singularity
+            for (let wi = 0; wi < wpCount; wi++) {
+              const frac = (wi + 1) / (wpCount + 1);
+              const baseAngle = entryAngle + Math.PI;
+              const perpAngle = baseAngle + Math.PI / 2;
+              const along = 60 + frac * 180;
+              const wave = Math.sin(frac * Math.PI * (1.5 + Math.random())) * (80 + Math.random() * 60);
+              waypoints.push({
+                x: startX + Math.cos(baseAngle) * along + Math.cos(perpAngle) * wave,
+                y: startY + Math.sin(baseAngle) * along + Math.sin(perpAngle) * wave,
+              });
+            }
           }
+
           // Exit point — far off the opposite edge
           const exitAngle = entryAngle + Math.PI + (Math.random() - 0.5) * 0.6;
           const exitDist = 300 + Math.random() * 100;
@@ -1177,33 +1220,44 @@ export const Universe: FC<UniverseProps> = ({
         const r2 = dx * dx + dy * dy + 1;
         const r = Math.sqrt(r2);
 
-        // Once inside the suck radius, the astronaut is DOOMED — no escape
-        if (!a.doomed && r < ASTRONAUT_SUCK_RADIUS) a.doomed = true;
+        // Track gravity well entry/exit
+        if (!a.inGravityWell && r < ASTRONAUT_SUCK_RADIUS) {
+          a.inGravityWell = true;
+          onAstronautTrappedRef.current?.();
+        }
+        // Escaped the gravity well! (was inside, now outside)
+        if (a.inGravityWell && r >= ASTRONAUT_SUCK_RADIUS) {
+          a.inGravityWell = false;
+          a.escapeCount = (a.escapeCount ?? 0) + 1;
+          onAstronautEscapedRef.current?.();
+        }
 
         if (r < ASTRONAUT_DESTROY_RADIUS) {
           a.c.destroy({ children: true });
           astros.splice(i, 1);
-          if (a.doomed) onAstronautConsumedRef.current?.();
+          onAstronautConsumedRef.current?.();
           continue;
         }
 
-        if (a.doomed) {
-          // Strong inward acceleration — no speed cap, no wall bounce
-          const inward = 0.10 + (ASTRONAUT_SUCK_RADIUS - r) * 0.004;
-          a.vx += (dx / r) * inward;
-          a.vy += (dy / r) * inward;
-          const shrink = Math.max(0.05, (r - ASTRONAUT_DESTROY_RADIUS) / (ASTRONAUT_SUCK_RADIUS - ASTRONAUT_DESTROY_RADIUS));
+        // Physics — stronger pull inside the gravity well, but NOT inescapable
+        let ax: number;
+        let ay: number;
+        if (a.inGravityWell) {
+          const inward = 0.10 + (ASTRONAUT_SUCK_RADIUS - r) * 0.003;
+          ax = (dx / r) * inward;
+          ay = (dy / r) * inward;
+          // Visual: shrink and fade as astronaut approaches core
+          const shrink = Math.max(0.15, (r - ASTRONAUT_DESTROY_RADIUS) / (ASTRONAUT_SUCK_RADIUS - ASTRONAUT_DESTROY_RADIUS));
           a.c.scale.set(shrink);
           a.c.alpha = shrink;
-          a.c.x += a.vx;
-          a.c.y += a.vy;
-          continue;
+        } else {
+          ax = (dx / r) * (SINGULARITY_PULL / r2) * dt * 60;
+          ay = (dy / r) * (SINGULARITY_PULL / r2) * dt * 60;
+          a.c.scale.set(1);
+          a.c.alpha = 1;
         }
 
-        // Normal physics
-        let ax = (dx / r) * (SINGULARITY_PULL / r2) * dt * 60;
-        let ay = (dy / r) * (SINGULARITY_PULL / r2) * dt * 60;
-
+        // Planet gravity (always active)
         let removed = false;
         for (const p of planets) {
           const px = p.x - a.c.x;
@@ -1221,30 +1275,41 @@ export const Universe: FC<UniverseProps> = ({
         }
         if (removed) continue;
 
-        a.c.scale.set(1);
-        a.c.alpha = 1;
         a.vx += ax;
         a.vy += ay;
-        const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
-        if (speed > ASTRONAUT_MAX_SPEED) {
-          a.vx = (a.vx / speed) * ASTRONAUT_MAX_SPEED;
-          a.vy = (a.vy / speed) * ASTRONAUT_MAX_SPEED;
+        // Speed cap only outside the gravity well — inside, allow high velocity for dramatic spirals
+        if (!a.inGravityWell) {
+          const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+          if (speed > ASTRONAUT_MAX_SPEED) {
+            a.vx = (a.vx / speed) * ASTRONAUT_MAX_SPEED;
+            a.vy = (a.vy / speed) * ASTRONAUT_MAX_SPEED;
+          }
         }
         a.c.x += a.vx;
         a.c.y += a.vy;
 
-        // Jet spray: fire on a pure timer (5-10 min after spawn or last jet)
+        // Jet spray: fire on a timer. When trapped in gravity well, jets fire more often
+        // and with more power (desperate escape attempts).
         const now = Date.now();
         if (!a.nextJetTime) {
           a.nextJetTime = now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
         }
         if (now >= a.nextJetTime) {
-          // Random thrust direction — strong enough to be clearly visible
-          const jetAngle = Math.random() * Math.PI * 2;
-          const jetPower = 2.5 + Math.random() * 1.5;
+          // In gravity well: stronger jets, biased AWAY from singularity, shorter cooldown
+          const inWell = !!a.inGravityWell;
+          const escapeAngle = Math.atan2(a.c.y, a.c.x); // angle away from singularity
+          const jetAngle = inWell
+            ? escapeAngle + (Math.random() - 0.5) * 1.2 // mostly outward ±~34°
+            : Math.random() * Math.PI * 2;               // random direction
+          const jetPower = inWell
+            ? 4.0 + Math.random() * 2.5   // stronger desperate burst
+            : 2.5 + Math.random() * 1.5;
           a.vx += Math.cos(jetAngle) * jetPower;
           a.vy += Math.sin(jetAngle) * jetPower;
-          a.nextJetTime = now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
+          // Next jet sooner when trapped (15-30s) vs normal (45-120s)
+          a.nextJetTime = inWell
+            ? now + 15_000 + Math.random() * 15_000
+            : now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
 
           // Spawn visible spray/exhaust in the OPPOSITE direction of thrust
           const sprayAngle = jetAngle + Math.PI;
@@ -1378,7 +1443,14 @@ export const Universe: FC<UniverseProps> = ({
         const sy = ufoState.startY ?? ufo.y;
         ufo.x = sx + (ufoState.targetX - sx) * ease;
         ufo.y = sy + (ufoState.targetY - sy) * ease;
-        if (tv >= 1) {
+        // Check if flyaway path crosses singularity
+        const flyDist = Math.sqrt(ufo.x * ufo.x + ufo.y * ufo.y);
+        if (flyDist < 55) {
+          ufoState.phase = 'sucked';
+          ufoState.t = 0;
+          ufoState.startX = ufo.x;
+          ufoState.startY = ufo.y;
+        } else if (tv >= 1) {
           ufo.visible = false;
           ufoState.phase = 'idle';
           scheduleUfo();
@@ -1409,7 +1481,39 @@ export const Universe: FC<UniverseProps> = ({
             ufo.y = from.y + (to.y - from.y) * ease;
             // Tilt UFO slightly in movement direction
             ufo.rotation = Math.atan2(to.y - from.y, to.x - from.x) * 0.15;
+
+            // Check if UFO entered the singularity danger zone
+            const ufoDist = Math.sqrt(ufo.x * ufo.x + ufo.y * ufo.y);
+            if (ufoDist < 55) {
+              // Captured! Start spiral-in animation
+              ufoState.phase = 'sucked';
+              ufoState.t = 0;
+              ufoState.startX = ufo.x;
+              ufoState.startY = ufo.y;
+            }
           }
+        }
+      } else if (ufoState.phase === 'sucked') {
+        // Spiral into singularity — shrink, spin, pull toward center
+        ufoState.t += dt;
+        const suckT = Math.min(1, ufoState.t * 0.6); // ~1.7s to consume
+        const startDist = Math.sqrt((ufoState.startX ?? 50) ** 2 + (ufoState.startY ?? 50) ** 2);
+        const currentDist = startDist * (1 - suckT);
+        const baseAngle = Math.atan2(ufoState.startY ?? 0, ufoState.startX ?? 0);
+        const spiralAngle = baseAngle + suckT * Math.PI * 4; // 2 full rotations
+        ufo.x = Math.cos(spiralAngle) * currentDist;
+        ufo.y = Math.sin(spiralAngle) * currentDist;
+        ufo.scale.set(1 - suckT * 0.9); // shrink to 10%
+        ufo.rotation = suckT * Math.PI * 6; // spin rapidly
+        ufo.alpha = 1 - suckT * 0.7;
+        if (suckT >= 1) {
+          ufo.visible = false;
+          ufo.scale.set(1);
+          ufo.alpha = 1;
+          ufo.rotation = 0;
+          ufoState.phase = 'idle';
+          onUfoConsumedRef.current?.();
+          scheduleUfo();
         }
       }
     };

@@ -103,15 +103,11 @@ export default async function EventHorizon({ project, directory, worktree }) {
 `;
 }
 
-/** Returns true if the Event Horizon plugin file exists with the CURRENT token. */
+/** Returns true if the Event Horizon plugin file exists (any token version). */
 export async function isOpenCodeHooksInstalled(): Promise<boolean> {
   try {
     const content = await fsp.readFile(getPluginPath(), 'utf8');
-    if (!content.includes(MARKER)) return false;
-    // Verify the token matches the current session
-    const token = getAuthToken();
-    if (token) return content.includes(`token=${token}`);
-    return true; // no token = no auth required
+    return content.includes(MARKER);
   } catch {
     return false;
   }

@@ -228,13 +228,12 @@ function App() {
       // ── Singularity stats tracking ──
       const store = useCommandCenterStore.getState();
       if (!store.singularityStats.firstEventAt) store.incrementSingularityStat('firstEventAt');
-      if (type === 'tool.call') store.incrementSingularityStat('toolCallsTotal');
-      if (type === 'task.complete') store.incrementSingularityStat('tasksCompleted');
-      if (type === 'task.fail') store.incrementSingularityStat('tasksFailed');
+      store.incrementSingularityStat('eventsWitnessed');
+      if (type === 'agent.error') store.incrementSingularityStat('errorsWitnessed');
+      if (type === 'agent.spawn') store.incrementSingularityStat('agentsSeen');
 
       // agent.terminate: clean up all state for this agent — 2.4
       if (type === 'agent.terminate') {
-        store.incrementSingularityStat('agentsTerminated');
         store.incrementSingularityStat('planetsSwallowed');
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
@@ -248,7 +247,7 @@ function App() {
           const shipId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const payloadSize = (raw.payload?.payloadSize as number | undefined) ?? 1;
           setShips((prev) => [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }]);
-          store.incrementSingularityStat('shipsArrived');
+          store.incrementSingularityStat('shipsObserved');
           const timerId = setTimeout(() => {
             setShips((prev) => prev.filter((s) => s.id !== shipId));
             shipTimerIdsRef.current.delete(timerId);
@@ -439,7 +438,7 @@ function App() {
 
   const handleUfoAbduction = useCallback(() => {
     unlockAchievement('abduction');
-    incrementStat('ufoAbductions');
+    incrementStat('cowsAbducted');
   }, [unlockAchievement, incrementStat]);
 
   const handleUfoClicked = useCallback(() => {
@@ -449,6 +448,18 @@ function App() {
   const handleSingularityClick = useCallback(() => {
     selectSingularity();
   }, [selectSingularity]);
+
+  const handleUfoConsumed = useCallback(() => {
+    incrementStat('ufosConsumed');
+  }, [incrementStat]);
+
+  const handleAstronautTrapped = useCallback(() => {
+    unlockAchievement('event_horizon');
+  }, [unlockAchievement]);
+
+  const handleAstronautEscaped = useCallback(() => {
+    unlockAchievement('slingshot');
+  }, [unlockAchievement]);
 
   // ── Planet hover / click ──────────────────────────────────────────────────
 
@@ -663,6 +674,9 @@ function App() {
           onUfoAbduction={handleUfoAbduction}
           onUfoClicked={handleUfoClicked}
           onSingularityClick={handleSingularityClick}
+          onUfoConsumed={handleUfoConsumed}
+          onAstronautTrapped={handleAstronautTrapped}
+          onAstronautEscaped={handleAstronautEscaped}
         />
       </div>
       {!hasAgents && (

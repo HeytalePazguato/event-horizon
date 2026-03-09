@@ -146,28 +146,10 @@ const errStyle: React.CSSProperties = { ...valStyle, color: '#c65858' };
 
 const SingularityView: FC<{ stats: SingularityStats }> = ({ stats }) => {
   const uptime = stats.firstEventAt ? formatDuration(Date.now() - stats.firstEventAt) : '-';
+  const consumed = stats.planetsSwallowed + stats.astronautsConsumed + stats.ufosConsumed;
   return (
     <div style={gridStyle}>
-      <div style={cellStyle}>
-        <div style={labelStyle}>Agents</div>
-        <div style={valStyle}>{stats.agentsTerminated}</div>
-      </div>
-      <div style={cellStyle}>
-        <div style={labelStyle}>Tasks</div>
-        <div style={valStyle}>{stats.tasksCompleted}</div>
-      </div>
-      <div style={cellStyle}>
-        <div style={labelStyle}>Failed</div>
-        <div style={stats.tasksFailed > 0 ? errStyle : valStyle}>{stats.tasksFailed}</div>
-      </div>
-      <div style={cellStyle}>
-        <div style={labelStyle}>Tools</div>
-        <div style={valStyle}>{stats.toolCallsTotal}</div>
-      </div>
-      <div style={cellStyle}>
-        <div style={labelStyle}>Ships</div>
-        <div style={valStyle}>{stats.shipsArrived}</div>
-      </div>
+      {/* Row 1 — physical objects */}
       <div style={cellStyle}>
         <div style={labelStyle}>Planets</div>
         <div style={{ ...valStyle, color: '#d4844a' }}>{stats.planetsSwallowed}</div>
@@ -178,15 +160,36 @@ const SingularityView: FC<{ stats: SingularityStats }> = ({ stats }) => {
       </div>
       <div style={cellStyle}>
         <div style={labelStyle}>UFOs</div>
-        <div style={valStyle}>{stats.ufoAbductions}</div>
+        <div style={{ ...valStyle, color: '#d4844a' }}>{stats.ufosConsumed}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Cows</div>
+        <div style={valStyle}>{stats.cowsAbducted}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Ships</div>
+        <div style={valStyle}>{stats.shipsObserved}</div>
+      </div>
+      {/* Row 2 — cosmic observations */}
+      <div style={cellStyle}>
+        <div style={labelStyle}>Agents</div>
+        <div style={valStyle}>{stats.agentsSeen}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Events</div>
+        <div style={valStyle}>{stats.eventsWitnessed}</div>
+      </div>
+      <div style={cellStyle}>
+        <div style={labelStyle}>Errors</div>
+        <div style={stats.errorsWitnessed > 0 ? errStyle : valStyle}>{stats.errorsWitnessed}</div>
       </div>
       <div style={cellStyle}>
         <div style={labelStyle}>Uptime</div>
         <div style={valStyle}>{uptime}</div>
       </div>
       <div style={cellStyle}>
-        <div style={labelStyle}>Total</div>
-        <div style={{ ...valStyle, fontSize: 9 }}>{stats.agentsTerminated + stats.tasksCompleted + stats.astronautsConsumed + stats.planetsSwallowed}</div>
+        <div style={labelStyle}>Consumed</div>
+        <div style={{ ...valStyle, color: '#d4844a', fontSize: 9 }}>{consumed}</div>
       </div>
     </div>
   );
