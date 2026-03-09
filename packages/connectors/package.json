@@ -1,6 +1,6 @@
 {
   "name": "@event-horizon/connectors",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,8 @@
     "build": "tsc",
     "lint": "eslint src/",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "dependencies": {
     "@event-horizon/core": "workspace:*"

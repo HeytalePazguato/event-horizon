@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore } from '@event-horizon/ui';
+import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
 
@@ -97,6 +97,14 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
       return (
         <div style={{ padding: 16, color: '#e88', fontFamily: 'system-ui', fontSize: 13, background: '#1a0a0a' }}>
           <strong>Event Horizon error</strong>: {this.state.error}
+          <br />
+          <button
+            type="button"
+            onClick={() => this.setState({ error: null })}
+            style={{ marginTop: 10, padding: '4px 12px', background: '#2a1a1a', border: '1px solid #c66', color: '#e88', cursor: 'pointer', fontSize: 12 }}
+          >
+            Retry
+          </button>
         </div>
       );
     }
@@ -114,6 +122,14 @@ function App() {
       if (raw) return (JSON.parse(raw) as { connectedAgents: string[] }).connectedAgents ?? [];
     } catch { /* ignore */ }
     return [];
+  });
+  const [extensionVersion] = useState<string>(() => {
+    try {
+      const el = document.getElementById('root');
+      const raw = el?.dataset['ehInit'];
+      if (raw) return (JSON.parse(raw) as { version?: string }).version ?? '';
+    } catch { /* ignore */ }
+    return '';
   });
   const [agentMap, setAgentMap] = useState<Record<string, AgentState>>({});
   const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
@@ -136,11 +152,18 @@ function App() {
   const toggleConnect        = useCommandCenterStore((s) => s.toggleConnect);
   const spawnOpen            = useCommandCenterStore((s) => s.spawnOpen);
   const toggleSpawn          = useCommandCenterStore((s) => s.toggleSpawn);
+  const selectSingularity    = useCommandCenterStore((s) => s.selectSingularity);
+  const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
+  const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
 
 
   // Achievement tracking state
-  const shipLaunchCountRef = useRef(0);
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track last event time per agent for stale-agent timeout
+  const agentLastSeenRef = useRef<Record<string, number>>({});
+  const agentMapRef = useRef(agentMap);
+  agentMapRef.current = agentMap;
+  const shipTimerIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
   useEffect(() => {
@@ -155,10 +178,33 @@ function App() {
 
       // init-state: hydrate from extension host accumulated state on (re)open — 2.2
       if (msg?.type === 'init-state') {
+        clearAllBoostTimers(); // Clear stale boost timers from previous webview lifecycle
         const init = msg as unknown as { agents: AgentState[]; metrics: AgentMetrics[] };
         setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type })));
         setAgentMap(Object.fromEntries(init.agents.map((a) => [a.id, a])));
         setMetricsMap(Object.fromEntries(init.metrics.map((m) => [m.agentId, m])));
+        return;
+      }
+
+      // init-medals: hydrate persisted achievements from extension globalState
+      if (msg?.type === 'init-medals') {
+        const data = msg as unknown as { unlockedAchievements: string[]; achievementTiers: Record<string, number>; achievementCounts: Record<string, number> };
+        if (data.unlockedAchievements?.length > 0) {
+          useCommandCenterStore.setState({
+            unlockedAchievements: data.unlockedAchievements,
+            achievementTiers: data.achievementTiers ?? {},
+            achievementCounts: data.achievementCounts ?? {},
+          });
+        }
+        return;
+      }
+
+      // init-singularity: hydrate persisted singularity stats
+      if (msg?.type === 'init-singularity') {
+        const data = msg as unknown as { stats: import('@event-horizon/ui').SingularityStats };
+        if (data.stats) {
+          useCommandCenterStore.getState().setSingularityStats(data.stats);
+        }
         return;
       }
 
@@ -178,11 +224,20 @@ function App() {
 
       addLog({ ts: new Date().toLocaleTimeString(), agentId, agentName, type });
 
+      // ── Singularity stats tracking ──
+      const store = useCommandCenterStore.getState();
+      if (!store.singularityStats.firstEventAt) store.incrementSingularityStat('firstEventAt');
+      store.incrementSingularityStat('eventsWitnessed');
+      if (type === 'agent.error') store.incrementSingularityStat('errorsWitnessed');
+      // agentsSeen is now tracked at upsert time (below) to catch all agent types
+
       // agent.terminate: clean up all state for this agent — 2.4
       if (type === 'agent.terminate') {
+        store.incrementSingularityStat('planetsSwallowed');
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
         setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
+        delete agentLastSeenRef.current[agentId];
         return;
       }
 
@@ -192,23 +247,50 @@ function App() {
           const shipId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const payloadSize = (raw.payload?.payloadSize as number | undefined) ?? 1;
           setShips((prev) => [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }]);
-          setTimeout(() => setShips((prev) => prev.filter((s) => s.id !== shipId)), 20000);
+          store.incrementSingularityStat('shipsObserved');
+          const timerId = setTimeout(() => {
+            setShips((prev) => prev.filter((s) => s.id !== shipId));
+            shipTimerIdsRef.current.delete(timerId);
+          }, 20000);
+          shipTimerIdsRef.current.add(timerId);
         }
         return;
       }
 
-      // Upsert agent
-      setAgents((prev) => prev.some((a) => a.id === agentId) ? prev : [...prev, { id: agentId, name: agentName, agentType }]);
-      setAgentMap((prev) => ({
-        ...prev,
-        [agentId]: {
-          id: agentId,
-          name: agentName,
-          type: agentType,
-          state: type === 'agent.error' ? 'error' : type === 'task.start' ? 'thinking' : 'idle',
-          currentTaskId: (raw.payload?.taskId as string | null) ?? null,
-        },
-      }));
+      // Upsert agent — fire agent_connected when a genuinely new agent appears
+      setAgents((prev) => {
+        if (prev.some((a) => a.id === agentId)) return prev;
+        store.incrementTieredAchievement('agent_connected');
+        store.incrementSingularityStat('agentsSeen');
+        return [...prev, { id: agentId, name: agentName, agentType }];
+      });
+      setAgentMap((prev) => {
+        const prevAgent = prev[agentId];
+        let state: string;
+        if (type === 'agent.error') state = 'error';
+        else if (type === 'task.start') state = 'thinking';
+        else if (type === 'tool.call') state = 'tool_use';
+        else if (type === 'task.progress') state = 'working';
+        else if (type === 'tool.result') state = 'thinking';
+        else if (type === 'task.complete' || type === 'task.fail') state = 'idle';
+        else if (type === 'agent.spawn') state = 'idle';
+        else state = prevAgent?.state ?? 'idle';  // preserve current state for unknown events
+
+        // Capture cwd from payload for workspace-aware cooperation detection
+        const cwd = (raw.payload?.cwd as string | undefined) ?? prevAgent?.cwd;
+
+        return {
+          ...prev,
+          [agentId]: {
+            id: agentId,
+            name: agentName,
+            type: agentType,
+            state,
+            currentTaskId: (raw.payload?.taskId as string | null) ?? prevAgent?.currentTaskId ?? null,
+            cwd,
+          },
+        };
+      });
 
       // Update metrics — all hook-derivable counters tracked here
       const isHighLoad = type === 'task.progress' || type === 'tool.call' || type === 'tool.result';
@@ -216,6 +298,8 @@ function App() {
       const isSubagent = !!(raw.payload?.isSubagent);
       const isToolFailure = !!(raw.payload?.isToolFailure);
       const toolName = (raw.payload?.toolName as string) ?? undefined;
+      // Track last event time for stale-agent detection
+      agentLastSeenRef.current[agentId] = Date.now();
       setMetricsMap((prev) => {
         const m = prev[agentId];
         const isTaskStart = type === 'task.start' && !isSubagent;
@@ -265,6 +349,51 @@ function App() {
     }
   }, [selectedAgentId, agentMap, metricsMap, setSelectedAgentData]);
 
+  // ── Persist medal state to extension host globalState ──
+  const unlockedAchievements = useCommandCenterStore((s) => s.unlockedAchievements);
+  const achievementTiers = useCommandCenterStore((s) => s.achievementTiers);
+  const achievementCounts = useCommandCenterStore((s) => s.achievementCounts);
+  useEffect(() => {
+    if (unlockedAchievements.length === 0) return;
+    vscodeApi?.postMessage({
+      type: 'persist-medals',
+      unlockedAchievements,
+      achievementTiers,
+      achievementCounts,
+    });
+  }, [unlockedAchievements, achievementTiers, achievementCounts]);
+
+  // ── Persist singularity stats to extension host globalState ──
+  useEffect(() => {
+    if (!singularityStats.firstEventAt) return;
+    vscodeApi?.postMessage({ type: 'persist-singularity', stats: singularityStats });
+  }, [singularityStats]);
+
+  // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
+  // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).
+  // Claude Code (sends SessionEnd) and OpenCode (sends session.deleted) are excluded.
+  const AGENTS_WITH_EXIT_SIGNAL = new Set(['claude-code', 'opencode']);
+  useEffect(() => {
+    const STALE_TIMEOUT_MS = 300_000; // 5 minutes — generous for agents without exit signals
+    const CHECK_INTERVAL_MS = 30_000;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      for (const [agentId, lastSeen] of Object.entries(agentLastSeenRef.current)) {
+        const agent = agentMapRef.current[agentId];
+        if (!agent) continue;
+        // Skip agents that send explicit terminate events
+        if (AGENTS_WITH_EXIT_SIGNAL.has(agent.type)) continue;
+        if (now - lastSeen > STALE_TIMEOUT_MS) {
+          setAgents((prev) => prev.filter((a) => a.id !== agentId));
+          setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
+          setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
+          delete agentLastSeenRef.current[agentId];
+        }
+      }
+    }, CHECK_INTERVAL_MS);
+    return () => clearInterval(iv);
+  }, []);
+
   // ── Achievement detection ─────────────────────────────────────────────────
 
   // first_contact / ground_control / the_horde — triggered by agent count
@@ -274,23 +403,26 @@ function App() {
     if (agents.length >= 10) unlockAchievement('the_horde');
   }, [agents.length, unlockAchievement]);
 
-  // supernova — any agent enters error state
+  // supernova — any agent enters error state (now tiered)
+  const prevErrorCountRef = useRef(0);
   useEffect(() => {
-    const hasError = Object.values(agentMap).some((a) => a.state === 'error');
-    if (hasError) unlockAchievement('supernova');
-  }, [agentMap, unlockAchievement]);
+    const errorCount = Object.values(agentMap).filter((a) => a.state === 'error').length;
+    if (errorCount > prevErrorCountRef.current) {
+      for (let i = 0; i < errorCount - prevErrorCountRef.current; i++) incrementTiered('supernova');
+    }
+    prevErrorCountRef.current = errorCount;
+  }, [agentMap, incrementTiered]);
 
-  // traffic_control — count total ships launched (increment by 1 per new ship added)
+  // traffic_control — count total ships launched (now tiered)
   const prevShipCountRef = useRef(0);
   useEffect(() => {
     const current = ships.length;
     const prev = prevShipCountRef.current;
     if (current > prev) {
-      shipLaunchCountRef.current += (current - prev);
-      if (shipLaunchCountRef.current >= 10) unlockAchievement('traffic_control');
+      for (let i = 0; i < current - prev; i++) incrementTiered('traffic_control');
     }
     prevShipCountRef.current = current;
-  }, [ships.length, unlockAchievement]);
+  }, [ships.length, incrementTiered]);
 
   // abyss — selected an agent and kept it selected for 60 seconds
   useEffect(() => {
@@ -305,26 +437,75 @@ function App() {
 
   const handleAstronautConsumed = useCallback(() => {
     incrementTiered('gravity_well');
-  }, [incrementTiered]);
+    incrementStat('astronautsConsumed');
+  }, [incrementTiered, incrementStat]);
 
   const handleAstronautSpawned = useCallback(() => {
     unlockAchievement('lone_astronaut');
   }, [unlockAchievement]);
 
   const handleUfoAbduction = useCallback(() => {
-    unlockAchievement('abduction');
-  }, [unlockAchievement]);
+    incrementTiered('abduction');
+    incrementStat('cowsAbducted');
+  }, [incrementTiered, incrementStat]);
 
   const handleUfoClicked = useCallback(() => {
     incrementTiered('ufo_hunter');
   }, [incrementTiered]);
 
+  const handleSingularityClick = useCallback(() => {
+    selectSingularity();
+  }, [selectSingularity]);
+
+  const handleUfoConsumed = useCallback(() => {
+    incrementStat('ufosConsumed');
+  }, [incrementStat]);
+
+  const handleAstronautTrapped = useCallback(() => {
+    incrementTiered('event_horizon');
+  }, [incrementTiered]);
+
+  const handleAstronautEscaped = useCallback(() => {
+    incrementTiered('slingshot');
+  }, [incrementTiered]);
+
+  const handleAstronautBounced = useCallback((astronautId: number, bounceCount: number, edgesHit: Set<string>) => {
+    if (bounceCount >= 4) unlockAchievement('bouncy_boy');
+    if (edgesHit.size >= 4) unlockAchievement('traveler');
+  }, [unlockAchievement]);
+
+  const handleRocketMan = useCallback(() => {
+    incrementTiered('rocket_man');
+  }, [incrementTiered]);
+
+  const handleTrickShot = useCallback(() => {
+    incrementTiered('trick_shot');
+  }, [incrementTiered]);
+
+  const handleKamikaze = useCallback(() => {
+    incrementTiered('kamikaze');
+  }, [incrementTiered]);
+
+  const handleCowDrop = useCallback(() => {
+    incrementTiered('cow_drop');
+  }, [incrementTiered]);
+
   // ── Planet hover / click ──────────────────────────────────────────────────
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => setMousePos({ x: e.clientX, y: e.clientY });
+    let rafId = 0;
+    const onMove = (e: MouseEvent) => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        setMousePos({ x: e.clientX, y: e.clientY });
+        rafId = 0;
+      });
+    };
     window.addEventListener('mousemove', onMove);
-    return () => window.removeEventListener('mousemove', onMove);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   const handlePlanetHover = useCallback((agentId: string | null) => {
@@ -447,7 +628,11 @@ function App() {
           ...prev,
           { id: shipId, fromAgentId: ids[fromIdx], toAgentId: ids[toIdx], payloadSize: Math.floor(Math.random() * 10) + 1, fromAgentType: demoAgentTypeMap[ids[fromIdx]] },
         ]);
-        setTimeout(() => setShips((prev) => prev.filter((s) => s.id !== shipId)), 20000);
+        const timerId = setTimeout(() => {
+          setShips((prev) => prev.filter((s) => s.id !== shipId));
+          shipTimerIdsRef.current.delete(timerId);
+        }, 20000);
+        shipTimerIdsRef.current.add(timerId);
       }
     }, 1400);
     setDemoSimRunning(true);
@@ -461,19 +646,31 @@ function App() {
     setDemoSimRunning(false);
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
     setShips((prev) => prev.filter((s) => !s.id.startsWith('demo-ship-')));
+    // Clean up demo agent entries from lastSeen tracking
+    for (const id of Object.keys(agentLastSeenRef.current)) {
+      if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
+    }
   }, []);
 
   // Sync demo simulation with store flag (placed after callbacks are defined)
   useEffect(() => {
     if (demoRequested && !demoSimRunning) {
+      unlockAchievement('demo_activated');
+      useCommandCenterStore.getState().setDemoMode(true);
       runDemoSimulation();
     } else if (!demoRequested && demoSimRunning) {
       stopDemoSimulation();
+      useCommandCenterStore.getState().setDemoMode(false);
     }
-  }, [demoRequested, demoSimRunning, runDemoSimulation, stopDemoSimulation]);
+  }, [demoRequested, demoSimRunning, runDemoSimulation, stopDemoSimulation, unlockAchievement]);
 
   useEffect(() => () => {
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+  }, []);
+
+  // Clean up ship timers on unmount
+  useEffect(() => () => {
+    for (const id of shipTimerIdsRef.current) clearTimeout(id);
   }, []);
 
   return (
@@ -512,6 +709,15 @@ function App() {
           onAstronautSpawned={handleAstronautSpawned}
           onUfoAbduction={handleUfoAbduction}
           onUfoClicked={handleUfoClicked}
+          onSingularityClick={handleSingularityClick}
+          onUfoConsumed={handleUfoConsumed}
+          onAstronautTrapped={handleAstronautTrapped}
+          onAstronautEscaped={handleAstronautEscaped}
+          onAstronautBounced={handleAstronautBounced}
+          onRocketMan={handleRocketMan}
+          onTrickShot={handleTrickShot}
+          onKamikaze={handleKamikaze}
+          onCowDrop={handleCowDrop}
         />
       </div>
       {!hasAgents && (
@@ -578,7 +784,12 @@ function App() {
                 <span style={{ color: '#7a9a82', marginLeft: 6 }}>{desc as string}</span>
               </div>
             ))}
-            <div style={{ marginTop: 14, textAlign: 'center', color: '#4a6a58', fontSize: 10 }}>
+            {extensionVersion && (
+              <div style={{ marginTop: 14, textAlign: 'center', color: '#3a5a48', fontSize: 9, letterSpacing: '0.05em' }}>
+                v{extensionVersion}
+              </div>
+            )}
+            <div style={{ marginTop: extensionVersion ? 6 : 14, textAlign: 'center', color: '#4a6a58', fontSize: 10 }}>
               Click anywhere to close
             </div>
           </div>
@@ -610,9 +821,9 @@ function App() {
             </div>
             {[
               { id: 'claude-code', label: 'Claude Code',    planet: '🟤', status: 'available' as const, desc: 'Installs curl hooks into ~/.claude/settings.json. One click, no token needed.' },
+              { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'available' as const, desc: 'Installs a plugin into ~/.config/opencode/plugins/. Restart OpenCode after connecting.' },
               { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'soon'      as const, desc: 'VS Code Copilot integration coming soon.' },
               { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'soon'      as const, desc: 'Cursor connector coming soon.' },
-              { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'soon'      as const, desc: 'OpenCode hook support coming soon.' },
               { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },
             ].map((c) => {
               const isConnected = connectedAgentTypes.includes(c.id);

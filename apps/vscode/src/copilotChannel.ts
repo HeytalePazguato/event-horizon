@@ -1,7 +1,11 @@
 /**
- * GitHub Copilot output channel monitoring.
- * VS Code OutputChannel API does not expose content for reading; this is a stub
- * that can be extended when Copilot exposes events or when using a different integration.
+ * GitHub Copilot output channel monitoring — STUB.
+ *
+ * VS Code's OutputChannel API does not expose content for reading, so there is
+ * currently no way to tap into Copilot events. This stub is kept as a placeholder
+ * for future integration if/when Copilot exposes an event API or extension-to-extension
+ * messaging. The corresponding connector (`@event-horizon/connectors/copilot`) has
+ * regex-based output parsing ready to go once we can read the output channel.
  */
 
 import * as vscode from 'vscode';

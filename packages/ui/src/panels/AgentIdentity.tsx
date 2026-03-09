@@ -9,6 +9,8 @@ import { useCommandCenterStore } from '../store.js';
 const stateColors: Record<string, string> = {
   idle: '#4a8a5a',
   thinking: '#d4a84a',
+  working: '#b8a040',
+  tool_use: '#6aa0d4',
   error: '#c65858',
 };
 
@@ -134,12 +136,44 @@ function PlanetIcon({ type, size = 52 }: { type: string; size?: number }) {
   );
 }
 
+function SingularityIcon({ size = 52 }: { size?: number }) {
+  const r = size / 2;
+  const cx = r;
+  const cy = r;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ overflow: 'visible' }}>
+      {/* Outer glow */}
+      <circle cx={cx} cy={cy} r={r * 0.95} fill="#220808" fillOpacity="0.6" />
+      {/* Accretion disk - simplified */}
+      <ellipse cx={cx} cy={cy} rx={r * 0.85} ry={r * 0.85} fill="none" stroke="#ff9944" strokeWidth="3" strokeOpacity="0.5" />
+      <ellipse cx={cx} cy={cy} rx={r * 0.7} ry={r * 0.7} fill="none" stroke="#ffcc66" strokeWidth="2" strokeOpacity="0.7" />
+      {/* Inner bright ring */}
+      <circle cx={cx} cy={cy} r={r * 0.5} fill="#ffcc66" fillOpacity="0.9" />
+      {/* Event horizon (black core) */}
+      <circle cx={cx} cy={cy} r={r * 0.38} fill="#000000" />
+    </svg>
+  );
+}
+
 export const AgentIdentity: FC = () => {
   const selectedAgent = useCommandCenterStore((s) => s.selectedAgent);
+  const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
 
   return (
     <div data-agent-identity style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-      {!selectedAgent ? (
+      {singularitySelected ? (
+        <>
+          <div style={{ width: 54, height: 54, border: '2px solid #4a2020', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(20,8,8,0.6)', boxShadow: 'inset 0 0 12px rgba(140,60,20,0.3), 0 0 8px rgba(120,40,10,0.2)' }} aria-hidden>
+            <SingularityIcon size={48} />
+          </div>
+          <span style={{ fontSize: 9, color: '#d4844a', fontWeight: 600, textAlign: 'center' }}>
+            Singularity
+          </span>
+          <span style={{ fontSize: 7, color: '#8a5a3a', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            cosmic ledger
+          </span>
+        </>
+      ) : !selectedAgent ? (
         <>
           <div style={{ width: 44, height: 44, border: '2px solid #2a4a3a', background: 'rgba(10,20,15,0.8)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }} aria-hidden>
             <span style={{ fontSize: 22, opacity: 0.5 }}>🪐</span>
@@ -151,7 +185,7 @@ export const AgentIdentity: FC = () => {
           <div style={{ width: 54, height: 54, border: '2px solid #3a6a4a', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,20,15,0.6)', boxShadow: 'inset 0 0 12px rgba(80,140,100,0.2), 0 0 8px rgba(60,120,80,0.15)', overflow: 'visible' }} aria-hidden>
             <PlanetIcon type={selectedAgent.type} size={48} />
           </div>
-          <span style={{ fontSize: 9, color: '#8fc08a', fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span style={{ fontSize: 9, color: '#8fc08a', fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {selectedAgent.name}
           </span>
           <span style={{ fontSize: 8, color: stateColors[selectedAgent.state] ?? '#7a8a82' }}>

@@ -1,0 +1,72 @@
+import { describe, it, expect } from 'vitest';
+import { mapOpenCodeToEvent } from '../openCode.js';
+
+describe('mapOpenCodeToEvent', () => {
+  it('maps session.created to agent.spawn', () => {
+    const result = mapOpenCodeToEvent({ event: 'session.created', agentId: 'oc-1' });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.spawn');
+    expect(result!.agentId).toBe('oc-1');
+    expect(result!.agentType).toBe('opencode');
+  });
+
+  it('maps session.deleted to agent.terminate', () => {
+    const result = mapOpenCodeToEvent({ event: 'session.deleted', agentId: 'oc-1' });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.terminate');
+  });
+
+  it('maps tool.execute.before to tool.call', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'tool.execute.before',
+      agentId: 'oc-1',
+      payload: { toolName: 'Bash' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('tool.call');
+    expect(result!.payload.toolName).toBe('Bash');
+  });
+
+  it('deduplicates message.updated user messages', () => {
+    const msg = {
+      event: 'message.updated',
+      agentId: 'oc-1',
+      payload: { properties: { info: { role: 'user', id: 'msg-1' } } },
+    };
+
+    // First call should produce task.start
+    const first = mapOpenCodeToEvent(msg);
+    expect(first).not.toBeNull();
+    expect(first!.type).toBe('task.start');
+
+    // Second call with same message id should be deduplicated (null)
+    const second = mapOpenCodeToEvent(msg);
+    expect(second).toBeNull();
+
+    // Clean up dedup set by terminating
+    mapOpenCodeToEvent({ event: 'session.deleted', agentId: 'oc-1' });
+  });
+
+  it('returns null for unknown events', () => {
+    expect(mapOpenCodeToEvent({ event: 'some.unknown.event' })).toBeNull();
+  });
+
+  it('handles missing/invalid input gracefully', () => {
+    expect(mapOpenCodeToEvent(null)).toBeNull();
+    expect(mapOpenCodeToEvent(undefined)).toBeNull();
+    expect(mapOpenCodeToEvent(42)).toBeNull();
+    expect(mapOpenCodeToEvent({})).toBeNull();
+    expect(mapOpenCodeToEvent({ event: 123 })).toBeNull();
+  });
+
+  it('clamps agentId and agentName lengths', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'session.created',
+      agentId: 'a'.repeat(300),
+      agentName: 'n'.repeat(200),
+    });
+    expect(result).not.toBeNull();
+    expect(result!.agentId.length).toBeLessThanOrEqual(128);
+    expect(result!.agentName.length).toBeLessThanOrEqual(64);
+  });
+});

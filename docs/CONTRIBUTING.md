@@ -27,34 +27,9 @@ pnpm build
 
 After making changes, rebuild with `pnpm build` and reload the Extension Development Host (**Ctrl+Shift+P** > **Developer: Reload Window**).
 
-## Architecture Overview
+## Architecture
 
-The project is a pnpm + Turborepo monorepo. Build order matters:
-
-```
-core --> connectors, renderer, ui --> vscode
-```
-
-| Package | What it does |
-|---------|-------------|
-| `packages/core` | Pure TS — EventBus, AgentStateManager, MetricsEngine, shared types. No runtime deps. |
-| `packages/connectors` | Adapters mapping raw agent payloads (Claude Code, OpenCode, Copilot) into `AgentEvent` |
-| `packages/renderer` | PixiJS 8 universe — planets, moons, ships, singularity, stars. Exported as a React component. |
-| `packages/ui` | React + Zustand — CommandCenter panels, Tooltip, Achievements, store |
-| `apps/vscode` | VS Code extension host + webview. HTTP server on port 28765 receives events. |
-| `tools/mock-server` | Standalone mock event emitter for development |
-
-### Data Flow
-
-1. Agent hooks send HTTP POST to `127.0.0.1:28765` (extension host)
-2. Connector maps raw payload to `AgentEvent`
-3. `EventBus.emit()` > `MetricsEngine.process()` + `AgentStateManager.apply()`
-4. Event forwarded to webview via `postMessage`
-5. Webview React state updates > `<Universe>` re-renders via PixiJS ticker
-
-### Webview Constraints
-
-The webview runs in a sandboxed browser context — no Node.js APIs. It's bundled separately from the extension host using esbuild (IIFE format).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design, data flow, and package structure.
 
 ## Common Tasks
 
@@ -66,10 +41,11 @@ The webview runs in a sandboxed browser context — no Node.js APIs. It's bundle
 
 ### Adding an Achievement
 
-1. Add the definition to `ACHIEVEMENTS` in `packages/ui/src/Achievements.tsx`
-2. Add a `Medal` SVG case for the new ID
-3. Add detection logic in `apps/vscode/webview/index.tsx` (achievement detection section)
-4. For tiered achievements, also add thresholds to `TIERED_THRESHOLDS` in `packages/ui/src/store.ts`
+See [`packages/ui/src/achievements/README.md`](../packages/ui/src/achievements/README.md) for the full guide. In short:
+
+1. Create `packages/ui/src/achievements/defs/<name>.tsx` — exports `{ id, name, desc, tiers?, secret?, Medal }`
+2. Import and add it to `ALL_DEFS` in `registry.tsx`
+3. Add trigger logic in `apps/vscode/webview/index.tsx` using `unlockAchievement()` (one-shot) or `incrementTiered()` (tiered)
 
 ### Sending Test Events
 
@@ -81,6 +57,7 @@ curl -X POST http://127.0.0.1:28765/events \
 
 ## Pull Request Guidelines
 
+- **Target the `develop` branch** — never PR directly to `master`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full branching and release strategy.
 - Keep PRs focused — one feature or fix per PR
 - Make sure `pnpm build` passes before submitting
 - Write a clear description of what changed and why
@@ -92,7 +69,7 @@ curl -X POST http://127.0.0.1:28765/events \
 - React functional components with hooks
 - PixiJS entities are plain functions returning `Container` (not React components)
 - Zustand for UI state management
-- No test framework is currently configured — manual testing via Demo mode and the Extension Development Host
+- Vitest for unit tests — run `pnpm test` from the repo root
 
 ## Questions?
 

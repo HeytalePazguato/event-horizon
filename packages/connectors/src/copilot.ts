@@ -14,13 +14,14 @@ export function mapCopilotOutputToEvent(output: string): AgentEvent | null {
   const line = output.trim();
   if (!line) return null;
 
+  // More specific patterns to reduce false positives
   let type: AgentEvent['type'] | null = null;
-  if (/\b(running|started|executing)\b/i.test(line)) type = 'task.start';
-  else if (/\b(complete|done|finished|success)\b/i.test(line)) type = 'task.complete';
-  else if (/\b(error|failed|exception)\b/i.test(line)) type = 'agent.error';
-  else if (/\b(write|editing|saving)\s+\S+\.\w+/i.test(line)) type = 'file.write';
-  else if (/\b(read|reading|opening)\s+\S+/i.test(line)) type = 'file.read';
-  else if (/\b(tool|command|invok)\w*/i.test(line)) type = 'tool.call';
+  if (/^(running|started|executing)\b/i.test(line) || /\b(running|executing)\s+(tool|command|task)\b/i.test(line)) type = 'task.start';
+  else if (/^(completed?|done|finished|succeeded)\b/i.test(line) || /\btask\s+(completed?|done|finished)\b/i.test(line)) type = 'task.complete';
+  else if (/^(error|failed|exception)\b/i.test(line) || /\b(failed to|error:)\s/i.test(line)) type = 'agent.error';
+  else if (/\b(writ|edit|sav)(ing|e|ten)\s+[\w./\\]+\.\w{1,10}\b/i.test(line)) type = 'file.write';
+  else if (/\b(read|open)(ing|ed)?\s+[\w./\\]+\.\w{1,10}\b/i.test(line)) type = 'file.read';
+  else if (/\b(invoking|calling)\s+(tool|function|command)\b/i.test(line)) type = 'tool.call';
 
   if (!type) return null;
 
@@ -33,8 +34,4 @@ export function mapCopilotOutputToEvent(output: string): AgentEvent | null {
     timestamp: Date.now(),
     payload: { raw: line.slice(0, 200) },
   };
-}
-
-export function createCopilotAdapter(): (output: string) => AgentEvent | null {
-  return mapCopilotOutputToEvent;
 }

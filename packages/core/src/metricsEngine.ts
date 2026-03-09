@@ -68,7 +68,7 @@ export class MetricsEngine {
     }
 
     // Decay load based on time since last update
-    const elapsed = now - m.lastUpdated;
+    const elapsed = Math.max(0, now - m.lastUpdated);
     let load = this.loadByAgent.get(agentId) ?? 0;
     load = Math.max(0, load - elapsed * LOAD_DECAY_PER_MS);
 
@@ -94,6 +94,13 @@ export class MetricsEngine {
         m.toolCalls += 1;
         const toolName = (event.payload?.toolName as string) ?? 'unknown';
         m.toolBreakdown[toolName] = (m.toolBreakdown[toolName] ?? 0) + 1;
+        // Cap tool breakdown to prevent unbounded growth
+        const keys = Object.keys(m.toolBreakdown);
+        if (keys.length > 100) {
+          // Remove least-used entries
+          const sorted = keys.sort((a, b) => m.toolBreakdown[a] - m.toolBreakdown[b]);
+          for (let ki = 0; ki < sorted.length - 100; ki++) delete m.toolBreakdown[sorted[ki]];
+        }
         break;
       }
       case 'task.start':
@@ -108,16 +115,29 @@ export class MetricsEngine {
       case 'task.complete':
       case 'task.fail':
         if (isSubagent) {
-          m.activeSubagents = Math.max(0, m.activeSubagents - 1);
+          if (m.activeSubagents > 0) m.activeSubagents -= 1;
+          else m.activeTasks = Math.max(0, m.activeTasks - 1); // flag mismatch fallback
         } else {
-          m.activeTasks = Math.max(0, m.activeTasks - 1);
+          if (m.activeTasks > 0) m.activeTasks -= 1;
+          else m.activeSubagents = Math.max(0, m.activeSubagents - 1); // flag mismatch fallback
         }
         break;
+      case 'agent.terminate':
+        // Clean up — remove all metrics for terminated agent
+        this.metrics.delete(agentId);
+        this.loadByAgent.delete(agentId);
+        return;
       default:
         break;
     }
 
     this.metrics.set(agentId, { ...m });
+  }
+
+  /** Remove all metrics for a terminated agent. */
+  remove(agentId: string): void {
+    this.metrics.delete(agentId);
+    this.loadByAgent.delete(agentId);
   }
 
   getMetrics(agentId: string): AgentMetrics | null {

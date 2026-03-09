@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Visualize AI coding agents as a living cosmic system — planets, black holes, ships and more.",
@@ -21,7 +21,9 @@
     "type": "git",
     "url": "https://github.com/HeytalePazguato/event-horizon.git"
   },
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:eventHorizon.open"
+  ],
   "contributes": {
     "commands": [
       {
@@ -56,8 +58,9 @@
     "build": "tsc && pnpm run build:webview",
     "lint": "eslint src/ webview/",
     "build:webview": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic",
-    "build:webview:prod": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic --minify",
+    "build:webview:prod": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic --minify --sourcemap=linked",
     "package:vsix": "tsc && pnpm run build:webview:prod && vsce package --no-dependencies",
+    "test": "vitest run",
     "dev": "tsc --watch",
     "clean": "rm -rf out webview-dist"
   },
@@ -73,7 +76,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.1",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.25.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.2"

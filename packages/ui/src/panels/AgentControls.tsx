@@ -6,6 +6,7 @@
 import type { FC } from 'react';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useShallow } from 'zustand/react/shallow';
 import { useCommandCenterStore } from '../store.js';
 
 // ── Icon SVGs ─────────────────────────────────────────────────────────────────
@@ -167,7 +168,7 @@ const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
     <div
       style={{
         position: 'fixed',
-        bottom: 178,
+        bottom: 200,
         right: 12,
         width: 172,
         background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
@@ -193,20 +194,37 @@ const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const AgentControls: FC = () => {
-  const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
-  const requestCenter   = useCommandCenterStore((s) => s.requestCenter);
-  const toggleConnect   = useCommandCenterStore((s) => s.toggleConnect);
-  const connectOpen     = useCommandCenterStore((s) => s.connectOpen);
-  const togglePause     = useCommandCenterStore((s) => s.togglePause);
-  const pausedAgentIds  = useCommandCenterStore((s) => s.pausedAgentIds);
-  const toggleIsolate   = useCommandCenterStore((s) => s.toggleIsolate);
-  const isolatedAgentId = useCommandCenterStore((s) => s.isolatedAgentId);
-  const requestDemo     = useCommandCenterStore((s) => s.requestDemo);
-  const demoRequested   = useCommandCenterStore((s) => s.demoRequested);
-  const toggleInfo      = useCommandCenterStore((s) => s.toggleInfo);
-  const infoOpen        = useCommandCenterStore((s) => s.infoOpen);
-  const toggleSpawn     = useCommandCenterStore((s) => s.toggleSpawn);
-  const spawnOpen       = useCommandCenterStore((s) => s.spawnOpen);
+  const {
+    selectedAgentId,
+    requestCenter,
+    toggleConnect,
+    connectOpen,
+    togglePause,
+    pausedAgentIds,
+    toggleIsolate,
+    isolatedAgentId,
+    requestDemo,
+    demoRequested,
+    toggleInfo,
+    infoOpen,
+    toggleSpawn,
+    spawnOpen,
+  } = useCommandCenterStore(useShallow((s) => ({
+    selectedAgentId: s.selectedAgentId,
+    requestCenter: s.requestCenter,
+    toggleConnect: s.toggleConnect,
+    connectOpen: s.connectOpen,
+    togglePause: s.togglePause,
+    pausedAgentIds: s.pausedAgentIds,
+    toggleIsolate: s.toggleIsolate,
+    isolatedAgentId: s.isolatedAgentId,
+    requestDemo: s.requestDemo,
+    demoRequested: s.demoRequested,
+    toggleInfo: s.toggleInfo,
+    infoOpen: s.infoOpen,
+    toggleSpawn: s.toggleSpawn,
+    spawnOpen: s.spawnOpen,
+  })));
   const [hovered, setHovered] = useState<string | null>(null);
 
   const hoveredBtn = hovered ? BUTTONS.find((b) => b.id === hovered) : null;

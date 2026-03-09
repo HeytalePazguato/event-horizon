@@ -4,27 +4,62 @@
 
 import * as vscode from 'vscode';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
+import type { AgentEvent } from '@event-horizon/core';
 import { createWebviewProvider } from './webviewProvider';
 import { startEventServer, stopEventServer } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
-import { runSetupClaudeCodeHooks } from './setupHooks';
-import type { AgentEvent } from '@event-horizon/core';
+import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks } from './setupHooks';
+import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 
-export function activate(context: vscode.ExtensionContext): void {
-  // Instantiate core services inside activate — not at module level — to avoid
-  // side effects before VS Code has activated the extension.
-  const outputChannel = vscode.window.createOutputChannel('Event Horizon');
-  context.subscriptions.push(outputChannel);
+// ── Workspace-aware cooperation detection ────────────────────────────────────
 
+/** Normalize a path for cross-platform comparison. */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/').toLowerCase();
+}
+
+/**
+ * Returns true if two cwd paths share a workspace folder or one is a parent of the other.
+ * Uses VS Code's workspace folders as the authority for multi-root workspaces.
+ */
+function areAgentsCooperating(cwdA: string, cwdB: string): boolean {
+  const normA = normalizePath(cwdA);
+  const normB = normalizePath(cwdB);
+
+  // Exact match
+  if (normA === normB) return true;
+
+  // One is nested inside the other
+  if (normA.startsWith(normB + '/') || normB.startsWith(normA + '/')) return true;
+
+  // Both fall under the same VS Code workspace folder
+  const folders = vscode.workspace.workspaceFolders;
+  if (folders) {
+    for (const folder of folders) {
+      const normFolder = normalizePath(folder.uri.fsPath);
+      if (normA.startsWith(normFolder) && normB.startsWith(normFolder)) return true;
+    }
+  }
+
+  return false;
+}
+
+export function activate(context: vscode.ExtensionContext): void {
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
 
-  let eventCount = 0;
   function onAgentEvent(event: AgentEvent): void {
-    eventCount++;
+    // Inject workspace cwd if the agent/event doesn't provide one
+    if (!event.payload?.cwd) {
+      const primaryFolder = vscode.workspace.workspaceFolders?.[0];
+      if (primaryFolder) {
+        event = { ...event, payload: { ...event.payload, cwd: primaryFolder.uri.fsPath } };
+      }
+    }
+
     metricsEngine.process(event);
     agentStateManager.apply(event);
     if (webviewRef.current) {
@@ -34,9 +69,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
-  startEventServer({ onEvent: (event) => eventBus.emit(event) });
-  outputChannel.appendLine(`[Event Horizon] Server started on port 28765`);
-  setupCopilotOutputChannel((event) => eventBus.emit(event));
+  startEventServer({ onEvent: (event) => eventBus.emit(event) })
+    .then(async () => {
+      // Auto-refresh hooks with new session token if they exist from a previous session
+      const [staleClaude, staleOpenCode] = await Promise.all([
+        hasStaleClaudeCodeHooks(),
+        hasStaleOpenCodeHooks(),
+      ]);
+      if (staleClaude) await setupClaudeCodeHooks();
+      if (staleOpenCode) await setupOpenCodeHooks();
+    })
+    .catch(() => {
+      // Error already shown to user via showErrorMessage in eventServer
+    });
+  const copilotDisposable = setupCopilotOutputChannel((event) => eventBus.emit(event));
+  context.subscriptions.push(copilotDisposable);
 
   const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine);
   context.subscriptions.push(
@@ -74,9 +121,90 @@ export function activate(context: vscode.ExtensionContext): void {
       });
   }
 
+  // ── Cooperation ship spawner ──────────────────────────────────────────────
+  // Ship frequency adapts to agent activity:
+  //   Idle:   heartbeat — one ship every 15–25 seconds
+  //   Active: burst — 1–3 ships every 2–5 seconds
+  const ACTIVE_STATES = new Set(['thinking', 'error']);
+  let cooperationTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function emitCoopShip(fromId: string, toId: string) {
+    const fromAgent = agentStateManager.getAgent(fromId);
+    const coopEvent: AgentEvent = {
+      id: `coop-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      agentId: fromId,
+      agentName: fromAgent?.name ?? fromId,
+      agentType: (fromAgent?.type ?? 'unknown') as AgentEvent['agentType'],
+      type: 'data.transfer',
+      timestamp: Date.now(),
+      payload: { toAgentId: toId, payloadSize: 1, cooperation: true },
+    };
+    webviewRef.current!.postMessage({ type: 'event', payload: coopEvent });
+  }
+
+  function scheduleCoopShip() {
+    // Base tick — check state and decide delay
+    cooperationTimer = setTimeout(() => {
+      cooperationTimer = null;
+      if (!webviewRef.current) { scheduleCoopShip(); return; }
+
+      const agents = agentStateManager.getAllAgents();
+      const agentsWithCwd = agents.filter((a) => a.cwd);
+      if (agentsWithCwd.length < 2) {
+        // No pairs possible — slow poll
+        cooperationTimer = setTimeout(scheduleCoopShip, 5_000);
+        return;
+      }
+
+      // Find cooperating pairs
+      const pairs: Array<[string, string]> = [];
+      for (let i = 0; i < agentsWithCwd.length; i++) {
+        for (let j = i + 1; j < agentsWithCwd.length; j++) {
+          if (areAgentsCooperating(agentsWithCwd[i].cwd!, agentsWithCwd[j].cwd!)) {
+            pairs.push([agentsWithCwd[i].id, agentsWithCwd[j].id]);
+          }
+        }
+      }
+      if (pairs.length === 0) {
+        cooperationTimer = setTimeout(scheduleCoopShip, 5_000);
+        return;
+      }
+
+      // Determine if any agent in any pair is active
+      const anyActive = pairs.some(([a, b]) => {
+        const sa = agentStateManager.getAgent(a);
+        const sb = agentStateManager.getAgent(b);
+        return (sa && ACTIVE_STATES.has(sa.state)) || (sb && ACTIVE_STATES.has(sb.state));
+      });
+
+      // Pick a random pair and direction
+      const [pairA, pairB] = pairs[Math.floor(Math.random() * pairs.length)];
+      const [from, to] = Math.random() < 0.5 ? [pairA, pairB] : [pairB, pairA];
+
+      if (anyActive) {
+        // Active burst: 1–3 ships in a staggered convoy
+        const shipCount = 1 + Math.floor(Math.random() * 3); // 1, 2, or 3
+        emitCoopShip(from, to);
+        for (let i = 1; i < shipCount; i++) {
+          // Stagger convoy ships by 300–800ms
+          setTimeout(() => {
+            if (webviewRef.current) emitCoopShip(from, to);
+          }, i * (300 + Math.random() * 500));
+        }
+        // Next check in 2–5 seconds
+        cooperationTimer = setTimeout(scheduleCoopShip, 2_000 + Math.random() * 3_000);
+      } else {
+        // Idle heartbeat: single ship, next check in 15–25 seconds
+        emitCoopShip(from, to);
+        cooperationTimer = setTimeout(scheduleCoopShip, 15_000 + Math.random() * 10_000);
+      }
+    }, 1_000); // initial 1s tick to be responsive
+  }
+  scheduleCoopShip();
+
   context.subscriptions.push({
     dispose: () => {
-      outputChannel.appendLine(`[Event Horizon] Deactivating — processed ${eventCount} events`);
+      if (cooperationTimer) clearTimeout(cooperationTimer);
       unsubscribeEventBus();
       stopEventServer();
       webviewRef.current = null;
@@ -85,6 +213,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  // stopEventServer is called by the subscription dispose registered in activate()
+  stopEventServer();
   webviewRef.current = null;
 }

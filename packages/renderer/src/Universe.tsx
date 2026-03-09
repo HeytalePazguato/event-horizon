@@ -60,6 +60,24 @@ export interface UniverseProps {
   onUfoAbduction?: () => void;
   /** Called when the user clicks on the UFO. */
   onUfoClicked?: () => void;
+  /** Called when the user clicks on the black hole. */
+  onSingularityClick?: () => void;
+  /** Called when a UFO gets consumed by the singularity. */
+  onUfoConsumed?: () => void;
+  /** Called when an astronaut enters the gravity well (suck radius). */
+  onAstronautTrapped?: () => void;
+  /** Called when an astronaut escapes the gravity well via jet propulsion. */
+  onAstronautEscaped?: () => void;
+  /** Called when an astronaut bounces off an edge. */
+  onAstronautBounced?: (astronautId: number, bounceCount: number, edgesHit: Set<string>) => void;
+  /** Called when an astronaut fires its jetpack. */
+  onRocketMan?: () => void;
+  /** Called when an astronaut bounces off an edge then falls into the black hole. */
+  onTrickShot?: () => void;
+  /** Called when an astronaut jets straight into the black hole without bouncing. */
+  onKamikaze?: () => void;
+  /** Called when the UFO beam is interrupted and the cow falls back. */
+  onCowDrop?: () => void;
 }
 
 // --- constants -----------------------------------------------------------
@@ -78,6 +96,12 @@ const SHIP_AVOID_RADIUS = 95; // must clear singularity outer glow (DISK_OUTER 7
 const MAX_TRAIL_POINTS = 32;
 const UFO_INTERVAL_MIN_MS = 25000;
 const UFO_INTERVAL_MAX_MS = 55000;
+const UFO_FLYBY_CHANCE = 0.4; // 40% of UFOs just fly by without abducting
+const SHOOTING_STAR_INTERVAL_MIN = 30000;  // ms between shooting stars
+const SHOOTING_STAR_INTERVAL_MAX = 90000;
+const SHOOTING_STAR_MAX_BURST = 3; // up to 3 shooting stars per event
+const ASTRONAUT_JET_MIN_MS = 45_000;      // 45 seconds minimum before jet fires
+const ASTRONAUT_JET_MAX_MS = 120_000;     // 2 minutes max
 
 /** Minimum distance from singularity centre for a planet to be placed.
  *  Must clear DISK_OUTER(70) + outer-glow(20) + max-planet-size(20) + margin = ~130. */
@@ -106,6 +130,9 @@ const TRAIL_COLOR_DEFAULT = 0xffcc44;
  * gas-giant ring arc ≈ size * 1.35 * 1.75 ≈ 38px at avg size 16,
  * so two gas giants need ≥ 76px center-to-center + margin = 120px.
  */
+// Session-random seed — varies each time the renderer mounts but stays stable within a session.
+const SESSION_SEED = Math.random();
+
 function computePlanetPositions(
   agents: AgentView[],
 ): Map<string, { x: number; y: number }> {
@@ -126,18 +153,23 @@ function computePlanetPositions(
 
   const posArray: Array<{ id: string; x: number; y: number; origR: number }> = [];
 
+  // Session-random rotation offset — shifts all planets each session
+  const sessionAngleOffset = SESSION_SEED * Math.PI * 2;
+
   for (let b = 0; b < 3; b++) {
     const group = bands[b];
     if (group.length === 0) continue;
     const R = BAND_R[b];
 
-    // Deterministic but varied start angle per band
-    const startAngle = (hashId((group[0].id) + 'b' + b) % 628) / 100;
+    // Deterministic but varied start angle per band, plus session randomization
+    const startAngle = (hashId((group[0].id) + 'b' + b) % 628) / 100 + sessionAngleOffset;
 
     group.forEach((agent, idx) => {
       const angle = startAngle + (idx / group.length) * Math.PI * 2;
-      const radialJitter = ((hashId(agent.id + 'r') % 40) / 40 - 0.5) * 14;
-      const r = R + radialJitter;
+      // Radial jitter: deterministic base + session-random variation
+      const baseJitter = ((hashId(agent.id + 'r') % 40) / 40 - 0.5) * 14;
+      const sessionJitter = ((SESSION_SEED * hashId(agent.id) % 30) - 15);
+      const r = R + baseJitter + sessionJitter;
       posArray.push({ id: agent.id, x: Math.cos(angle) * r, y: Math.sin(angle) * r, origR: r });
     });
   }
@@ -285,6 +317,15 @@ export const Universe: FC<UniverseProps> = ({
   onAstronautSpawned,
   onUfoAbduction,
   onUfoClicked,
+  onSingularityClick,
+  onUfoConsumed,
+  onAstronautTrapped,
+  onAstronautEscaped,
+  onAstronautBounced,
+  onRocketMan,
+  onTrickShot,
+  onKamikaze,
+  onCowDrop,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -295,7 +336,12 @@ export const Universe: FC<UniverseProps> = ({
   const astronautsContainerRef = useRef<Container | null>(null);
   const singularityRef = useRef<Container | null>(null);
   const starsRef = useRef<Container | null>(null);
-  const astronautsRef = useRef<Array<{ id: number; c: Container; vx: number; vy: number; doomed?: boolean }>>([]);
+  const astronautsRef = useRef<Array<{
+    id: number; c: Container; vx: number; vy: number;
+    inGravityWell?: boolean; escapeCount?: number; nextJetTime?: number;
+    bounceCount: number; edgesHit: Set<string>;
+    jetFiredAt: number; hasBouncedSinceJet: boolean;
+  }>>([]);
   const activeShipsRef = useRef<ActiveShip[]>([]);
   const spawnedShipIdsRef = useRef<Set<string>>(new Set());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -310,7 +356,7 @@ export const Universe: FC<UniverseProps> = ({
   const moonCountsRef = useRef<Map<string, number>>(new Map());
   const ufoRef = useRef<Container | null>(null);
   const ufoStateRef = useRef<{
-    phase: 'idle' | 'fly' | 'beam' | 'flyaway';
+    phase: 'idle' | 'fly' | 'beam' | 'flyaway' | 'flyby' | 'sucked' | 'cow_falling';
     t: number;
     targetX: number;
     targetY: number;
@@ -319,8 +365,24 @@ export const Universe: FC<UniverseProps> = ({
     cow?: Container;
     beam?: Container;
     beamLen?: number;
+    /** Fly-by waypoints for curved path */
+    waypoints?: Array<{ x: number; y: number }>;
+    waypointIndex?: number;
+    segT?: number;
+    /** Cow-drop animation fields */
+    cowFallFromY?: number;
+    cowFallToY?: number;
   }>({ phase: 'idle', t: 0, targetX: 0, targetY: 0 });
   const ufoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shootingStarsRef = useRef<Array<{
+    g: Graphics; x: number; y: number; vx: number; vy: number;
+    life: number; maxLife: number;
+  }>>([]);
+  const shootingStarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jetSprayRef = useRef<Array<{
+    g: Graphics; x: number; y: number; vx: number; vy: number;
+    life: number; maxLife: number;
+  }>>([]);
   const scaleRef = useRef(1);
   const posRef = useRef({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -329,6 +391,7 @@ export const Universe: FC<UniverseProps> = ({
   const spiralRef = useRef<Array<{ c: Container; vx: number; vy: number }>>([]);
   const spiralContainerRef = useRef<Container | null>(null);
   const prevAgentsRef = useRef<AgentView[]>([]);
+  const planetMapRef = useRef<Map<string, ExtendedPlanet>>(new Map());
   const tickTimeRef = useRef(0);
   const [initError, setInitError] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -347,8 +410,32 @@ export const Universe: FC<UniverseProps> = ({
   onUfoAbductionRef.current = onUfoAbduction;
   const onUfoClickedRef = useRef(onUfoClicked);
   onUfoClickedRef.current = onUfoClicked;
+  const onSingularityClickRef = useRef(onSingularityClick);
+  onSingularityClickRef.current = onSingularityClick;
+  const onUfoConsumedRef = useRef(onUfoConsumed);
+  onUfoConsumedRef.current = onUfoConsumed;
+  const onAstronautTrappedRef = useRef(onAstronautTrapped);
+  onAstronautTrappedRef.current = onAstronautTrapped;
+  const onAstronautEscapedRef = useRef(onAstronautEscaped);
+  onAstronautEscapedRef.current = onAstronautEscaped;
+  const onAstronautBouncedRef = useRef(onAstronautBounced);
+  onAstronautBouncedRef.current = onAstronautBounced;
+  const onRocketManRef = useRef(onRocketMan);
+  onRocketManRef.current = onRocketMan;
+  const onTrickShotRef = useRef(onTrickShot);
+  onTrickShotRef.current = onTrickShot;
+  const onKamikazeRef = useRef(onKamikaze);
+  onKamikazeRef.current = onKamikaze;
+  const onCowDropRef = useRef(onCowDrop);
+  onCowDropRef.current = onCowDrop;
+  const onPlanetHoverRef = useRef(onPlanetHover);
+  onPlanetHoverRef.current = onPlanetHover;
+  const onPlanetClickRef = useRef(onPlanetClick);
+  onPlanetClickRef.current = onPlanetClick;
 
   const mountedRef = useRef(true);
+
+  const selectedAgentIdRef = useRef<string | null>(selectedAgentId);
 
   // Keep control refs in sync without triggering rerenders
   useEffect(() => { agentStatesRef.current = agentStates; }, [agentStates]);
@@ -357,6 +444,7 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { isolatedRef.current = isolatedAgentId; }, [isolatedAgentId]);
   useEffect(() => { boostedRef.current = boostedAgentIds; }, [boostedAgentIds]);
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
+  useEffect(() => { selectedAgentIdRef.current = selectedAgentId; }, [selectedAgentId]);
 
   // --- init timeout (fallback if PixiJS silently fails) --------------------
   useEffect(() => {
@@ -412,7 +500,7 @@ export const Universe: FC<UniverseProps> = ({
         const stars = createStars(w * 2, h * 2);
         stars.x = -w / 2;
         stars.y = -h / 2;
-        panContainer.addChild(stars);
+        app.stage.addChildAt(stars, 0);  // behind panContainer — fixed background
         starsRef.current = stars;
 
         const world = new Container();
@@ -427,6 +515,10 @@ export const Universe: FC<UniverseProps> = ({
 
         // Z-order (back→front): singularity → astronauts → planets → ships
         const singularity = createSingularity({ x: 0, y: 0 });
+        singularity.eventMode = 'static';
+        singularity.cursor = 'pointer';
+        singularity.hitArea = { contains: (x: number, y: number) => Math.sqrt(x * x + y * y) <= 90 };
+        singularity.on('pointertap', () => onSingularityClickRef.current?.());
         world.addChild(singularity);
         singularityRef.current = singularity;
 
@@ -453,33 +545,28 @@ export const Universe: FC<UniverseProps> = ({
         const ufo = createUfo();
         ufo.eventMode = 'static';
         ufo.cursor = 'pointer';
-        ufo.on('pointertap', () => { onUfoClickedRef.current?.(); });
+        ufo.on('pointertap', () => {
+          const state = ufoStateRef.current;
+          if (state.phase === 'beam') {
+            // Interrupt beam — cow falls back to planet
+            if (state.beam) state.beam.visible = false;
+            if (state.cow) {
+              state.cowFallFromY = state.cow.y;
+              state.cowFallToY = state.beamLen ?? 70;
+            }
+            state.phase = 'cow_falling';
+            state.t = 0;
+            onCowDropRef.current?.();
+          }
+          onUfoClickedRef.current?.();
+        });
         world.addChild(ufo);
         ufoRef.current = ufo;
 
         panContainer.addChild(world);
         worldRef.current = world;
 
-        // Pre-spawn 7 astronauts scattered around the universe with tangential velocity
-        // so they naturally drift and some will eventually spiral into the black hole
-        for (let i = 0; i < 7; i++) {
-          const angle = (i / 7) * Math.PI * 2 + Math.random() * 0.8;
-          const radius = 140 + Math.random() * 180;
-          const astro = createAstronaut();
-          astro.x = Math.cos(angle) * radius;
-          astro.y = Math.sin(angle) * radius;
-          astronautsContainer.addChildAt(astro, 0);
-          // Give each astronaut a partial tangential velocity so they spiral rather than fall straight
-          const tangentialSpeed = 0.3 + Math.random() * 0.5;
-          const radialDrift = (Math.random() - 0.5) * 0.3;
-          astronautsRef.current.push({
-            id: ++astronautIdRef.current,
-            c: astro,
-            vx: -Math.sin(angle) * tangentialSpeed + Math.cos(angle) * radialDrift,
-            vy:  Math.cos(angle) * tangentialSpeed + Math.sin(angle) * radialDrift,
-          });
-        }
-
+        // Astronauts spawn only on click — no auto-spawn
         hitArea.on('pointertap', (e: { global: { x: number; y: number } }) => {
           // Use world.toLocal so zoom scale is correctly accounted for.
           const pos = world.toLocal(e.global);
@@ -493,6 +580,10 @@ export const Universe: FC<UniverseProps> = ({
             c: astro,
             vx: (Math.random() - 0.5) * 1.2,
             vy: (Math.random() - 0.5) * 1.2,
+            bounceCount: 0,
+            edgesHit: new Set(),
+            jetFiredAt: 0,
+            hasBouncedSinceJet: false,
           });
           onAstronautSpawnedRef.current?.();
         });
@@ -518,6 +609,7 @@ export const Universe: FC<UniverseProps> = ({
       spiralContainerRef.current = null;
       astronautsContainerRef.current = null;
       astronautsRef.current = [];
+      for (const s of spiralRef.current) { try { s.c.destroy({ children: true }); } catch { /* already destroyed */ } }
       spiralRef.current = [];
       activeShipsRef.current = [];
       spawnedShipIdsRef.current = new Set();
@@ -554,102 +646,120 @@ export const Universe: FC<UniverseProps> = ({
     panContainer.x = cx + posRef.current.x;
     panContainer.y = cy + posRef.current.y;
 
-    if (stars && panContainer.removeChild(stars)) {
+    if (stars) {
       try { stars.destroy({ children: true }); } catch { /* ignore */ }
     }
     const newStars = createStars(width * 2, height * 2);
     newStars.x = -width / 2;
     newStars.y = -height / 2;
-    panContainer.addChildAt(newStars, 0);
+    app.stage.addChildAt(newStars, 0);
     starsRef.current = newStars;
   }, [width, height, canvasReady]);
 
   // --- re-center -----------------------------------------------------------
   useEffect(() => {
     if (centerRequestedAt <= 0) return;
-    posRef.current = { x: 0, y: 0 };
     const panContainer = panContainerRef.current;
     const sz = sizeRef.current;
-    if (panContainer && sz.width && sz.height) {
-      panContainer.x = sz.width / 2;
-      panContainer.y = sz.height / 2;
-    }
+    if (!panContainer || !sz.width || !sz.height) return;
+
+    // Center on the selected planet's position, or singularity (0,0) if none selected
+    const selectedId = selectedAgentIdRef.current;
+    const targetPos = selectedId ? planetPositionsRef.current.get(selectedId) : null;
+    const tx = targetPos?.x ?? 0;
+    const ty = targetPos?.y ?? 0;
+
+    posRef.current = { x: -tx * scaleRef.current, y: -ty * scaleRef.current };
+    panContainer.x = sz.width / 2 + posRef.current.x;
+    panContainer.y = sz.height / 2 + posRef.current.y;
   }, [centerRequestedAt]);
 
-  // --- planets -------------------------------------------------------------
+  // --- planets (diff-based: reuse existing, add new, spiral removed) -------
   useEffect(() => {
     const planetsContainer = planetsContainerRef.current;
     const spiralContainer = spiralContainerRef.current;
     if (!planetsContainer) return;
 
     const currentIds = new Set(agents.map((a) => a.id));
-    const removedIds = new Set(
-      prevAgentsRef.current.filter((a) => !currentIds.has(a.id)).map((a) => a.id),
-    );
+    const planetMap = planetMapRef.current;
 
-    if (spiralContainer && removedIds.size > 0) {
-      for (const child of planetsContainer.children.slice()) {
-        const id = (child as ExtendedPlanet).__agentId;
-        if (id && removedIds.has(id)) {
-          planetsContainer.removeChild(child);
-          const dx = 0 - child.x;
-          const dy = 0 - child.y;
+    // 1. Spiral-out removed agents
+    for (const [id, planet] of planetMap) {
+      if (!currentIds.has(id)) {
+        planetsContainer.removeChild(planet);
+        planetMap.delete(id);
+        if (spiralContainer) {
+          const dx = 0 - planet.x;
+          const dy = 0 - planet.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
           spiralRef.current.push({
-            c: child as Container,
+            c: planet as Container,
             vx: (dx / dist) * 0.8,
             vy: (dy / dist) * 0.8,
           });
-          spiralContainer.addChild(child as Container);
+          spiralContainer.addChild(planet as Container);
+        } else {
+          planet.destroy({ children: true });
         }
       }
     }
 
-    planetsContainer.removeChildren();
-
-    // Compute non-overlapping positions for this exact agent set
+    // 2. Compute positions
     const posMap = computePlanetPositions(agents);
 
+    // 3. Add new planets, update existing
     agents.forEach((agent) => {
       const pos = posMap.get(agent.id) ?? { x: 0, y: PLANET_MIN_RADIUS };
       const m = metricsRef.current[agent.id];
       const load = m?.load ?? 0.5;
       const size = 12 + load * 8;
-      const planet = createPlanet({
-        agentId: agent.id,
-        x: pos.x,
-        y: pos.y,
-        size,
-        brightness: 0.3 + load * 0.7,
-        agentType: agent.agentType,
-      });
 
-      // Name label beneath planet
-      const label = new Text({
-        text: agent.name,
-        style: { fontSize: 8, fill: '#6688aa', fontFamily: 'system-ui', align: 'center' },
-      });
-      label.anchor.set(0.5, 0);
-      label.x = 0;
-      label.y = (planet.__radius ?? 16) + 5;
-      planet.addChild(label);
+      let planet = planetMap.get(agent.id);
+      if (!planet) {
+        // New planet
+        planet = createPlanet({
+          agentId: agent.id,
+          x: pos.x,
+          y: pos.y,
+          size,
+          brightness: 0.3 + load * 0.7,
+          agentType: agent.agentType,
+        });
 
-      planet.on('pointerover', () => onPlanetHover?.(agent.id));
-      planet.on('pointerout', () => onPlanetHover?.(null));
-      planet.on('pointertap', () => onPlanetClick?.(agent.id));
+        // Name label beneath planet
+        const label = new Text({
+          text: agent.name,
+          style: { fontSize: 8, fill: '#6688aa', fontFamily: 'system-ui', align: 'center' },
+        });
+        label.anchor.set(0.5, 0);
+        label.x = 0;
+        label.y = (planet.__radius ?? 16) + 5;
+        planet.addChild(label);
 
-      if (selectedAgentId && selectedAgentId !== agent.id) {
-        planet.alpha = 0.4;
+        planet.on('pointerover', () => onPlanetHoverRef.current?.(agent.id));
+        planet.on('pointerout', () => onPlanetHoverRef.current?.(null));
+        planet.on('pointertap', () => onPlanetClickRef.current?.(agent.id));
+
+        planetsContainer.addChild(planet);
+        planetMap.set(agent.id, planet);
+      } else {
+        // Update existing planet position
+        planet.x = pos.x;
+        planet.y = pos.y;
       }
 
-      // __radius is set inside createPlanet (accounts for per-variant size multiplier)
-      planetsContainer.addChild(planet);
+      // Update alpha for selection
+      if (selectedAgentId && selectedAgentId !== agent.id) {
+        planet.alpha = 0.4;
+      } else {
+        planet.alpha = 1;
+      }
     });
 
     planetPositionsRef.current = posMap;
     prevAgentsRef.current = agents;
   // metrics intentionally excluded — read via metricsRef to avoid recreating planets on every update
-  }, [agents, selectedAgentId, onPlanetHover, onPlanetClick]);
+  }, [agents, selectedAgentId]);
 
   // --- ships ---------------------------------------------------------------
   useEffect(() => {
@@ -733,6 +843,13 @@ export const Universe: FC<UniverseProps> = ({
       panContainer.x = s.width / 2 + posRef.current.x;
       panContainer.y = s.height / 2 + posRef.current.y;
     }
+    // Parallax: stars drift at 10% of pan speed for depth illusion
+    const stars = starsRef.current;
+    if (stars) {
+      const s = sizeRef.current;
+      stars.x = -s.width / 2 + posRef.current.x * 0.1;
+      stars.y = -s.height / 2 + posRef.current.y * 0.1;
+    }
   }, []);
 
   const onPointerUp = useCallback(() => {
@@ -778,51 +895,187 @@ export const Universe: FC<UniverseProps> = ({
       const delay = UFO_INTERVAL_MIN_MS + Math.random() * (UFO_INTERVAL_MAX_MS - UFO_INTERVAL_MIN_MS);
       ufoTimerRef.current = setTimeout(() => {
         const kids = planetsContainer.children;
-        if (kids.length === 0) { scheduleUfo(); return; }
-        const planet = kids[Math.floor(Math.random() * kids.length)] as Container & { __radius?: number };
-        const radius = planet.__radius ?? 18;
-        const beamLen = radius + 52; // beam reaches planet surface
         const eufo = ufo as ExtendedUfo;
+        const isFlyby = Math.random() < UFO_FLYBY_CHANCE || kids.length === 0;
+
+        // Random entry point along the viewport edge
+        const entryAngle = Math.random() * Math.PI * 2;
+        const entryDist = 280 + Math.random() * 60;
+        const startX = Math.cos(entryAngle) * entryDist;
+        const startY = Math.sin(entryAngle) * entryDist;
+
         ufo.visible = true;
-        ufo.x = -280;
-        ufo.y = -220;
+        ufo.x = startX;
+        ufo.y = startY;
+        ufo.rotation = 0; // reset any tilt from previous fly-by
         if (eufo.__beam) eufo.__beam.visible = false;
-        if (eufo.__cow) {
-          eufo.__cow.visible = false;
-          eufo.__cow.y = beamLen; // start at planet surface
+        if (eufo.__cow) eufo.__cow.visible = false;
+
+        if (isFlyby) {
+          // ~20% of fly-bys route dangerously close to the singularity
+          const dangerousPath = Math.random() < 0.20;
+
+          // Fly-by: curved path through the visible area using 3-5 waypoints
+          const wpCount = 3 + Math.floor(Math.random() * 3); // 3–5 waypoints
+          const waypoints: Array<{ x: number; y: number }> = [{ x: startX, y: startY }];
+
+          if (dangerousPath) {
+            // Route through singularity center — one waypoint near (0,0) with slight offset
+            const midIdx = Math.floor(wpCount / 2);
+            for (let wi = 0; wi < wpCount; wi++) {
+              if (wi === midIdx) {
+                // Pass through singularity danger zone (within ~25px of center)
+                waypoints.push({
+                  x: (Math.random() - 0.5) * 50,
+                  y: (Math.random() - 0.5) * 50,
+                });
+              } else {
+                const frac = (wi + 1) / (wpCount + 1);
+                const baseAngle = entryAngle + Math.PI;
+                const perpAngle = baseAngle + Math.PI / 2;
+                const along = 60 + frac * 180;
+                const wave = Math.sin(frac * Math.PI * (1.5 + Math.random())) * (80 + Math.random() * 60);
+                waypoints.push({
+                  x: startX + Math.cos(baseAngle) * along + Math.cos(perpAngle) * wave,
+                  y: startY + Math.sin(baseAngle) * along + Math.sin(perpAngle) * wave,
+                });
+              }
+            }
+          } else {
+            // Safe path — generate waypoints avoiding the singularity
+            for (let wi = 0; wi < wpCount; wi++) {
+              const frac = (wi + 1) / (wpCount + 1);
+              const baseAngle = entryAngle + Math.PI;
+              const perpAngle = baseAngle + Math.PI / 2;
+              const along = 60 + frac * 180;
+              const wave = Math.sin(frac * Math.PI * (1.5 + Math.random())) * (80 + Math.random() * 60);
+              waypoints.push({
+                x: startX + Math.cos(baseAngle) * along + Math.cos(perpAngle) * wave,
+                y: startY + Math.sin(baseAngle) * along + Math.sin(perpAngle) * wave,
+              });
+            }
+          }
+
+          // Exit point — far off the opposite edge
+          const exitAngle = entryAngle + Math.PI + (Math.random() - 0.5) * 0.6;
+          const exitDist = 300 + Math.random() * 100;
+          waypoints.push({
+            x: startX + Math.cos(exitAngle) * exitDist,
+            y: startY + Math.sin(exitAngle) * exitDist,
+          });
+          ufoStateRef.current = {
+            phase: 'flyby',
+            t: 0,
+            targetX: 0,
+            targetY: 0,
+            waypoints,
+            waypointIndex: 0,
+            segT: 0,
+          };
+        } else {
+          // Abduction: fly to a random planet
+          const planet = kids[Math.floor(Math.random() * kids.length)] as Container & { __radius?: number };
+          const radius = planet.__radius ?? 18;
+          const beamLen = radius + 52;
+          if (eufo.__cow) eufo.__cow.y = beamLen;
+          setUfoBeam(eufo, beamLen);
+          ufoStateRef.current = {
+            phase: 'fly',
+            t: 0,
+            startX,
+            startY,
+            targetX: planet.x,
+            targetY: planet.y - (radius + 52),
+            cow: eufo.__cow as Container,
+            beam: eufo.__beam as Container,
+            beamLen,
+          };
         }
-        setUfoBeam(eufo, beamLen);
-        ufoStateRef.current = {
-          phase: 'fly',
-          t: 0,
-          targetX: planet.x,
-          targetY: planet.y - (radius + 52),
-          cow: eufo.__cow as Container,
-          beam: eufo.__beam as Container,
-          beamLen,
-        };
-        scheduleUfo();
       }, delay);
     };
     scheduleUfo();
 
+    // Shooting star spawner — 1 to 3 at once, random direction, every 30-90s
+    // Stars container is behind panContainer in stage coords. We add shooting stars
+    // to the world container instead so they render in world-space (visible & pan-aware).
+    const spawnShootingStars = () => {
+      const delay = SHOOTING_STAR_INTERVAL_MIN + Math.random() * (SHOOTING_STAR_INTERVAL_MAX - SHOOTING_STAR_INTERVAL_MIN);
+      shootingStarTimerRef.current = setTimeout(() => {
+        const sz = sizeRef.current;
+        const scale = scaleRef.current;
+        const pan = posRef.current;
+        // Compute world-space visible bounds
+        const left   = -(sz.width  / 2 + pan.x) / scale;
+        const right  =  (sz.width  / 2 - pan.x) / scale;
+        const top    = -(sz.height / 2 + pan.y) / scale;
+        const bottom =  (sz.height / 2 - pan.y) / scale;
+        const vw = right - left;
+        const vh = bottom - top;
+
+        const count = 1 + Math.floor(Math.random() * SHOOTING_STAR_MAX_BURST);
+
+        for (let si = 0; si < count; si++) {
+          // Start within the visible viewport (with some margin)
+          const x = left + Math.random() * vw;
+          const y = top + Math.random() * vh;
+          // Fully random direction (0-360°)
+          const angle = Math.random() * Math.PI * 2;
+          const speed = 2 + Math.random() * 3;
+          const length = 20 + Math.random() * 30;
+          const vx = Math.cos(angle) * speed;
+          const vy = Math.sin(angle) * speed;
+
+          const g = new Graphics();
+          const colors = [0xffffff, 0xddeeff, 0xffeedd];
+          const color = colors[Math.floor(Math.random() * colors.length)];
+          // Tail trails behind the head
+          g.moveTo(0, 0)
+           .lineTo(-Math.cos(angle) * length, -Math.sin(angle) * length)
+           .stroke({ width: 1.2, color, alpha: 0.7 });
+          // Bright head dot
+          g.circle(0, 0, 1.5).fill({ color, alpha: 0.9 });
+          g.x = x;
+          g.y = y;
+          g.alpha = 0;
+          // Add behind planets (index 1 = right after singularity)
+          if (world.children.length > 1) {
+            world.addChildAt(g, 1);
+          } else {
+            world.addChild(g);
+          }
+
+          const maxLife = 0.6 + Math.random() * 0.8;
+          const startDelay = si * (0.1 + Math.random() * 0.3);
+          shootingStarsRef.current.push({ g, x, y, vx, vy, life: -startDelay, maxLife });
+        }
+
+        spawnShootingStars();
+      }, delay);
+    };
+    spawnShootingStars();
+
     const tick = () => {
       if (!world || !planetsContainer) return;
-      tickTimeRef.current += 0.016;
+      const dt = app.ticker.deltaMS / 1000;
+      tickTimeRef.current += dt;
       const singPos = { x: 0, y: 0 };
 
       // Spiral-in removed agents
       const spiral = spiralRef.current;
       for (let i = spiral.length - 1; i >= 0; i--) {
         const s = spiral[i];
+        // Directional acceleration toward center instead of exponential
+        const dx0 = -s.c.x;
+        const dy0 = -s.c.y;
+        const dist0 = Math.sqrt(dx0 * dx0 + dy0 * dy0) || 1;
+        s.vx += (dx0 / dist0) * 0.15;
+        s.vy += (dy0 / dist0) * 0.15;
         s.c.x += s.vx;
         s.c.y += s.vy;
-        s.vx *= 1.02;
-        s.vy *= 1.02;
         s.c.alpha *= 0.98;
         s.c.scale.set((s.c.scale.x ?? 1) * 0.99);
         const d = Math.sqrt(s.c.x * s.c.x + s.c.y * s.c.y);
-        if (d < 25) {
+        if (d < 25 || s.c.alpha < 0.01) {
           s.c.destroy({ children: true });
           spiral.splice(i, 1);
         }
@@ -872,9 +1125,9 @@ export const Universe: FC<UniverseProps> = ({
         const ring = p.__thinkingRing;
         if (ring) {
           ring.visible = state === 'thinking';
-          if (state === 'thinking') {
+          if (state === 'thinking' && !isPaused) {
             const load = metricsRef.current[agentId]?.load ?? 0.3;
-            ring.rotation += 0.015 + load * 0.06;
+            ring.rotation = (ring.rotation + 0.015 + load * 0.06) % (Math.PI * 2);
             ring.alpha = 0.55 + 0.35 * Math.sin(t * 5);
           }
         }
@@ -883,7 +1136,7 @@ export const Universe: FC<UniverseProps> = ({
         const eg = p.__errorGlow;
         if (eg) {
           eg.visible = state === 'error';
-          if (state === 'error') {
+          if (state === 'error' && !isPaused) {
             eg.alpha = 0.25 + 0.2 * Math.sin(t * 12);
           }
         }
@@ -892,28 +1145,22 @@ export const Universe: FC<UniverseProps> = ({
       // Manage + animate moons (subagents) — add/remove only when counts change
       const moonsContainer = moonsContainerRef.current;
       if (moonsContainer) {
-        type MoonExt = Container & { __planetId?: string; __orbitSpeed?: number; __orbitDistance?: number; __orbitAngle?: number; __taskId?: string };
+        type MoonExt = Container & { __planetId?: string; __orbitSpeed?: number; __orbitDistance?: number; __orbitAngle?: number; __taskId?: string; __moonIndex?: number };
         const posMap = planetPositionsRef.current;
         const subCounts = activeSubagentsRef.current;
         const prevCounts = moonCountsRef.current;
 
-        // Check if any agent's moon count changed
+        // Incrementally add/remove moons — never destroy existing ones
         for (const [agentId] of posMap) {
           const want = Math.min(subCounts[agentId] ?? 0, 6);
           const have = prevCounts.get(agentId) ?? 0;
-          if (want !== have) {
-            // Remove existing moons for this agent
-            for (let ci = moonsContainer.children.length - 1; ci >= 0; ci--) {
-              const child = moonsContainer.children[ci] as MoonExt;
-              if (child.__planetId === agentId) {
-                moonsContainer.removeChild(child);
-                child.destroy({ children: true });
-              }
-            }
-            // Create new moons
+          if (want === have) continue;
+
+          if (want > have) {
+            // Add only the new moons
             const parentPos = posMap.get(agentId);
             if (parentPos) {
-              for (let mi = 0; mi < want; mi++) {
+              for (let mi = have; mi < want; mi++) {
                 const orbitDistance = 28 + mi * 12;
                 const orbitSpeed = 0.012 + mi * 0.004;
                 const moon = createMoon({
@@ -922,15 +1169,28 @@ export const Universe: FC<UniverseProps> = ({
                   orbitSpeed,
                   orbitDistance,
                 });
-                const initAngle = (mi / Math.max(want, 1)) * Math.PI * 2;
+                // Start at a random angle so new moons don't cluster
+                const initAngle = Math.random() * Math.PI * 2;
                 (moon as MoonExt).__orbitAngle = initAngle;
                 moon.x = parentPos.x + Math.cos(initAngle) * orbitDistance;
                 moon.y = parentPos.y + Math.sin(initAngle) * orbitDistance;
+                (moon as MoonExt).__moonIndex = mi;
                 moonsContainer.addChild(moon);
               }
             }
-            prevCounts.set(agentId, want);
+          } else {
+            // Remove excess moons (highest index first)
+            const agentMoons = moonsContainer.children
+              .filter((c) => (c as MoonExt).__planetId === agentId) as MoonExt[];
+            // Sort by moon index descending so we remove the newest first
+            agentMoons.sort((a, b) => (b.__moonIndex ?? 0) - (a.__moonIndex ?? 0));
+            const toRemove = have - want;
+            for (let ri = 0; ri < toRemove && ri < agentMoons.length; ri++) {
+              moonsContainer.removeChild(agentMoons[ri]);
+              agentMoons[ri].destroy({ children: true });
+            }
           }
+          prevCounts.set(agentId, want);
         }
         // Remove moons for agents that no longer exist
         for (const [agentId] of prevCounts) {
@@ -1012,41 +1272,60 @@ export const Universe: FC<UniverseProps> = ({
         const r2 = dx * dx + dy * dy + 1;
         const r = Math.sqrt(r2);
 
-        // Once inside the suck radius, the astronaut is DOOMED — no escape
-        if (!a.doomed && r < ASTRONAUT_SUCK_RADIUS) a.doomed = true;
+        // Track gravity well entry/exit
+        if (!a.inGravityWell && r < ASTRONAUT_SUCK_RADIUS) {
+          a.inGravityWell = true;
+          onAstronautTrappedRef.current?.();
+        }
+        // Escaped the gravity well! (was inside, now outside)
+        if (a.inGravityWell && r >= ASTRONAUT_SUCK_RADIUS) {
+          a.inGravityWell = false;
+          a.escapeCount = (a.escapeCount ?? 0) + 1;
+          onAstronautEscapedRef.current?.();
+        }
 
         if (r < ASTRONAUT_DESTROY_RADIUS) {
+          // Check for trick_shot (bounced then fell in) or kamikaze (jetted straight in)
+          if (a.jetFiredAt > 0) {
+            if (a.hasBouncedSinceJet) {
+              onTrickShotRef.current?.();
+            } else {
+              onKamikazeRef.current?.();
+            }
+          }
           a.c.destroy({ children: true });
           astros.splice(i, 1);
-          if (a.doomed) onAstronautConsumedRef.current?.();
+          onAstronautConsumedRef.current?.();
           continue;
         }
 
-        if (a.doomed) {
-          // Strong inward acceleration — no speed cap, no wall bounce
-          const inward = 0.10 + (ASTRONAUT_SUCK_RADIUS - r) * 0.004;
-          a.vx += (dx / r) * inward;
-          a.vy += (dy / r) * inward;
-          const shrink = Math.max(0.05, (r - ASTRONAUT_DESTROY_RADIUS) / (ASTRONAUT_SUCK_RADIUS - ASTRONAUT_DESTROY_RADIUS));
+        // Physics — stronger pull inside the gravity well, but NOT inescapable
+        let ax: number;
+        let ay: number;
+        if (a.inGravityWell) {
+          const inward = 0.10 + (ASTRONAUT_SUCK_RADIUS - r) * 0.003;
+          ax = (dx / r) * inward;
+          ay = (dy / r) * inward;
+          // Visual: shrink and fade as astronaut approaches core
+          const shrink = Math.max(0.15, (r - ASTRONAUT_DESTROY_RADIUS) / (ASTRONAUT_SUCK_RADIUS - ASTRONAUT_DESTROY_RADIUS));
           a.c.scale.set(shrink);
           a.c.alpha = shrink;
-          a.c.x += a.vx;
-          a.c.y += a.vy;
-          continue;
+        } else {
+          ax = (dx / r) * (SINGULARITY_PULL / r2) * dt * 60;
+          ay = (dy / r) * (SINGULARITY_PULL / r2) * dt * 60;
+          a.c.scale.set(1);
+          a.c.alpha = 1;
         }
 
-        // Normal physics
-        let ax = (dx / r) * (SINGULARITY_PULL / r2) * 60 * 0.016;
-        let ay = (dy / r) * (SINGULARITY_PULL / r2) * 60 * 0.016;
-
+        // Planet gravity (always active)
         let removed = false;
         for (const p of planets) {
           const px = p.x - a.c.x;
           const py = p.y - a.c.y;
           const pr2 = px * px + py * py + 1;
           const pr = Math.sqrt(pr2);
-          ax += (px / pr) * (GRAVITY_STRENGTH / pr2) * 60 * 0.016;
-          ay += (py / pr) * (GRAVITY_STRENGTH / pr2) * 60 * 0.016;
+          ax += (px / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
+          ay += (py / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
           if (pr < (p.__radius ?? 15) + 8) {
             a.c.destroy({ children: true });
             astros.splice(i, 1);
@@ -1056,17 +1335,74 @@ export const Universe: FC<UniverseProps> = ({
         }
         if (removed) continue;
 
-        a.c.scale.set(1);
-        a.c.alpha = 1;
         a.vx += ax;
         a.vy += ay;
-        const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
-        if (speed > ASTRONAUT_MAX_SPEED) {
-          a.vx = (a.vx / speed) * ASTRONAUT_MAX_SPEED;
-          a.vy = (a.vy / speed) * ASTRONAUT_MAX_SPEED;
+        // Speed cap only outside the gravity well — inside, allow high velocity for dramatic spirals
+        if (!a.inGravityWell) {
+          const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+          if (speed > ASTRONAUT_MAX_SPEED) {
+            a.vx = (a.vx / speed) * ASTRONAUT_MAX_SPEED;
+            a.vy = (a.vy / speed) * ASTRONAUT_MAX_SPEED;
+          }
         }
         a.c.x += a.vx;
         a.c.y += a.vy;
+
+        // Jet spray: fire on a timer. When trapped in gravity well, jets fire more often
+        // and with more power (desperate escape attempts).
+        const now = Date.now();
+        if (!a.nextJetTime) {
+          a.nextJetTime = now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
+        }
+        if (now >= a.nextJetTime) {
+          // In gravity well: stronger jets, biased AWAY from singularity, shorter cooldown
+          const inWell = !!a.inGravityWell;
+          const escapeAngle = Math.atan2(a.c.y, a.c.x); // angle away from singularity
+          const jetAngle = inWell
+            ? escapeAngle + (Math.random() - 0.5) * 1.2 // mostly outward ±~34°
+            : Math.random() * Math.PI * 2;               // random direction
+          const jetPower = inWell
+            ? 4.0 + Math.random() * 2.5   // stronger desperate burst
+            : 2.5 + Math.random() * 1.5;
+          a.vx += Math.cos(jetAngle) * jetPower;
+          a.vy += Math.sin(jetAngle) * jetPower;
+          a.jetFiredAt = now;
+          a.hasBouncedSinceJet = false;
+          onRocketManRef.current?.();
+          // Next jet sooner when trapped (15-30s) vs normal (45-120s)
+          a.nextJetTime = inWell
+            ? now + 15_000 + Math.random() * 15_000
+            : now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
+
+          // Spawn visible spray/exhaust in the OPPOSITE direction of thrust
+          const sprayAngle = jetAngle + Math.PI;
+          const astroContainer = astronautsContainerRef.current;
+          if (astroContainer) {
+            const particleCount = 10 + Math.floor(Math.random() * 6);
+            for (let pi = 0; pi < particleCount; pi++) {
+              const pAngle = sprayAngle + (Math.random() - 0.5) * 1.0; // ±~29° cone
+              const pSpeed = 2 + Math.random() * 3;
+              const pg = new Graphics();
+              const pSize = 1.5 + Math.random() * 2.5;
+              // Mix of orange, yellow, and white-hot particles
+              const pColors = [0xff6622, 0xff8822, 0xffaa33, 0xffcc44, 0xffeeaa];
+              const pColor = pColors[Math.floor(Math.random() * pColors.length)];
+              pg.circle(0, 0, pSize).fill({ color: pColor, alpha: 0.8 + Math.random() * 0.2 });
+              pg.x = a.c.x;
+              pg.y = a.c.y;
+              astroContainer.addChild(pg);
+              jetSprayRef.current.push({
+                g: pg,
+                x: a.c.x,
+                y: a.c.y,
+                vx: Math.cos(pAngle) * pSpeed,
+                vy: Math.sin(pAngle) * pSpeed,
+                life: 0,
+                maxLife: 0.6 + Math.random() * 0.8,
+              });
+            }
+          }
+        }
 
         const sz = sizeRef.current;
         const scale = scaleRef.current;
@@ -1076,20 +1412,68 @@ export const Universe: FC<UniverseProps> = ({
         const top    = -(sz.height / 2 + pan.y) / scale;
         const bottom =  (sz.height / 2 - pan.y) / scale;
         const margin = 8;
-        if (a.c.x < left   + margin) { a.c.x = left   + margin; a.vx =  Math.abs(a.vx) * 0.6; }
-        else if (a.c.x > right  - margin) { a.c.x = right  - margin; a.vx = -Math.abs(a.vx) * 0.6; }
-        if (a.c.y < top    + margin) { a.c.y = top    + margin; a.vy =  Math.abs(a.vy) * 0.6; }
-        else if (a.c.y > bottom - margin) { a.c.y = bottom - margin; a.vy = -Math.abs(a.vy) * 0.6; }
+        let bounced = false;
+        if (a.c.x < left + margin) { a.c.x = left + margin; a.vx = Math.abs(a.vx) * 0.6; bounced = true; a.edgesHit.add('left'); }
+        else if (a.c.x > right - margin) { a.c.x = right - margin; a.vx = -Math.abs(a.vx) * 0.6; bounced = true; a.edgesHit.add('right'); }
+        if (a.c.y < top + margin) { a.c.y = top + margin; a.vy = Math.abs(a.vy) * 0.6; bounced = true; a.edgesHit.add('top'); }
+        else if (a.c.y > bottom - margin) { a.c.y = bottom - margin; a.vy = -Math.abs(a.vy) * 0.6; bounced = true; a.edgesHit.add('bottom'); }
+        if (bounced) {
+          a.bounceCount++;
+          a.hasBouncedSinceJet = true;
+          onAstronautBouncedRef.current?.(a.id, a.bounceCount, a.edgesHit);
+        }
+      }
+
+      // Jet spray particles
+      const jets = jetSprayRef.current;
+      for (let ji = jets.length - 1; ji >= 0; ji--) {
+        const jp = jets[ji];
+        jp.life += dt;
+        jp.x += jp.vx;
+        jp.y += jp.vy;
+        jp.vx *= 0.96; // decelerate
+        jp.vy *= 0.96;
+        jp.g.x = jp.x;
+        jp.g.y = jp.y;
+        const frac = jp.life / jp.maxLife;
+        jp.g.alpha = (1 - frac) * 0.8;
+        jp.g.scale.set(1 - frac * 0.5);
+        if (jp.life >= jp.maxLife) {
+          jp.g.destroy();
+          jets.splice(ji, 1);
+        }
+      }
+
+      // Shooting stars
+      const sstars = shootingStarsRef.current;
+      for (let si = sstars.length - 1; si >= 0; si--) {
+        const ss = sstars[si];
+        ss.life += dt;
+        if (ss.life < 0) { ss.g.alpha = 0; continue; } // staggered start
+        ss.x += ss.vx;
+        ss.y += ss.vy;
+        ss.g.x = ss.x;
+        ss.g.y = ss.y;
+        const frac = ss.life / ss.maxLife;
+        const alpha = frac < 0.15 ? frac / 0.15 : 1 - (frac - 0.15) / 0.85;
+        ss.g.alpha = alpha * 0.7;
+        if (ss.life >= ss.maxLife) {
+          ss.g.destroy();
+          sstars.splice(si, 1);
+        }
       }
 
       // UFO behaviour
       const ufoState = ufoStateRef.current;
       if (ufoState.phase === 'fly') {
-        ufoState.t += 0.016;
+        ufoState.t += dt;
+        ufo.rotation = 0; // always upright during abduction
         const tv = Math.min(1, ufoState.t * 0.5);
         const ease = tv * tv * (3 - 2 * tv);
-        ufo.x = -250 + (ufoState.targetX - -250) * ease;
-        ufo.y = -200 + (ufoState.targetY - -200) * ease;
+        const sx = ufoState.startX ?? -250;
+        const sy = ufoState.startY ?? -200;
+        ufo.x = sx + (ufoState.targetX - sx) * ease;
+        ufo.y = sy + (ufoState.targetY - sy) * ease;
         if (tv >= 1) {
           ufoState.phase = 'beam';
           ufoState.t = 0;
@@ -1100,12 +1484,13 @@ export const Universe: FC<UniverseProps> = ({
           }
         }
       } else if (ufoState.phase === 'beam') {
-        ufoState.t += 0.016;
+        ufoState.t += dt;
+        ufo.rotation = 0; // always upright during beam
         const beamLen = ufoState.beamLen ?? 70;
-        // Cow travels from planet surface (beamLen) up to UFO belly (y=8)
+        // Cow travels from planet surface (beamLen) up into the saucer body (y=-2)
         const beamT = Math.min(1, ufoState.t / 2.0);
         const cow = ufoState.cow;
-        if (cow) cow.y = beamLen - beamT * (beamLen - 8);
+        if (cow) cow.y = beamLen - beamT * (beamLen + 2);
         if (ufoState.t > 2.4) {
           if (ufoState.beam) ufoState.beam.visible = false;
           if (cow) { cow.visible = false; cow.y = beamLen; }
@@ -1120,16 +1505,109 @@ export const Universe: FC<UniverseProps> = ({
           ufoState.targetY = ufo.y + Math.sin(angle) * dist;
         }
       } else if (ufoState.phase === 'flyaway') {
-        ufoState.t += 0.016;
+        ufoState.t += dt;
         const tv = Math.min(1, ufoState.t * 0.6);
         const ease = tv * tv * (3 - 2 * tv);
         const sx = ufoState.startX ?? ufo.x;
         const sy = ufoState.startY ?? ufo.y;
         ufo.x = sx + (ufoState.targetX - sx) * ease;
         ufo.y = sy + (ufoState.targetY - sy) * ease;
-        if (tv >= 1) {
+        // Check if flyaway path crosses singularity
+        const flyDist = Math.sqrt(ufo.x * ufo.x + ufo.y * ufo.y);
+        if (flyDist < 55) {
+          ufoState.phase = 'sucked';
+          ufoState.t = 0;
+          ufoState.startX = ufo.x;
+          ufoState.startY = ufo.y;
+        } else if (tv >= 1) {
           ufo.visible = false;
           ufoState.phase = 'idle';
+          scheduleUfo();
+        }
+      } else if (ufoState.phase === 'flyby') {
+        // Curved path through waypoints — smooth interpolation between each segment
+        const wps = ufoState.waypoints;
+        let idx = ufoState.waypointIndex ?? 0;
+        let segT = (ufoState.segT ?? 0) + 0.012; // speed per segment
+        if (!wps || wps.length < 2) { ufo.visible = false; ufoState.phase = 'idle'; scheduleUfo(); }
+        else {
+          if (segT >= 1) {
+            segT = 0;
+            idx++;
+            ufoState.waypointIndex = idx;
+          }
+          if (idx >= wps.length - 1) {
+            ufo.visible = false;
+            ufoState.phase = 'idle';
+            scheduleUfo();
+          } else {
+            ufoState.segT = segT;
+            const from = wps[idx];
+            const to = wps[idx + 1];
+            // Smooth ease per segment
+            const ease = segT * segT * (3 - 2 * segT);
+            ufo.x = from.x + (to.x - from.x) * ease;
+            ufo.y = from.y + (to.y - from.y) * ease;
+            // Tilt UFO slightly in movement direction
+            ufo.rotation = Math.atan2(to.y - from.y, to.x - from.x) * 0.15;
+
+            // Check if UFO entered the singularity danger zone
+            const ufoDist = Math.sqrt(ufo.x * ufo.x + ufo.y * ufo.y);
+            if (ufoDist < 55) {
+              // Captured! Start spiral-in animation
+              ufoState.phase = 'sucked';
+              ufoState.t = 0;
+              ufoState.startX = ufo.x;
+              ufoState.startY = ufo.y;
+            }
+          }
+        }
+      } else if (ufoState.phase === 'sucked') {
+        // Spiral into singularity — shrink, spin, pull toward center
+        ufoState.t += dt;
+        const suckT = Math.min(1, ufoState.t * 0.6); // ~1.7s to consume
+        const startDist = Math.sqrt((ufoState.startX ?? 50) ** 2 + (ufoState.startY ?? 50) ** 2);
+        const currentDist = startDist * (1 - suckT);
+        const baseAngle = Math.atan2(ufoState.startY ?? 0, ufoState.startX ?? 0);
+        const spiralAngle = baseAngle + suckT * Math.PI * 4; // 2 full rotations
+        ufo.x = Math.cos(spiralAngle) * currentDist;
+        ufo.y = Math.sin(spiralAngle) * currentDist;
+        ufo.scale.set(1 - suckT * 0.9); // shrink to 10%
+        ufo.rotation = suckT * Math.PI * 6; // spin rapidly
+        ufo.alpha = 1 - suckT * 0.7;
+        if (suckT >= 1) {
+          ufo.visible = false;
+          ufo.scale.set(1);
+          ufo.alpha = 1;
+          ufo.rotation = 0;
+          ufoState.phase = 'idle';
+          onUfoConsumedRef.current?.();
+          scheduleUfo();
+        }
+      } else if (ufoState.phase === 'cow_falling') {
+        // Cow drops back to planet surface with gravity-like acceleration
+        ufoState.t += dt;
+        const fallDuration = 0.8;
+        const fallT = Math.min(1, ufoState.t / fallDuration);
+        const cow = ufoState.cow;
+        if (cow) {
+          const fromY = ufoState.cowFallFromY ?? 0;
+          const toY = ufoState.cowFallToY ?? 70;
+          const eased = fallT * fallT; // accelerating fall
+          cow.y = fromY + (toY - fromY) * eased;
+          cow.visible = true;
+        }
+        if (fallT >= 1) {
+          if (ufoState.cow) ufoState.cow.visible = false;
+          // UFO flies away after cow drops
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 280 + Math.random() * 120;
+          ufoState.phase = 'flyaway';
+          ufoState.t = 0;
+          ufoState.startX = ufo.x;
+          ufoState.startY = ufo.y;
+          ufoState.targetX = ufo.x + Math.cos(angle) * dist;
+          ufoState.targetY = ufo.y + Math.sin(angle) * dist;
         }
       }
     };
@@ -1141,6 +1619,18 @@ export const Universe: FC<UniverseProps> = ({
         clearTimeout(ufoTimerRef.current);
         ufoTimerRef.current = null;
       }
+      if (shootingStarTimerRef.current) {
+        clearTimeout(shootingStarTimerRef.current);
+        shootingStarTimerRef.current = null;
+      }
+      for (const ss of shootingStarsRef.current) {
+        try { ss.g.destroy(); } catch { /* ignore */ }
+      }
+      shootingStarsRef.current = [];
+      for (const jp of jetSprayRef.current) {
+        try { jp.g.destroy(); } catch { /* ignore */ }
+      }
+      jetSprayRef.current = [];
     };
   }, [canvasReady]);
 

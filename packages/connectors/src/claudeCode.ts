@@ -41,23 +41,30 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   const isSubagent = hookEvent === 'SubagentStart' || hookEvent === 'SubagentStop';
   const isToolFailure = hookEvent === 'PostToolUseFailure';
 
+  // Whitelist specific payload fields to avoid leaking sensitive data (tool_input, file contents)
+  const safePayload: Record<string, unknown> = {};
+  if (p.tool_name) safePayload.toolName = String(p.tool_name).slice(0, 128);
+  if (p.taskId) safePayload.taskId = String(p.taskId).slice(0, 128);
+  if (isSubagent) safePayload.isSubagent = true;
+  if (isToolFailure) safePayload.isToolFailure = true;
+  // Capture working directory for workspace-aware cooperation detection
+  if (p.cwd) safePayload.cwd = String(p.cwd).slice(0, 512);
+  // Only include safe metadata from the nested payload object
+  const nested = p.payload as Record<string, unknown> | undefined;
+  if (nested) {
+    if (nested.toolName) safePayload.toolName = String(nested.toolName).slice(0, 128);
+    if (nested.taskId) safePayload.taskId = String(nested.taskId).slice(0, 128);
+    if (nested.isSubagent) safePayload.isSubagent = true;
+    if (nested.cwd) safePayload.cwd = String(nested.cwd).slice(0, 512);
+  }
+
   return {
     id: nextId(),
     agentId,
     agentName,
     agentType: 'claude-code',
     type,
-    timestamp: (p.timestamp as number) ?? Date.now(),
-    payload: {
-      ...((p.payload as Record<string, unknown>) ?? p),
-      toolName: p.tool_name,
-      toolInput: p.tool_input,
-      ...(isSubagent ? { isSubagent: true } : {}),
-      ...(isToolFailure ? { isToolFailure: true } : {}),
-    },
+    timestamp: Number(p.timestamp) || Date.now(),
+    payload: safePayload,
   };
-}
-
-export function createClaudeCodeAdapter(): (payload: unknown) => AgentEvent | null {
-  return mapClaudeHookToEvent;
 }

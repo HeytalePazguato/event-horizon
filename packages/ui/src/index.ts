@@ -5,7 +5,8 @@
 export { CommandCenter } from './CommandCenter.js';
 export { Tooltip } from './Tooltip.js';
 export type { TooltipProps } from './Tooltip.js';
-export { useCommandCenterStore } from './store.js';
+export { useCommandCenterStore, clearAllBoostTimers } from './store.js';
+export type { SingularityStats } from './store.js';
 export { AgentIdentity, MetricsPanel, AgentControls } from './panels/index.js';
-export { AchievementToasts, AchievementsBar, Medal, ACHIEVEMENTS } from './Achievements.js';
-export type { Achievement } from './Achievements.js';
+export { AchievementToasts, AchievementsBar, ACHIEVEMENTS, TIER_LABELS, tierBorderColor, getMedal } from './achievements/index.js';
+export type { Achievement } from './achievements/index.js';

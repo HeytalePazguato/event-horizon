@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import type { AgentStateManager, MetricsEngine } from '@event-horizon/core';
 import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
+import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 
 export function createWebviewProvider(
   context: vscode.ExtensionContext,
@@ -34,13 +35,19 @@ export function createWebviewProvider(
         vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js')
       );
 
-      function getConnectedAgentTypes(): string[] {
+      async function getConnectedAgentTypes(): Promise<string[]> {
         const types: string[] = [];
-        if (isClaudeCodeHooksInstalled()) types.push('claude-code');
+        if (await isClaudeCodeHooksInstalled()) types.push('claude-code');
+        if (await isOpenCodeHooksInstalled()) types.push('opencode');
         return types;
       }
 
-      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, version, getConnectedAgentTypes());
+      // Kick off async detection; render HTML with empty list first, then update via message
+      const connectedPromise = getConnectedAgentTypes();
+      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, version, []);
+      void connectedPromise.then((agentTypes) => {
+        void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes });
+      });
 
       // 2.2 — hydrate webview with accumulated state on (re)open
       const agents = agentStateManager.getAllAgents();
@@ -49,15 +56,55 @@ export function createWebviewProvider(
         void webviewView.webview.postMessage({ type: 'init-state', agents, metrics });
       }
 
-      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string }) => {
+      // Hydrate persisted medals from globalState
+      const savedMedals = context.globalState.get<{
+        unlockedAchievements: string[];
+        achievementTiers: Record<string, number>;
+        achievementCounts: Record<string, number>;
+      }>('medals');
+      if (savedMedals?.unlockedAchievements?.length) {
+        void webviewView.webview.postMessage({ type: 'init-medals', ...savedMedals });
+      }
+
+      // Hydrate persisted singularity stats from globalState
+      const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
+      if (savedSingularity) {
+        void webviewView.webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
+      }
+
+      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
+        // Persist medal state changes to globalState
+        if (msg?.type === 'persist-medals') {
+          void context.globalState.update('medals', {
+            unlockedAchievements: msg.unlockedAchievements,
+            achievementTiers: msg.achievementTiers,
+            achievementCounts: msg.achievementCounts,
+          });
+          return;
+        }
+        // Persist singularity stats to globalState
+        if (msg?.type === 'persist-singularity') {
+          void context.globalState.update('singularityStats', msg.stats);
+          return;
+        }
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
-          void runSetupClaudeCodeHooks().then(() => {
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          void runSetupClaudeCodeHooks().then(async () => {
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+          });
+        } else if (msg?.type === 'setup-agent' && msg.agentType === 'opencode') {
+          void runSetupOpenCodeHooks().then(async () => {
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
           });
         } else if (msg?.type === 'remove-agent' && msg.agentType === 'claude-code') {
-          removeClaudeCodeHooks();
-          void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
-          void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: getConnectedAgentTypes() });
+          void removeClaudeCodeHooks().then(async () => {
+            void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+          });
+        } else if (msg?.type === 'remove-agent' && msg.agentType === 'opencode') {
+          void removeOpenCodeHooks().then(async () => {
+            void vscode.window.showInformationMessage('Event Horizon: OpenCode plugin removed.');
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+          });
         } else if (msg?.type === 'spawn-agent' && msg.command) {
           // 1.1 — whitelist allowed commands to prevent arbitrary shell execution
           const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
@@ -90,7 +137,7 @@ function getWebviewHtml(
   const scriptSrc = scriptUri.toString() + '?v=' + version;
 
   // 1.6 — initial state injected via data attribute to avoid inline script (CSP compliance)
-  const initData = JSON.stringify({ connectedAgents: connectedAgentTypes });
+  const initData = JSON.stringify({ connectedAgents: connectedAgentTypes, version });
 
   return `<!DOCTYPE html>
 <html>

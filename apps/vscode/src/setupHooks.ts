@@ -4,13 +4,13 @@
  */
 
 import * as vscode from 'vscode';
-import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { getAuthToken } from './eventServer.js';
 
 const PORT = 28765;
 
-// 3.7 — plain array; only the names matter, values were never used
 const EH_HOOK_EVENTS = [
   'SessionStart',
   'SessionEnd',
@@ -18,11 +18,14 @@ const EH_HOOK_EVENTS = [
   'PostToolUse',
   'UserPromptSubmit',
   'Notification',
+  'SubagentStart',
+  'SubagentStop',
 ] as const;
 
 function buildCurlCommand(): string {
-  // Pipe Claude's full hook payload (stdin) to our endpoint — works on Win10+, macOS, Linux
-  return `curl -s -X POST http://127.0.0.1:${PORT}/claude -H "Content-Type: application/json" --data-binary @-`;
+  const token = getAuthToken();
+  const tokenParam = token ? `?token=${token}` : '';
+  return `curl -s -X POST http://127.0.0.1:${PORT}/claude${tokenParam} -H "Content-Type: application/json" --data-binary @-`;
 }
 
 /** True if a curl command string is our Event Horizon hook (any version). */
@@ -35,11 +38,11 @@ function isCurrentEhCommand(cmd: string): boolean {
   return cmd === buildCurlCommand();
 }
 
-/** Returns true if Event Horizon hooks are present in ~/.claude/settings.json */
-export function isClaudeCodeHooksInstalled(): boolean {
+/** Returns true if Event Horizon hooks exist in ~/.claude/settings.json (any token version). */
+export async function isClaudeCodeHooksInstalled(): Promise<boolean> {
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
   try {
-    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const raw = await fsp.readFile(settingsPath, 'utf8');
     const settings = JSON.parse(raw) as Record<string, unknown>;
     const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
     return EH_HOOK_EVENTS.some((hookEvent) => {
@@ -55,11 +58,39 @@ export function isClaudeCodeHooksInstalled(): boolean {
   }
 }
 
-/** Removes Event Horizon hooks from ~/.claude/settings.json */
-export function removeClaudeCodeHooks(): void {
+/** Returns true if EH hooks exist but with a stale (old session) token. */
+export async function hasStaleClaudeCodeHooks(): Promise<boolean> {
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
   try {
-    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const raw = await fsp.readFile(settingsPath, 'utf8');
+    const settings = JSON.parse(raw) as Record<string, unknown>;
+    const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+    let hasAny = false;
+    let hasCurrent = false;
+    for (const hookEvent of EH_HOOK_EVENTS) {
+      const entries = (hooks[hookEvent] ?? []) as unknown[];
+      for (const h of entries) {
+        const hh = h as Record<string, unknown>;
+        const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
+        for (const c of hs) {
+          if (typeof c.command === 'string' && isEhCommand(c.command)) {
+            hasAny = true;
+            if (isCurrentEhCommand(c.command)) hasCurrent = true;
+          }
+        }
+      }
+    }
+    return hasAny && !hasCurrent;
+  } catch {
+    return false;
+  }
+}
+
+/** Removes Event Horizon hooks from ~/.claude/settings.json */
+export async function removeClaudeCodeHooks(): Promise<void> {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+  try {
+    const raw = await fsp.readFile(settingsPath, 'utf8');
     const settings = JSON.parse(raw) as Record<string, unknown>;
     const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
     const cleaned: Record<string, unknown[]> = {};
@@ -72,19 +103,25 @@ export function removeClaudeCodeHooks(): void {
       if (filtered.length > 0) cleaned[hookEvent] = filtered;
     }
     settings.hooks = cleaned;
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-  } catch {
-    // File not found or malformed — nothing to remove
+    await fsp.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  } catch (e) {
+    // File not found — nothing to remove; permission errors are worth surfacing
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code && code !== 'ENOENT') {
+      void vscode.window.showWarningMessage(
+        `Event Horizon: Could not remove hooks — ${(e as Error).message}`,
+      );
+    }
   }
 }
 
-// 3.2 — synchronous I/O; removed misleading async keyword
-export function setupClaudeCodeHooks(): void {
+// 4.7 — converted to async file I/O
+export async function setupClaudeCodeHooks(): Promise<void> {
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
 
   let settings: Record<string, unknown> = {};
   try {
-    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const raw = await fsp.readFile(settingsPath, 'utf8');
     settings = JSON.parse(raw);
   } catch {
     // File doesn't exist or is invalid — start fresh
@@ -120,13 +157,13 @@ export function setupClaudeCodeHooks(): void {
   settings.hooks = merged;
 
   const dir = path.dirname(settingsPath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
 export async function runSetupClaudeCodeHooks(): Promise<void> {
   try {
-    setupClaudeCodeHooks();
+    await setupClaudeCodeHooks();
     void vscode.window.showInformationMessage(
       'Event Horizon: Claude Code hooks installed! Start a Claude Code session to see your agent appear.',
     );

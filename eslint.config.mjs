@@ -9,13 +9,21 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         ...globals.node,
-        ...globals.browser,
       },
     },
     rules: {
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-empty-object-type': 'off',
+    },
+  },
+  // Browser globals for webview and renderer/UI packages
+  {
+    files: ['apps/vscode/webview/**/*.{ts,tsx}', 'packages/renderer/**/*.{ts,tsx}', 'packages/ui/**/*.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
     },
   },
   {

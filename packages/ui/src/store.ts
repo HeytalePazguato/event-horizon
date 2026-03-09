@@ -6,17 +6,10 @@
 import { create } from 'zustand';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
-
-/**
- * Tier thresholds for tiered achievements.
- * Kept here (not imported from Achievements.tsx) to avoid circular dependency.
- */
-const TIERED_THRESHOLDS: Record<string, number[]> = {
-  gravity_well: [1, 10, 50, 100, 1000, 10000],
-  ufo_hunter:   [1, 10, 50, 100, 500],
-};
+import { TIERED_THRESHOLDS } from './achievements/registry.js';
 
 export interface LogEntry {
+  id: string;
   ts: string;
   agentId: string;
   agentName: string;
@@ -28,10 +21,48 @@ export interface ToastEntry {
   achievementId: string;
 }
 
+/** Persistent stats for the black hole — everything it has consumed. */
+export interface SingularityStats {
+  /** Agents that terminated — their planet was consumed. */
+  planetsSwallowed: number;
+  /** Astronauts that drifted into the gravity well. */
+  astronautsConsumed: number;
+  /** UFOs that flew too close and spiralled in. */
+  ufosConsumed: number;
+  /** Cows abducted by UFOs (cosmic event witnessed from the center). */
+  cowsAbducted: number;
+  /** Data-transfer ships observed flying between planets. */
+  shipsObserved: number;
+  /** Total unique agents that ever connected to the universe. */
+  agentsSeen: number;
+  /** Total events processed across all agents. */
+  eventsWitnessed: number;
+  /** Total errors witnessed across all agents. */
+  errorsWitnessed: number;
+  /** Timestamp of first ever event. */
+  firstEventAt: number;
+}
+
+export const EMPTY_SINGULARITY_STATS: SingularityStats = {
+  planetsSwallowed: 0,
+  astronautsConsumed: 0,
+  ufosConsumed: 0,
+  cowsAbducted: 0,
+  shipsObserved: 0,
+  agentsSeen: 0,
+  eventsWitnessed: 0,
+  errorsWitnessed: 0,
+  firstEventAt: 0,
+};
+
 export interface CommandCenterState {
   selectedAgentId: string | null;
   selectedAgent: AgentState | null;
   selectedMetrics: AgentMetrics | null;
+  /** When true, the black hole is selected instead of a planet. */
+  singularitySelected: boolean;
+  /** Persistent cosmic ledger. */
+  singularityStats: SingularityStats;
   centerRequestedAt: number;
   /** Agent IDs whose pulse animation is frozen. */
   pausedAgentIds: Record<string, boolean>;
@@ -47,6 +78,8 @@ export interface CommandCenterState {
   infoOpen: boolean;
   /** Whether the demo simulation is running (owned here so Commands panel can toggle it). */
   demoRequested: boolean;
+  /** True while demo simulation is active — guards achievements from firing. */
+  demoMode: boolean;
   /** Active toast notifications. */
   activeToasts: ToastEntry[];
   /** Achievement IDs that have already been unlocked (one-shot). */
@@ -64,6 +97,9 @@ export interface CommandCenterState {
 
   setSelectedAgent: (id: string | null) => void;
   setSelectedAgentData: (agent: AgentState | null, metrics: AgentMetrics | null) => void;
+  selectSingularity: () => void;
+  incrementSingularityStat: (key: keyof SingularityStats, amount?: number) => void;
+  setSingularityStats: (stats: SingularityStats) => void;
   requestCenter: () => void;
   togglePause: (id: string) => void;
   toggleIsolate: (id: string) => void;
@@ -74,6 +110,7 @@ export interface CommandCenterState {
   addLog: (entry: LogEntry) => void;
   toggleInfo: () => void;
   requestDemo: () => void;
+  setDemoMode: (active: boolean) => void;
   /** Unlock an achievement and show a toast. No-op if already unlocked. For tiered achievements, use incrementTieredAchievement instead. */
   unlockAchievement: (id: string) => void;
   /** Increment the count for a tiered achievement and upgrade tier if threshold is met. */
@@ -86,10 +123,20 @@ export interface CommandCenterState {
   clearConnectAgent: () => void;
 }
 
+const boostTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Clear all pending boost timers — call on webview init/reload to prevent stale timeouts. */
+export function clearAllBoostTimers(): void {
+  for (const t of boostTimers.values()) clearTimeout(t);
+  boostTimers.clear();
+}
+
 export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedAgentId: null,
   selectedAgent: null,
   selectedMetrics: null,
+  singularitySelected: false,
+  singularityStats: { ...EMPTY_SINGULARITY_STATS },
   centerRequestedAt: 0,
   pausedAgentIds: {},
   isolatedAgentId: null,
@@ -98,6 +145,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   logs: [],
   infoOpen: false,
   demoRequested: false,
+  demoMode: false,
   activeToasts: [],
   unlockedAchievements: [],
   achievementCounts: {},
@@ -106,14 +154,46 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   spawnOpen: false,
   pendingConnectAgent: null,
 
-  setSelectedAgent: (id) => set({ selectedAgentId: id, selectedAgent: null, selectedMetrics: null }),
+  setSelectedAgent: (id) => set((s) => ({
+    selectedAgentId: id,
+    selectedAgent: null,
+    selectedMetrics: null,
+    singularitySelected: false,
+    // If isolation is active, follow the selection to the new planet
+    isolatedAgentId: s.isolatedAgentId && id ? id : s.isolatedAgentId,
+  })),
 
   setSelectedAgentData: (agent, metrics) =>
-    set({
+    set((s) => ({
       selectedAgentId: agent?.id ?? null,
       selectedAgent: agent ?? null,
       selectedMetrics: metrics ?? null,
+      singularitySelected: false,
+      // If isolation is active, follow the selection to the new planet
+      isolatedAgentId: s.isolatedAgentId && agent?.id ? agent.id : s.isolatedAgentId,
+    })),
+
+  selectSingularity: () => set((s) => ({
+    selectedAgentId: null,
+    selectedAgent: null,
+    selectedMetrics: null,
+    singularitySelected: true,
+    // If isolation is active, isolate the singularity (sentinel dims all planets)
+    isolatedAgentId: s.isolatedAgentId ? '__singularity__' : null,
+  })),
+
+  incrementSingularityStat: (key, amount = 1) =>
+    set((s) => {
+      const stats = { ...s.singularityStats };
+      if (key === 'firstEventAt') {
+        if (!stats.firstEventAt) stats.firstEventAt = Date.now();
+      } else {
+        (stats[key] as number) += amount;
+      }
+      return { singularityStats: stats };
     }),
+
+  setSingularityStats: (stats) => set({ singularityStats: stats }),
 
   requestCenter: () => set({ centerRequestedAt: Date.now() }),
 
@@ -127,7 +207,14 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
 
   triggerBoost: (id) => {
     set((s) => ({ boostedAgentIds: { ...s.boostedAgentIds, [id]: true } }));
-    setTimeout(() => get().clearBoost(id), 5000);
+    // Clear any existing boost timer for this agent
+    const existing = boostTimers.get(id);
+    if (existing) clearTimeout(existing);
+    const timerId = setTimeout(() => {
+      boostTimers.delete(id);
+      get().clearBoost(id);
+    }, 5000);
+    boostTimers.set(id, timerId);
   },
 
   clearBoost: (id) =>
@@ -142,14 +229,17 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
 
   addLog: (entry) =>
     set((s) => ({
-      logs: [entry, ...s.logs].slice(0, 200),
+      logs: [{ ...entry, id: entry.id || `log-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` }, ...s.logs].slice(0, 200),
     })),
 
   toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),
 
   requestDemo: () => set((s) => ({ demoRequested: !s.demoRequested })),
+  setDemoMode: (active) => set({ demoMode: active }),
 
   unlockAchievement: (id) => {
+    // Demo guard: only demo_activated can fire during demo mode
+    if (get().demoMode && id !== 'demo_activated') return;
     if (get().unlockedAchievements.includes(id)) return;
     const instanceId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     set((s) => ({
@@ -159,6 +249,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   },
 
   incrementTieredAchievement: (id) => {
+    // Demo guard: no tiered achievements during demo mode
+    if (get().demoMode) return;
     const tiers = TIERED_THRESHOLDS[id];
     if (!tiers) return;
     const state = get();

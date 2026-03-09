@@ -1,8 +1,0 @@
-{
-  "name": "event-horizon",
-  "version": "0.1.0",
-  "description": "Visualize AI coding agents as a living cosmic system. Works as a VS Code extension; install the Event Horizon extension from this repo.",
-  "cursorInstall": {
-    "vscodeExtensionId": "event-horizon-vscode"
-  }
-}
