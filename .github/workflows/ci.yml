@@ -327,3 +327,9 @@ jobs:
           name: v${{ env.VERSION }}
           files: apps/vscode/*.vsix
           generate_release_notes: true
+
+      - name: Publish to VS Code Marketplace
+        if: env.TAG_EXISTS != 'true'
+        run: cd apps/vscode && npx @vscode/vsce publish --no-dependencies --packagePath *.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
