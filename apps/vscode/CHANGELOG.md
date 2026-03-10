@@ -13,6 +13,10 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Fixed
 - Shooting star burst on resume: all scheduled shooting stars fired simultaneously after the panel was hidden for a while. Now caps tick delta and flushes stale stars on resume
 - Removed sourcemap reference from production webview build to eliminate CSP console warning
+- Workspace folder cooperation check now uses path boundary (`/project` no longer matches `/project-other`)
+- Cooperation ship emitter no longer crashes if webview is disposed between async callbacks
+- OpenCode connector no longer mutates the caller's input payload object
+- Achievements now persist correctly when the panel is moved (e.g., sidebar to bottom panel). Hydration messages are deferred until the webview signals readiness
 
 ## [0.0.2] — 2026-03-09
 
