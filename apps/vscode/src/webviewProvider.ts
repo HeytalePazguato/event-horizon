@@ -42,37 +42,45 @@ export function createWebviewProvider(
         return types;
       }
 
-      // Kick off async detection; render HTML with empty list first, then update via message
-      const connectedPromise = getConnectedAgentTypes();
+      // Render HTML first; hydration happens when webview sends 'ready'
       webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, version, []);
-      void connectedPromise.then((agentTypes) => {
-        void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes });
-      });
 
-      // 2.2 — hydrate webview with accumulated state on (re)open
-      const agents = agentStateManager.getAllAgents();
-      const metrics = metricsEngine.getAllMetrics();
-      if (agents.length > 0) {
-        void webviewView.webview.postMessage({ type: 'init-state', agents, metrics });
-      }
+      function hydrateWebview() {
+        // Connected agent types
+        void getConnectedAgentTypes().then((agentTypes) => {
+          void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes });
+        });
 
-      // Hydrate persisted medals from globalState
-      const savedMedals = context.globalState.get<{
-        unlockedAchievements: string[];
-        achievementTiers: Record<string, number>;
-        achievementCounts: Record<string, number>;
-      }>('medals');
-      if (savedMedals?.unlockedAchievements?.length) {
-        void webviewView.webview.postMessage({ type: 'init-medals', ...savedMedals });
-      }
+        // 2.2 — hydrate webview with accumulated state on (re)open
+        const agents = agentStateManager.getAllAgents();
+        const metrics = metricsEngine.getAllMetrics();
+        if (agents.length > 0) {
+          void webviewView.webview.postMessage({ type: 'init-state', agents, metrics });
+        }
 
-      // Hydrate persisted singularity stats from globalState
-      const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
-      if (savedSingularity) {
-        void webviewView.webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
+        // Hydrate persisted medals from globalState
+        const savedMedals = context.globalState.get<{
+          unlockedAchievements: string[];
+          achievementTiers: Record<string, number>;
+          achievementCounts: Record<string, number>;
+        }>('medals');
+        if (savedMedals?.unlockedAchievements?.length) {
+          void webviewView.webview.postMessage({ type: 'init-medals', ...savedMedals });
+        }
+
+        // Hydrate persisted singularity stats from globalState
+        const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
+        if (savedSingularity) {
+          void webviewView.webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
+        }
       }
 
       webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
+        // Webview JS has loaded and is ready to receive messages
+        if (msg?.type === 'ready') {
+          hydrateWebview();
+          return;
+        }
         // Persist medal state changes to globalState
         if (msg?.type === 'persist-medals') {
           void context.globalState.update('medals', {

@@ -39,7 +39,9 @@ function areAgentsCooperating(cwdA: string, cwdB: string): boolean {
   if (folders) {
     for (const folder of folders) {
       const normFolder = normalizePath(folder.uri.fsPath);
-      if (normA.startsWith(normFolder) && normB.startsWith(normFolder)) return true;
+      const normFolderSlash = normFolder.endsWith('/') ? normFolder : normFolder + '/';
+      if ((normA === normFolder || normA.startsWith(normFolderSlash)) &&
+          (normB === normFolder || normB.startsWith(normFolderSlash))) return true;
     }
   }
 
@@ -139,7 +141,7 @@ export function activate(context: vscode.ExtensionContext): void {
       timestamp: Date.now(),
       payload: { toAgentId: toId, payloadSize: 1, cooperation: true },
     };
-    webviewRef.current!.postMessage({ type: 'event', payload: coopEvent });
+    webviewRef.current?.postMessage({ type: 'event', payload: coopEvent });
   }
 
   function scheduleCoopShip() {

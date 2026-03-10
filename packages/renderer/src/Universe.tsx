@@ -68,6 +68,10 @@ export interface UniverseProps {
   onAstronautTrapped?: () => void;
   /** Called when an astronaut escapes the gravity well via jet propulsion. */
   onAstronautEscaped?: () => void;
+  /** Called when an astronaut grazes the black hole (near-miss without entering gravity well). */
+  onAstronautGrazed?: () => void;
+  /** Called when an astronaut lands on a planet. */
+  onAstronautLanded?: (agentId: string) => void;
   /** Called when an astronaut bounces off an edge. */
   onAstronautBounced?: (astronautId: number, bounceCount: number, edgesHit: Set<string>) => void;
   /** Called when an astronaut fires its jetpack. */
@@ -78,6 +82,8 @@ export interface UniverseProps {
   onKamikaze?: () => void;
   /** Called when the UFO beam is interrupted and the cow falls back. */
   onCowDrop?: () => void;
+  /** Called when the user clicks on a shooting star. */
+  onShootingStarClicked?: () => void;
 }
 
 // --- constants -----------------------------------------------------------
@@ -90,6 +96,7 @@ const GRAVITY_STRENGTH = 0.15;
 const SINGULARITY_PULL = 1.2;
 const ASTRONAUT_MAX_SPEED = 3;
 const ASTRONAUT_SUCK_RADIUS = 92;   // outer glow of singularity — suck-in starts here
+const ASTRONAUT_GRAZE_RADIUS = 120; // near-miss zone just outside the gravity well
 const ASTRONAUT_DESTROY_RADIUS = 30;
 const SHIP_PROGRESS_SPEED = 0.006;
 const SHIP_AVOID_RADIUS = 95; // must clear singularity outer glow (DISK_OUTER 70 + glow 20 + margin)
@@ -321,11 +328,14 @@ export const Universe: FC<UniverseProps> = ({
   onUfoConsumed,
   onAstronautTrapped,
   onAstronautEscaped,
+  onAstronautGrazed,
+  onAstronautLanded,
   onAstronautBounced,
   onRocketMan,
   onTrickShot,
   onKamikaze,
   onCowDrop,
+  onShootingStarClicked,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -338,7 +348,7 @@ export const Universe: FC<UniverseProps> = ({
   const starsRef = useRef<Container | null>(null);
   const astronautsRef = useRef<Array<{
     id: number; c: Container; vx: number; vy: number;
-    inGravityWell?: boolean; escapeCount?: number; nextJetTime?: number;
+    inGravityWell?: boolean; inGrazeZone?: boolean; escapeCount?: number; nextJetTime?: number;
     bounceCount: number; edgesHit: Set<string>;
     jetFiredAt: number; hasBouncedSinceJet: boolean;
   }>>([]);
@@ -418,6 +428,10 @@ export const Universe: FC<UniverseProps> = ({
   onAstronautTrappedRef.current = onAstronautTrapped;
   const onAstronautEscapedRef = useRef(onAstronautEscaped);
   onAstronautEscapedRef.current = onAstronautEscaped;
+  const onAstronautGrazedRef = useRef(onAstronautGrazed);
+  onAstronautGrazedRef.current = onAstronautGrazed;
+  const onAstronautLandedRef = useRef(onAstronautLanded);
+  onAstronautLandedRef.current = onAstronautLanded;
   const onAstronautBouncedRef = useRef(onAstronautBounced);
   onAstronautBouncedRef.current = onAstronautBounced;
   const onRocketManRef = useRef(onRocketMan);
@@ -428,6 +442,8 @@ export const Universe: FC<UniverseProps> = ({
   onKamikazeRef.current = onKamikaze;
   const onCowDropRef = useRef(onCowDrop);
   onCowDropRef.current = onCowDrop;
+  const onShootingStarClickedRef = useRef(onShootingStarClicked);
+  onShootingStarClickedRef.current = onShootingStarClicked;
   const onPlanetHoverRef = useRef(onPlanetHover);
   onPlanetHoverRef.current = onPlanetHover;
   const onPlanetClickRef = useRef(onPlanetClick);
@@ -1037,6 +1053,16 @@ export const Universe: FC<UniverseProps> = ({
           g.x = x;
           g.y = y;
           g.alpha = 0;
+          g.eventMode = 'static';
+          g.cursor = 'pointer';
+          g.hitArea = { contains: (hx: number, hy: number) => hx * hx + hy * hy < 400 };
+          g.on('pointertap', () => {
+            onShootingStarClickedRef.current?.();
+            // Destroy this star immediately on click
+            g.destroy();
+            const idx = shootingStarsRef.current.findIndex((s) => s.g === g);
+            if (idx !== -1) shootingStarsRef.current.splice(idx, 1);
+          });
           // Add behind planets (index 1 = right after singularity)
           if (world.children.length > 1) {
             world.addChildAt(g, 1);
@@ -1056,7 +1082,17 @@ export const Universe: FC<UniverseProps> = ({
 
     const tick = () => {
       if (!world || !planetsContainer) return;
-      const dt = app.ticker.deltaMS / 1000;
+      const rawDt = app.ticker.deltaMS / 1000;
+      // Cap delta to prevent animation bursts after the panel was hidden
+      const dt = Math.min(rawDt, 0.1);
+
+      // If we were hidden for a long time, flush accumulated shooting stars
+      if (rawDt > 1) {
+        const sstars = shootingStarsRef.current;
+        for (const ss of sstars) ss.g.destroy();
+        sstars.length = 0;
+      }
+
       tickTimeRef.current += dt;
       const singPos = { x: 0, y: 0 };
 
@@ -1284,6 +1320,18 @@ export const Universe: FC<UniverseProps> = ({
           onAstronautEscapedRef.current?.();
         }
 
+        // Graze zone — near-miss detection (close but didn't enter gravity well)
+        if (!a.inGravityWell && !a.inGrazeZone && r < ASTRONAUT_GRAZE_RADIUS) {
+          a.inGrazeZone = true;
+        }
+        if (a.inGrazeZone && r >= ASTRONAUT_GRAZE_RADIUS) {
+          a.inGrazeZone = false;
+          // Only count as a graze if they never entered the gravity well
+          if (!a.inGravityWell) {
+            onAstronautGrazedRef.current?.();
+          }
+        }
+
         if (r < ASTRONAUT_DESTROY_RADIUS) {
           // Check for trick_shot (bounced then fell in) or kamikaze (jetted straight in)
           if (a.jetFiredAt > 0) {
@@ -1327,6 +1375,7 @@ export const Universe: FC<UniverseProps> = ({
           ax += (px / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
           ay += (py / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
           if (pr < (p.__radius ?? 15) + 8) {
+            if (p.__agentId) onAstronautLandedRef.current?.(p.__agentId);
             a.c.destroy({ children: true });
             astros.splice(i, 1);
             removed = true;

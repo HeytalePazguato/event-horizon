@@ -33,6 +33,12 @@ import { bouncyBoy } from './defs/bouncy-boy.js';
 import { traveler } from './defs/traveler.js';
 import { kamikaze } from './defs/kamikaze.js';
 import { butterfingers } from './defs/butterfingers.js';
+import { grazingShot } from './defs/grazing-shot.js';
+import { conquerorClaude } from './defs/conqueror-claude.js';
+import { conquerorOpencode } from './defs/conqueror-opencode.js';
+import { conquerorCopilot } from './defs/conqueror-copilot.js';
+import { conquerorUnknown } from './defs/conqueror-unknown.js';
+import { starCatcher } from './defs/star-catcher.js';
 
 /** Ordered list of all achievement definitions. */
 const ALL_DEFS: AchievementDef[] = [
@@ -56,6 +62,12 @@ const ALL_DEFS: AchievementDef[] = [
   traveler,
   kamikaze,
   butterfingers,
+  grazingShot,
+  conquerorClaude,
+  conquerorOpencode,
+  conquerorCopilot,
+  conquerorUnknown,
+  starCatcher,
 ];
 
 /** Legacy-compatible shape consumed by AchievementsBar / AchievementToasts. */

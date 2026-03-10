@@ -2,6 +2,10 @@
 
 Event Horizon is a VS Code extension that visualizes AI coding agents as a living cosmic system. Instead of viewing logs, terminals, or raw agent output, developers observe agent behavior in real time through an interactive universe.
 
+## Demo
+
+![Event Horizon Demo](assets/demo.gif)
+
 ## The Origin
 
 I asked Claude a simple question:
