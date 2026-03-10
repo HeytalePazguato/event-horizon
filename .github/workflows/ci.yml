@@ -92,7 +92,7 @@ jobs:
           cd apps/vscode && pnpm run build:ext:prod && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: event-horizon-${{ env.VERSION }}.vsix
           path: apps/vscode/*.vsix
@@ -209,7 +209,7 @@ jobs:
           cd apps/vscode && pnpm run build:ext:prod && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: event-horizon-${{ env.VERSION }}.vsix
           path: apps/vscode/*.vsix
