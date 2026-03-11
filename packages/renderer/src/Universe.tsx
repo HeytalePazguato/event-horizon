@@ -1017,6 +1017,9 @@ export const Universe: FC<UniverseProps> = ({
     const spawnShootingStars = () => {
       const delay = SHOOTING_STAR_INTERVAL_MIN + Math.random() * (SHOOTING_STAR_INTERVAL_MAX - SHOOTING_STAR_INTERVAL_MIN);
       shootingStarTimerRef.current = setTimeout(() => {
+        // Don't spawn shooting stars while the panel is hidden — they accumulate
+        // and all appear at once when the panel becomes visible again.
+        if (document.hidden) { spawnShootingStars(); return; }
         const sz = sizeRef.current;
         const scale = scaleRef.current;
         const pan = posRef.current;

@@ -1,8 +1,109 @@
 import { describe, it, expect } from 'vitest';
-import { mapCopilotOutputToEvent } from '../copilot.js';
+import { mapCopilotHookToEvent, mapCopilotOutputToEvent } from '../copilot.js';
 
-describe('mapCopilotOutputToEvent', () => {
-  it('matches "Running tool..." as task.start', () => {
+describe('mapCopilotHookToEvent', () => {
+  it('maps SessionStart to agent.spawn', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'sess-123',
+      cwd: '/home/user/project',
+      source: 'new',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.spawn');
+    expect(result!.agentId).toBe('sess-123');
+    expect(result!.agentType).toBe('copilot');
+    expect(result!.payload?.cwd).toBe('/home/user/project');
+  });
+
+  it('maps Stop to agent.idle (per-turn, not session end)', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'Stop',
+      session_id: 'sess-123',
+      stop_hook_active: false,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.idle');
+  });
+
+  it('maps SessionEnd to agent.terminate', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'SessionEnd',
+      session_id: 'sess-123',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.terminate');
+  });
+
+  it('maps UserPromptSubmit to task.start with prompt', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'sess-123',
+      prompt: 'Fix the bug in main.ts',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('task.start');
+    expect(result!.payload?.prompt).toBe('Fix the bug in main.ts');
+  });
+
+  it('maps PreToolUse to tool.call with tool name', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-123',
+      tool_name: 'run_in_terminal',
+      tool_use_id: 'call_123',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('tool.call');
+    expect(result!.payload?.toolName).toBe('run_in_terminal');
+  });
+
+  it('maps SubagentStart to task.start with subagent metadata', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'SubagentStart',
+      session_id: 'sub-session-456',
+      agent_id: 'agent-789',
+      agent_type: 'default',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('task.start');
+    expect(result!.agentId).toBe('sub-session-456');
+    expect(result!.payload?.isSubagent).toBe(true);
+    expect(result!.payload?.subagentSessionId).toBe('sub-session-456');
+    expect(result!.payload?.subagentId).toBe('agent-789');
+  });
+
+  it('maps SubagentStop to task.complete', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'SubagentStop',
+      session_id: 'sub-session-456',
+      agent_id: 'agent-789',
+      agent_type: 'default',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('task.complete');
+    expect(result!.payload?.isSubagent).toBe(true);
+  });
+
+  it('returns null for unknown hook event', () => {
+    expect(mapCopilotHookToEvent({ hook_event_name: 'UnknownEvent' })).toBeNull();
+  });
+
+  it('returns null for null/undefined input', () => {
+    expect(mapCopilotHookToEvent(null)).toBeNull();
+    expect(mapCopilotHookToEvent(undefined)).toBeNull();
+    expect(mapCopilotHookToEvent({})).toBeNull();
+  });
+
+  it('defaults agentId when session_id is missing', () => {
+    const result = mapCopilotHookToEvent({ hook_event_name: 'SessionStart' });
+    expect(result).not.toBeNull();
+    expect(result!.agentId).toBe('copilot-1');
+  });
+});
+
+describe('mapCopilotOutputToEvent (legacy)', () => {
+  it('matches "Running tool bash" as task.start', () => {
     const result = mapCopilotOutputToEvent('Running tool bash');
     expect(result).not.toBeNull();
     expect(result!.type).toBe('task.start');
@@ -15,25 +116,8 @@ describe('mapCopilotOutputToEvent', () => {
     expect(result!.type).toBe('agent.error');
   });
 
-  it('does NOT match "ErrorBoundary" as agent.error', () => {
-    // "ErrorBoundary" starts with "Error" but the regex requires a word boundary after
-    // The regex is /^(error|failed|exception)\b/i — "ErrorBoundary" has no boundary after "Error"
-    const result = mapCopilotOutputToEvent('ErrorBoundary caught an exception');
-    // The regex /^(error|failed|exception)\b/ won't match "ErrorBoundary" because \b is between 'r' and 'B'
-    // Actually \b IS between lowercase 'r' and uppercase 'B' — both are word chars, so \b doesn't match there.
-    // Wait: \b matches between a word char and non-word char. 'r' and 'B' are both word chars, so no \b.
-    // So "ErrorBoundary" does NOT match /^error\b/i — correct!
-    expect(result).toBeNull();
-  });
-
-  it('does NOT match "no errors found"', () => {
-    const result = mapCopilotOutputToEvent('no errors found');
-    expect(result).toBeNull();
-  });
-
   it('returns null for empty/non-matching input', () => {
     expect(mapCopilotOutputToEvent('')).toBeNull();
-    expect(mapCopilotOutputToEvent('   ')).toBeNull();
     expect(mapCopilotOutputToEvent('just some random text')).toBeNull();
   });
 

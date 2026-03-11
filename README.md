@@ -70,8 +70,34 @@ Certain actions and milestones unlock achievements, displayed as medals in the C
 |-------|--------|-------------|
 | **Claude Code** | Supported | One-click hook installation via Connect wizard. Hooks added to `~/.claude/settings.json`. |
 | **OpenCode** | Supported | One-click plugin installation via Connect wizard. Plugin written to `~/.config/opencode/plugins/`. |
-| **GitHub Copilot** | Planned | Connector ready, integration coming soon. |
+| **GitHub Copilot** | In Progress | Hook-based integration via `.github/hooks/`. See notes below. |
 | **Cursor** | Planned | Connector ready, integration coming soon. |
+
+### Hook & Event Support Matrix
+
+The table below shows which lifecycle events each agent supports and how they map to Event Horizon's internal `AgentEvent` types.
+
+| Hook / Event | Claude Code | GitHub Copilot | OpenCode | AgentEvent mapping |
+|---|---|---|---|---|
+| **SessionStart** | `SessionStart` ✅ | `SessionStart` ✅ | `session.created` ✅ | `agent.spawn` |
+| **SessionEnd** | `SessionEnd` ✅ | ❌ Never fires (see below) | `session.deleted` ✅ | `agent.terminate` |
+| **Stop** (per-turn) | — | `Stop` ✅ | — | `agent.idle` (not terminate) |
+| **UserPromptSubmit** | `UserPromptSubmit` ✅ | `UserPromptSubmit` ✅ | `message.updated` (role=user) ✅ | `task.start` |
+| **PreToolUse** | `PreToolUse` ✅ | `PreToolUse` ✅ | `tool.execute.before` ✅ | `tool.call` |
+| **PostToolUse** | `PostToolUse` ✅ | `PostToolUse` ✅ | `tool.execute.after` ✅ | `tool.result` |
+| **SubagentStart** | `SubagentStart` ✅ | `SubagentStart` ✅ ⚠️ | — | `task.start` |
+| **SubagentStop** | `SubagentStop` ✅ | `SubagentStop` ✅ | — | `task.complete` |
+| **Notification** | `Notification` ✅ | — | — | `message.receive` |
+| **PreCompact** | — | `PreCompact` (untested) | — | — |
+| **Error** | `PostToolUseFailure` ✅ | — | `session.error` ✅ | `agent.error` |
+
+#### Copilot-specific notes
+
+- **`SessionEnd` never fires** ([bug reported](https://github.com/microsoft/vscode-copilot-release/issues)). Closing a Copilot chat tab does not trigger any hook. There is no reliable way to detect session termination — the VS Code tab API doesn't expose which session a tab belongs to, so we can't link a tab close to a specific agent. Copilot planets currently persist until the extension reloads. A future workaround may use an inactivity timeout to garbage-collect stale agents.
+- **`Stop` fires per-turn**, not per-session. Every time Copilot finishes a response, `Stop` fires. This is fundamentally different from Claude Code, where `SessionEnd` signals a true session teardown.
+- **`SubagentStart` uses the subagent's `session_id`**, not the parent's. This means subagent events arrive with a different session ID than the parent agent. The parent can be identified by correlating with the preceding `PreToolUse` where `tool_name = "runSubagent"`.
+- **Payload field names are `snake_case`**: `session_id`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, `tool_use_id`, `agent_id`, `agent_type`, `transcript_path`, `stop_hook_active`, `source`.
+- **`windows` field in hook config is ignored.** VS Code runs the `command` field directly through PowerShell on Windows, regardless of whether a `windows` override is present. Commands must be PowerShell-safe.
 
 ## Getting Started
 
