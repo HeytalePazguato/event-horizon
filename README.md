@@ -105,7 +105,11 @@ The table below shows which lifecycle events each agent supports and how they ma
 
 #### Claude Code
 
-- **Subagent permission completion not signaled** — When a subagent requests permission (e.g. to run a Bash command), the `PermissionRequest` hook fires and the waiting ring appears. However, Claude Code does not fire any hook when the user grants or denies the permission. The only signal is `PostToolUse`, which fires when the tool *finishes executing* — not when the user approves it. This means the waiting ring stays visible for the entire duration of the tool execution, not just during the approval prompt. This is a [known limitation on Claude Code's side](https://github.com/anthropics/claude-code/issues/33473). Once a permission completion hook is added upstream, Event Horizon will use it to clear the ring immediately after approval.
+- **Subagent permission completion not signaled** — When a subagent requests permission (e.g. to run a Bash command), the `PermissionRequest` hook fires and the waiting ring appears. However, Claude Code does not fire any hook when the user grants or denies the permission. The only signal is `PostToolUse`, which fires when the tool *finishes executing* — not when the user approves it. This means the waiting ring stays visible for the entire duration of the tool execution, not just during the approval prompt. This is a [known limitation on Claude Code's side](https://github.com/anthropics/claude-code/issues/33473#issuecomment-4043810416). Once a permission completion hook is added upstream, Event Horizon will use it to clear the ring immediately after approval.
+
+#### OpenCode
+
+- **No subagent hooks** ([issue #16627](https://github.com/anomalyco/opencode/issues/16627)) — OpenCode does not provide `SubagentStart` or `SubagentStop` events. There is no way to detect when a subagent is spawned or finishes, so subagent moons cannot be rendered for OpenCode planets.
 
 #### GitHub Copilot
 
