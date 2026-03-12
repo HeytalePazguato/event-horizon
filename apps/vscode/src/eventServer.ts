@@ -168,25 +168,7 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
 
       let event: AgentEvent | null = null;
       if (route === '/claude') {
-        const p = body as Record<string, unknown>;
-        const hookName = p.hook_event_name ?? p.event ?? p.hook ?? p.type ?? '(unknown)';
         event = mapClaudeHookToEvent(body);
-        // Comprehensive debug logging — show all relevant fields per hook type
-        const parts: string[] = [`[Event Horizon] hook=${hookName}`];
-        if (p.session_id) parts.push(`sid=${String(p.session_id).slice(0, 12)}`);
-        if (p.tool_name) parts.push(`tool=${p.tool_name}`);
-        if (p.notification_type) parts.push(`notif=${p.notification_type}`);
-        const nested = p.payload as Record<string, unknown> | undefined;
-        if (nested?.notification_type) parts.push(`notif=${nested.notification_type}`);
-        if (nested?.tool_name) parts.push(`nested_tool=${nested.tool_name}`);
-        if (p.subagent_id) parts.push(`subagent_id=${String(p.subagent_id).slice(0, 12)}`);
-        if (nested?.subagent_id) parts.push(`subagent_id=${String(nested.subagent_id).slice(0, 12)}`);
-        if (p.session_id_for_subagent) parts.push(`sub_sid=${String(p.session_id_for_subagent).slice(0, 12)}`);
-        if (nested?.session_id) parts.push(`nested_sid=${String(nested.session_id).slice(0, 12)}`);
-        parts.push(`→ ${event?.type ?? '(null)'}`);
-        if (event?.payload?.waitingSource) parts.push(`ws=${event.payload.waitingSource}`);
-        if (event?.payload?.toolName) parts.push(`evTool=${event.payload.toolName}`);
-        console.log(parts.join(' | '));
       } else if (route === '/copilot') {
         event = mapCopilotHookToEvent(body);
       } else if (route === '/opencode') {

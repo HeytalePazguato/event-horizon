@@ -87,6 +87,10 @@ export function activate(context: vscode.ExtensionContext): void {
       // Subagent permission/waiting events should not affect the parent —
       // the parent's own session fires PermissionRequest when IT needs input.
       if (event.type === 'agent.waiting') return;
+      // Clean up mapping when subagent terminates
+      if (event.type === 'agent.terminate') {
+        subagentToParent.delete(event.agentId);
+      }
       event = { ...event, agentId: parentId };
     }
 

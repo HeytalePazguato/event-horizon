@@ -4,19 +4,13 @@
  */
 
 import type { FC } from 'react';
+import { folderName } from './utils.js';
 
 export interface TooltipProps {
   agentName: string;
   loadPercent: number;
   activeTask: string | null;
   cwd?: string;
-}
-
-/** Extract the last folder name from a full path. */
-function folderName(cwd: string): string {
-  let normalized = cwd.replace(/\\/g, '/');
-  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
-  return normalized.split('/').pop() || cwd;
 }
 
 const tooltipStyle = {

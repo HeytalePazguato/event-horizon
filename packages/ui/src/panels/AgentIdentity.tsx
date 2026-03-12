@@ -5,12 +5,14 @@
 
 import type { FC } from 'react';
 import { useCommandCenterStore } from '../store.js';
+import { folderName } from '../utils.js';
 
 const stateColors: Record<string, string> = {
   idle: '#4a8a5a',
   thinking: '#d4a84a',
   working: '#b8a040',
   tool_use: '#6aa0d4',
+  waiting: '#d4944a',
   error: '#c65858',
 };
 
@@ -153,13 +155,6 @@ function SingularityIcon({ size = 52 }: { size?: number }) {
       <circle cx={cx} cy={cy} r={r * 0.38} fill="#000000" />
     </svg>
   );
-}
-
-/** Extract the last folder name from a full path. */
-function folderName(cwd: string): string {
-  let normalized = cwd.replace(/\\/g, '/');
-  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
-  return normalized.split('/').pop() || cwd;
 }
 
 export const AgentIdentity: FC = () => {

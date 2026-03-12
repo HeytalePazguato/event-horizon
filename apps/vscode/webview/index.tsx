@@ -287,12 +287,6 @@ function App() {
         else if (type === 'agent.spawn') state = 'idle';
         else state = prevAgent?.state ?? 'idle';  // preserve current state for unknown events
 
-        // Debug: log state transitions
-        const prevState = prevAgent?.state ?? '(new)';
-        if (state !== prevState) {
-          console.log(`[EH webview] ${agentId.slice(0, 12)} state: ${prevState} → ${state} (event=${type}, tool=${raw.payload?.toolName ?? '-'})`);
-        }
-
         // Capture cwd from payload for workspace-aware cooperation detection
         const cwd = (raw.payload?.cwd as string | undefined) ?? prevAgent?.cwd;
 
