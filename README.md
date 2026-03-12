@@ -101,17 +101,19 @@ The table below shows which lifecycle events each agent supports and how they ma
 | **TeammateIdle** | `TeammateIdle` ✅ | — | — | `agent.idle` |
 | **Error** | `PostToolUseFailure` ✅ | — | `session.error` ✅ | `agent.error` |
 
-#### Copilot-specific notes
+### Known Limitations
+
+#### Claude Code
+
+- **Subagent permission completion not signaled** — When a subagent requests permission (e.g. to run a Bash command), the `PermissionRequest` hook fires and the waiting ring appears. However, Claude Code does not fire any hook when the user grants or denies the permission. The only signal is `PostToolUse`, which fires when the tool *finishes executing* — not when the user approves it. This means the waiting ring stays visible for the entire duration of the tool execution, not just during the approval prompt. This is a [known limitation on Claude Code's side](https://github.com/anthropics/claude-code/issues/33473). Once a permission completion hook is added upstream, Event Horizon will use it to clear the ring immediately after approval.
+
+#### GitHub Copilot
 
 - **`SessionEnd` never fires** ([bug reported](https://github.com/microsoft/vscode-copilot-release/issues)). Closing a Copilot chat tab does not trigger any hook. There is no reliable way to detect session termination — the VS Code tab API doesn't expose which session a tab belongs to, so we can't link a tab close to a specific agent. Copilot planets currently persist until the extension reloads. A future workaround may use an inactivity timeout to garbage-collect stale agents.
 - **`Stop` fires per-turn**, not per-session. Every time Copilot finishes a response, `Stop` fires. This is fundamentally different from Claude Code, where `SessionEnd` signals a true session teardown.
 - **`SubagentStart` uses the subagent's `session_id`**, not the parent's. This means subagent events arrive with a different session ID than the parent agent. The parent can be identified by correlating with the preceding `PreToolUse` where `tool_name = "runSubagent"`.
 - **Payload field names are `snake_case`**: `session_id`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, `tool_use_id`, `agent_id`, `agent_type`, `transcript_path`, `stop_hook_active`, `source`.
 - **`windows` field in hook config is ignored.** VS Code runs the `command` field directly through PowerShell on Windows, regardless of whether a `windows` override is present. Commands must be PowerShell-safe.
-
-### Known Limitations
-
-- **Subagent permission completion not signaled (Claude Code)** — When a subagent requests permission (e.g. to run a Bash command), the `PermissionRequest` hook fires and the waiting ring appears. However, Claude Code does not fire any hook when the user grants or denies the permission. The only signal is `PostToolUse`, which fires when the tool *finishes executing* — not when the user approves it. This means the waiting ring stays visible for the entire duration of the tool execution, not just during the approval prompt. This is a [known limitation on Claude Code's side](https://github.com/anthropics/claude-code/issues/33473). Once a permission completion hook is added upstream, Event Horizon will use it to clear the ring immediately after approval.
 
 ## Getting Started
 
