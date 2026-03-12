@@ -744,9 +744,9 @@ export const Universe: FC<UniverseProps> = ({
         });
 
         // Name label beneath planet (+ folder name on second line)
-        const cwdFolder = agent.cwd
-          ? agent.cwd.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() || ''
-          : '';
+        let cwdNorm = agent.cwd ? agent.cwd.replace(/\\/g, '/') : '';
+        while (cwdNorm.endsWith('/')) cwdNorm = cwdNorm.slice(0, -1);
+        const cwdFolder = cwdNorm ? cwdNorm.split('/').pop() || '' : '';
         const labelText = cwdFolder ? `${agent.name}\n${cwdFolder}` : agent.name;
         const label = new Text({
           text: labelText,

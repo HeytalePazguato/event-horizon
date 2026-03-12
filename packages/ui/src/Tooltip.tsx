@@ -14,7 +14,8 @@ export interface TooltipProps {
 
 /** Extract the last folder name from a full path. */
 function folderName(cwd: string): string {
-  const normalized = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+  let normalized = cwd.replace(/\\/g, '/');
+  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
   return normalized.split('/').pop() || cwd;
 }
 
