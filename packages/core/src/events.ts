@@ -18,7 +18,8 @@ export type AgentEventType =
   | 'file.write'
   | 'message.send'
   | 'message.receive'
-  | 'data.transfer';
+  | 'data.transfer'
+  | 'agent.waiting';
 
 export type AgentType = 'opencode' | 'claude-code' | 'copilot' | 'cursor' | 'unknown';
 
@@ -54,4 +55,5 @@ export const AGENT_EVENT_TYPES: readonly AgentEventType[] = [
   'message.send',
   'message.receive',
   'data.transfer',
+  'agent.waiting',
 ] as const;

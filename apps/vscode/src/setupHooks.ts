@@ -14,12 +14,22 @@ const PORT = 28765;
 const EH_HOOK_EVENTS = [
   'SessionStart',
   'SessionEnd',
+  'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
-  'UserPromptSubmit',
+  'PostToolUseFailure',
+  'PermissionRequest',
   'Notification',
   'SubagentStart',
   'SubagentStop',
+  'Stop',
+  'TeammateIdle',
+  'TaskCompleted',
+  'InstructionsLoaded',
+  'ConfigChange',
+  'PreCompact',
+  'WorktreeCreate',
+  'WorktreeRemove',
 ] as const;
 
 function buildCurlCommand(): string {

@@ -113,7 +113,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 }
 
 function App() {
-  const [agents, setAgents] = useState<Array<{ id: string; name: string; agentType?: string }>>([]);
+  const [agents, setAgents] = useState<Array<{ id: string; name: string; agentType?: string; cwd?: string }>>([]);
   const [connectedAgentTypes, setConnectedAgentTypes] = useState<string[]>(() => {
     // 1.6 — read initial state from data attribute set by the extension host
     try {
@@ -163,6 +163,7 @@ function App() {
   const agentLastSeenRef = useRef<Record<string, number>>({});
   const agentMapRef = useRef(agentMap);
   agentMapRef.current = agentMap;
+  // Track last tool event timestamp per agent — used to suppress stale permission_prompt notifications
   const shipTimerIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
@@ -180,7 +181,7 @@ function App() {
       if (msg?.type === 'init-state') {
         clearAllBoostTimers(); // Clear stale boost timers from previous webview lifecycle
         const init = msg as unknown as { agents: AgentState[]; metrics: AgentMetrics[] };
-        setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type })));
+        setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type, cwd: a.cwd })));
         setAgentMap(Object.fromEntries(init.agents.map((a) => [a.id, a])));
         setMetricsMap(Object.fromEntries(init.metrics.map((m) => [m.agentId, m])));
         return;
@@ -258,16 +259,26 @@ function App() {
       }
 
       // Upsert agent — fire agent_connected when a genuinely new agent appears
+      const eventCwd = raw.payload?.cwd as string | undefined;
       setAgents((prev) => {
-        if (prev.some((a) => a.id === agentId)) return prev;
+        const existing = prev.find((a) => a.id === agentId);
+        if (existing) {
+          // Update cwd if it wasn't set yet
+          if (eventCwd && !existing.cwd) {
+            return prev.map((a) => a.id === agentId ? { ...a, cwd: eventCwd } : a);
+          }
+          return prev;
+        }
         store.incrementTieredAchievement('agent_connected');
         store.incrementSingularityStat('agentsSeen');
-        return [...prev, { id: agentId, name: agentName, agentType }];
+        return [...prev, { id: agentId, name: agentName, agentType, cwd: eventCwd }];
       });
       setAgentMap((prev) => {
         const prevAgent = prev[agentId];
+
         let state: string;
         if (type === 'agent.error') state = 'error';
+        else if (type === 'agent.waiting') state = 'waiting';
         else if (type === 'task.start') state = 'thinking';
         else if (type === 'tool.call') state = 'tool_use';
         else if (type === 'task.progress') state = 'working';
@@ -848,7 +859,7 @@ function App() {
             {[
               { id: 'claude-code', label: 'Claude Code',    planet: '🟤', status: 'available' as const, desc: 'Installs curl hooks into ~/.claude/settings.json. One click, no token needed.' },
               { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'available' as const, desc: 'Installs a plugin into ~/.config/opencode/plugins/. Restart OpenCode after connecting.' },
-              { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'soon'      as const, desc: 'VS Code Copilot integration coming soon.' },
+              { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'available' as const, desc: 'Installs debug hooks into .github/hooks/. Check "Copilot Chat Hooks" output for events.' },
               { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'soon'      as const, desc: 'Cursor connector coming soon.' },
               { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },
             ].map((c) => {
@@ -954,6 +965,7 @@ function App() {
             agentName={hoveredAgent.name}
             loadPercent={Math.round((hoveredMetrics?.load ?? 0.5) * 100)}
             activeTask={hoveredAgent.currentTaskId}
+            cwd={hoveredAgent.cwd}
           />
         </div>
       )}

@@ -10,6 +10,7 @@ import { startEventServer, stopEventServer } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
+import { setupCopilotHooks, hasStaleCopilotHooks } from './setupCopilotHooks';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 
@@ -53,6 +54,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
 
+  // ── Copilot subagent session tracking ──────────────────────────────────────
+  // Copilot SubagentStart/SubagentStop use the subagent's session_id, not the
+  // parent's. We remap subagent events to the parent so they appear as moons
+  // on the parent planet instead of spawning a separate planet.
+  const subagentToParent = new Map<string, string>();
+  let lastRunSubagentParent: string | null = null;
+
   function onAgentEvent(event: AgentEvent): void {
     // Inject workspace cwd if the agent/event doesn't provide one
     if (!event.payload?.cwd) {
@@ -60,6 +68,30 @@ export function activate(context: vscode.ExtensionContext): void {
       if (primaryFolder) {
         event = { ...event, payload: { ...event.payload, cwd: primaryFolder.uri.fsPath } };
       }
+    }
+
+    // Track parent→subagent relationship for Copilot:
+    // 1) PreToolUse with tool_name "runSubagent" = parent is about to spawn
+    if (event.type === 'tool.call' && event.payload?.toolName === 'runSubagent') {
+      lastRunSubagentParent = event.agentId;
+    }
+    // 2) SubagentStart: map the subagent session to the parent
+    if (event.payload?.isSubagent && event.payload?.subagentSessionId && lastRunSubagentParent) {
+      subagentToParent.set(String(event.payload.subagentSessionId), lastRunSubagentParent);
+      lastRunSubagentParent = null;
+    }
+
+    // Remap subagent events to the parent agent
+    const parentId = subagentToParent.get(event.agentId);
+    if (parentId) {
+      // Subagent permission/waiting events should not affect the parent —
+      // the parent's own session fires PermissionRequest when IT needs input.
+      if (event.type === 'agent.waiting') return;
+      // Clean up mapping when subagent terminates
+      if (event.type === 'agent.terminate') {
+        subagentToParent.delete(event.agentId);
+      }
+      event = { ...event, agentId: parentId };
     }
 
     metricsEngine.process(event);
@@ -74,12 +106,14 @@ export function activate(context: vscode.ExtensionContext): void {
   startEventServer({ onEvent: (event) => eventBus.emit(event) })
     .then(async () => {
       // Auto-refresh hooks with new session token if they exist from a previous session
-      const [staleClaude, staleOpenCode] = await Promise.all([
+      const [staleClaude, staleOpenCode, staleCopilot] = await Promise.all([
         hasStaleClaudeCodeHooks(),
         hasStaleOpenCodeHooks(),
+        hasStaleCopilotHooks(),
       ]);
       if (staleClaude) await setupClaudeCodeHooks();
       if (staleOpenCode) await setupOpenCodeHooks();
+      if (staleCopilot) await setupCopilotHooks();
     })
     .catch(() => {
       // Error already shown to user via showErrorMessage in eventServer

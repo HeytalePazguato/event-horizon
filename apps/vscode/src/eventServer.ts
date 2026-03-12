@@ -8,7 +8,7 @@ import * as http from 'http';
 import * as vscode from 'vscode';
 import type { AgentEvent } from '@event-horizon/core';
 import { AGENT_EVENT_TYPES, AGENT_TYPES } from '@event-horizon/core';
-import { mapOpenCodeToEvent, mapClaudeHookToEvent } from '@event-horizon/connectors';
+import { mapOpenCodeToEvent, mapClaudeHookToEvent, mapCopilotHookToEvent } from '@event-horizon/connectors';
 
 export const DEFAULT_PORT = 28765;
 export const MAX_BODY_BYTES = 1_048_576;
@@ -26,6 +26,7 @@ export interface EventServerCallbacks {
 
 let server: http.Server | null = null;
 let callbacks: EventServerCallbacks | null = null;
+const activeSockets = new Set<import('net').Socket>();
 
 // Per-session auth token — generated once at server start, required on all requests.
 let authToken: string | null = null;
@@ -168,6 +169,8 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
       let event: AgentEvent | null = null;
       if (route === '/claude') {
         event = mapClaudeHookToEvent(body);
+      } else if (route === '/copilot') {
+        event = mapCopilotHookToEvent(body);
       } else if (route === '/opencode') {
         event = mapOpenCodeToEvent(body);
       } else if (route === '/events' && typeof body === 'object' && body !== null) {
@@ -232,6 +235,10 @@ export function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT)
 
   return new Promise((resolve, reject) => {
     const srv = http.createServer(handleRequest);
+    srv.on('connection', (socket) => {
+      activeSockets.add(socket);
+      socket.on('close', () => activeSockets.delete(socket));
+    });
     srv.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
         void vscode.window.showErrorMessage(
@@ -251,6 +258,9 @@ export function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT)
 
 export function stopEventServer(): void {
   if (server) {
+    // Destroy active connections so the port is released immediately
+    for (const socket of activeSockets) socket.destroy();
+    activeSockets.clear();
     server.close();
     server = null;
   }

@@ -1,20 +1,81 @@
 /**
- * GitHub Copilot adapter — infers events from output channel content.
+ * GitHub Copilot adapter — maps hook payloads to AgentEvent.
+ *
+ * Hooks are installed in .github/hooks/event-horizon.json in the workspace.
+ * Payloads arrive as JSON via stdin with snake_case fields:
+ *   hook_event_name, session_id, tool_name, agent_id, agent_type,
+ *   prompt, cwd, transcript_path, tool_use_id, stop_hook_active, source
+ *
  * @event-horizon/connectors
  */
 
-import type { AgentEvent } from '@event-horizon/core';
+import type { AgentEvent, AgentEventType } from '@event-horizon/core';
+
+/** Map hook event names to AgentEvent types. */
+const COPILOT_HOOK_TO_EVENT: Record<string, AgentEventType> = {
+  SessionStart:     'agent.spawn',
+  SessionEnd:       'agent.terminate', // never fires as of March 2026 — kept for future compat
+  Stop:             'agent.idle',      // fires per-turn, NOT session end
+  UserPromptSubmit: 'task.start',
+  PreToolUse:       'tool.call',
+  PostToolUse:      'tool.result',
+  SubagentStart:    'task.start',
+  SubagentStop:     'task.complete',
+};
 
 function nextId(): string {
   return `ev-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/**
+ * Maps a Copilot hook JSON payload to an AgentEvent.
+ *
+ * SubagentStart/SubagentStop use the subagent's session_id (not the parent's).
+ * The extension host is responsible for remapping subagent events to the parent.
+ */
+export function mapCopilotHookToEvent(payload: unknown): AgentEvent | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const p = payload as Record<string, unknown>;
+
+  const hookEvent = String(p.hook_event_name ?? '');
+  if (!hookEvent) return null;
+
+  const type = COPILOT_HOOK_TO_EVENT[hookEvent];
+  if (!type) return null;
+
+  const agentId = String(p.session_id ?? 'copilot-1').slice(0, 128);
+  const agentName = 'GitHub Copilot';
+
+  const isSubagent = hookEvent === 'SubagentStart' || hookEvent === 'SubagentStop';
+
+  const safePayload: Record<string, unknown> = {};
+  if (p.tool_name) safePayload.toolName = String(p.tool_name).slice(0, 128);
+  if (p.cwd) safePayload.cwd = String(p.cwd).slice(0, 512);
+  if (p.prompt) safePayload.prompt = String(p.prompt).slice(0, 200);
+  if (isSubagent) {
+    safePayload.isSubagent = true;
+    if (p.agent_id) safePayload.subagentSessionId = String(p.session_id).slice(0, 128);
+    if (p.agent_id) safePayload.subagentId = String(p.agent_id).slice(0, 128);
+    if (p.agent_type) safePayload.subagentType = String(p.agent_type).slice(0, 128);
+  }
+
+  return {
+    id: nextId(),
+    agentId,
+    agentName,
+    agentType: 'copilot',
+    type,
+    timestamp: Date.now(),
+    payload: safePayload,
+  };
+}
+
+/** Legacy output-string parser (passive fallback via copilotChannel). */
 export function mapCopilotOutputToEvent(output: string): AgentEvent | null {
   if (!output || typeof output !== 'string') return null;
   const line = output.trim();
   if (!line) return null;
 
-  // More specific patterns to reduce false positives
   let type: AgentEvent['type'] | null = null;
   if (/^(running|started|executing)\b/i.test(line) || /\b(running|executing)\s+(tool|command|task)\b/i.test(line)) type = 'task.start';
   else if (/^(completed?|done|finished|succeeded)\b/i.test(line) || /\btask\s+(completed?|done|finished)\b/i.test(line)) type = 'task.complete';

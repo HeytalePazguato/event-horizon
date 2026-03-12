@@ -5,7 +5,7 @@
 
 import type { AgentEvent } from './events.js';
 
-export type AgentRuntimeState = 'idle' | 'thinking' | 'error';
+export type AgentRuntimeState = 'idle' | 'thinking' | 'error' | 'waiting';
 
 export interface AgentState {
   id: string;
@@ -69,6 +69,11 @@ export class AgentStateManager {
         this.agents.set(agentId, { ...a, state: 'error' });
         break;
       }
+      case 'agent.waiting': {
+        const a = this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+        this.agents.set(agentId, { ...a, state: 'waiting' });
+        break;
+      }
       case 'agent.terminate': {
         this.agents.delete(agentId);
         // Clean up orphaned tasks for terminated agent
@@ -121,10 +126,15 @@ export class AgentStateManager {
       case 'data.transfer':
         // Ships are tracked exclusively in the webview (with timeout cleanup); no-op here.
         break;
-      default:
+      default: {
         // tool.call, tool.result, file.read, file.write, message.send, message.receive
-        this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+        const a = this.ensureAgent(agentId, agentName, agentType, payload?.cwd as string | undefined);
+        // Resume from waiting when agent becomes active again (tool use = user approved)
+        if (a.state === 'waiting' && (type === 'tool.call' || type === 'tool.result')) {
+          this.agents.set(agentId, { ...a, state: 'thinking' });
+        }
         break;
+      }
     }
 
     // Update cwd on any event if the agent exists and payload includes it

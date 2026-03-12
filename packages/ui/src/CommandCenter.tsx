@@ -14,6 +14,15 @@ import { MetricsPanel } from './panels/MetricsPanel.js';
 import { AgentControls } from './panels/AgentControls.js';
 
 const CHAMFER = 28;
+const STEP = 28; // how far the center dips below the side wings (128 − 108)
+
+// Left panel right edge: paddingLeft(10) + width(114) = 124
+// Right panel left edge from right: paddingRight(10) + width(180) = 190
+const M_CLIP = `polygon(
+  0 ${CHAMFER}px, ${CHAMFER}px 0, 155px 0,
+  183px ${STEP}px, calc(100% - 248px) ${STEP}px, calc(100% - 220px) 0,
+  calc(100% - ${CHAMFER}px) 0, 100% ${CHAMFER}px,
+  100% 100%, 0 100%)`;
 
 // Outer container: handles screen positioning only — NO clipPath so ConnectPanel isn't masked.
 const outerWrapper: React.CSSProperties = {
@@ -24,7 +33,7 @@ const outerWrapper: React.CSSProperties = {
   zIndex: 20,
 };
 
-// Inner chrome: visual styling + clipPath (applies only to this element's painted area).
+// Inner chrome: M-shaped clipPath — sides taller, center dips down.
 const wrapper: React.CSSProperties = {
   background: 'linear-gradient(180deg, #06090c 0%, #03060a 100%)',
   borderTop: '3px solid #182820',
@@ -35,14 +44,14 @@ const wrapper: React.CSSProperties = {
     '0 -10px 40px rgba(0,0,0,0.9)',
     '0 -2px 0 rgba(30,70,50,0.35)',
   ].join(', '),
-  clipPath: `polygon(${CHAMFER}px 0, calc(100% - ${CHAMFER}px) 0, 100% ${CHAMFER}px, 100% 100%, 0 100%, 0 ${CHAMFER}px)`,
+  clipPath: M_CLIP,
 };
 
 const headerBar: React.CSSProperties = {
-  paddingTop: 5,
+  paddingTop: 8, // extra top creates the tall side-wings; clipped away in center
   paddingBottom: 5,
-  paddingLeft: CHAMFER + 10,
-  paddingRight: CHAMFER + 10,
+  paddingLeft: CHAMFER - 7,
+  paddingRight: CHAMFER + 7,
   background: 'linear-gradient(180deg, #0d1a18 0%, #081210 100%)',
   borderBottom: '1px solid #122018',
   fontFamily: 'Consolas, "Courier New", monospace',
@@ -62,7 +71,7 @@ const layout: React.CSSProperties = {
   paddingLeft: 10,
   paddingRight: 10,
   paddingBottom: 10,
-  paddingTop: 2,
+  paddingTop: 8,
   gap: 8,
   alignItems: 'flex-end',
 };
@@ -106,7 +115,7 @@ const leftPanelStyle: React.CSSProperties = {
 const centerPanelStyle: React.CSSProperties = {
   flex: '1 1 auto',
   minWidth: 0,
-  height: 108,
+  height: 128,
   background: 'linear-gradient(180deg, #050709 0%, #030507 100%)',
   border: '2px solid #162420',
   boxShadow: [

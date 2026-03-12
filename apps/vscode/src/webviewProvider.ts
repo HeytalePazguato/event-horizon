@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import type { AgentStateManager, MetricsEngine } from '@event-horizon/core';
 import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
+import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 
 export function createWebviewProvider(
   context: vscode.ExtensionContext,
@@ -39,6 +40,7 @@ export function createWebviewProvider(
         const types: string[] = [];
         if (await isClaudeCodeHooksInstalled()) types.push('claude-code');
         if (await isOpenCodeHooksInstalled()) types.push('opencode');
+        if (await isCopilotHooksInstalled()) types.push('copilot');
         return types;
       }
 
@@ -108,9 +110,18 @@ export function createWebviewProvider(
             void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
             void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
           });
+        } else if (msg?.type === 'setup-agent' && msg.agentType === 'copilot') {
+          void runSetupCopilotHooks().then(async () => {
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+          });
         } else if (msg?.type === 'remove-agent' && msg.agentType === 'opencode') {
           void removeOpenCodeHooks().then(async () => {
             void vscode.window.showInformationMessage('Event Horizon: OpenCode plugin removed.');
+            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+          });
+        } else if (msg?.type === 'remove-agent' && msg.agentType === 'copilot') {
+          void removeCopilotHooks().then(async () => {
+            void vscode.window.showInformationMessage('Event Horizon: Copilot hooks removed.');
             void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
           });
         } else if (msg?.type === 'spawn-agent' && msg.command) {

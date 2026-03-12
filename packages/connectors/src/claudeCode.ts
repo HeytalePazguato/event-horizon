@@ -18,6 +18,12 @@ const CLAUDE_HOOK_TO_EVENT: Record<string, AgentEventType> = {
   SubagentStop:        'task.complete',
   TeammateIdle:        'agent.idle',
   Notification:        'message.receive',
+  PermissionRequest:   'agent.waiting',
+  InstructionsLoaded:  'message.receive', // CLAUDE.md / rules loaded
+  ConfigChange:        'message.receive', // config file changed
+  PreCompact:          'message.receive', // context compaction about to happen
+  WorktreeCreate:      'message.receive', // worktree created (--worktree / isolation)
+  WorktreeRemove:      'message.receive', // worktree removed (session exit / subagent done)
 };
 
 function nextId(): string {
@@ -31,8 +37,30 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   const hookEvent = p.hook_event_name ?? p.event ?? p.hook ?? p.type;
   if (typeof hookEvent !== 'string') return null;
 
-  const type = CLAUDE_HOOK_TO_EVENT[hookEvent];
+  let type = CLAUDE_HOOK_TO_EVENT[hookEvent];
   if (!type) return null;
+
+  // Detect "waiting for user input" scenarios:
+  //   PermissionRequest — fires before permission dialog (for ALL tools, including subagents).
+  //     The webview filters by toolName to only show the waiting ring for AskUserQuestion.
+  //   Notification(elicitation_dialog) — AskUserQuestion prompt (doesn't fire in practice).
+  // NOTE: Notification(permission_prompt) is NOT used — it fires on the parent session
+  // even for subagent permissions, causing false positive waiting rings.
+  let waitingSource: string | null = null;
+  if (hookEvent === 'Notification') {
+    const notifType = p.notification_type
+      ?? (p.payload as Record<string, unknown> | undefined)?.notification_type;
+    if (notifType === 'elicitation_dialog') {
+      type = 'agent.waiting';
+      waitingSource = 'elicitation_dialog';
+    }
+    // NOTE: permission_prompt is NOT used here — it fires on the parent session
+    // even for subagent permissions (GitHub #23983/#33473), causing false positives.
+    // PermissionRequest (below) only fires on the main session, so it's reliable.
+  }
+  if (hookEvent === 'PermissionRequest') {
+    waitingSource = 'permission_request';
+  }
 
   // Claude Code uses session_id; fall back to other id fields; clamp to prevent oversized strings
   const agentId = String(p.session_id ?? p.agentId ?? p.sessionId ?? 'claude-1').slice(0, 128);
@@ -47,6 +75,7 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   if (p.taskId) safePayload.taskId = String(p.taskId).slice(0, 128);
   if (isSubagent) safePayload.isSubagent = true;
   if (isToolFailure) safePayload.isToolFailure = true;
+  if (waitingSource) safePayload.waitingSource = waitingSource;
   // Capture working directory for workspace-aware cooperation detection
   if (p.cwd) safePayload.cwd = String(p.cwd).slice(0, 512);
   // Only include safe metadata from the nested payload object
