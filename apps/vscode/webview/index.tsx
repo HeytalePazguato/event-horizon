@@ -163,6 +163,7 @@ function App() {
   const agentLastSeenRef = useRef<Record<string, number>>({});
   const agentMapRef = useRef(agentMap);
   agentMapRef.current = agentMap;
+  // Track last tool event timestamp per agent — used to suppress stale permission_prompt notifications
   const shipTimerIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
@@ -266,8 +267,10 @@ function App() {
       });
       setAgentMap((prev) => {
         const prevAgent = prev[agentId];
+
         let state: string;
         if (type === 'agent.error') state = 'error';
+        else if (type === 'agent.waiting') state = 'waiting';
         else if (type === 'task.start') state = 'thinking';
         else if (type === 'tool.call') state = 'tool_use';
         else if (type === 'task.progress') state = 'working';
@@ -275,6 +278,12 @@ function App() {
         else if (type === 'task.complete' || type === 'task.fail') state = 'idle';
         else if (type === 'agent.spawn') state = 'idle';
         else state = prevAgent?.state ?? 'idle';  // preserve current state for unknown events
+
+        // Debug: log state transitions
+        const prevState = prevAgent?.state ?? '(new)';
+        if (state !== prevState) {
+          console.log(`[EH webview] ${agentId.slice(0, 12)} state: ${prevState} → ${state} (event=${type}, tool=${raw.payload?.toolName ?? '-'})`);
+        }
 
         // Capture cwd from payload for workspace-aware cooperation detection
         const cwd = (raw.payload?.cwd as string | undefined) ?? prevAgent?.cwd;

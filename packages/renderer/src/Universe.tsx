@@ -1148,6 +1148,9 @@ export const Universe: FC<UniverseProps> = ({
           else if (variant === 'gas') pulse = 1 + 0.04 * Math.sin(t * 4);
           else if (variant === 'volcanic') pulse = 1 + 0.05 * Math.sin(t * 6) * Math.sin(t * 2.3);
           else                        pulse = 1 + 0.05 * Math.sin(t * 7);
+        } else if (state === 'waiting') {
+          // Slow, calm breathing — planet is alive but paused, waiting for user
+          pulse = 1 + 0.025 * Math.sin(t * 2.0);
         } else if (state === 'error') {
           pulse = 1 + 0.04 * Math.sin(t * 15);
         } else {
@@ -1177,6 +1180,17 @@ export const Universe: FC<UniverseProps> = ({
           eg.visible = state === 'error';
           if (state === 'error' && !isPaused) {
             eg.alpha = 0.25 + 0.2 * Math.sin(t * 12);
+          }
+        }
+
+        // Waiting ring — slow pulsing amber ring (expand/contract + alpha breathe)
+        const wr = p.__waitingRing;
+        if (wr) {
+          wr.visible = state === 'waiting';
+          if (state === 'waiting' && !isPaused) {
+            const breathe = Math.sin(t * 1.8);
+            wr.scale.set(0.95 + 0.1 * breathe);
+            wr.alpha = 0.45 + 0.35 * breathe;
           }
         }
       }

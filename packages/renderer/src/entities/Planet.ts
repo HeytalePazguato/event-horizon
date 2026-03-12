@@ -67,6 +67,7 @@ export type ExtendedPlanet = Container & {
   __variant?: PlanetVariant;
   __thinkingRing?: Container;
   __errorGlow?: Graphics;
+  __waitingRing?: Graphics;
 };
 
 export function createPlanet(props: PlanetProps): ExtendedPlanet {
@@ -102,6 +103,14 @@ export function createPlanet(props: PlanetProps): ExtendedPlanet {
     case 'volcanic': drawVolcanicPlanet(container, r, brightness, agentId); break;
     case 'ocean':    drawOceanPlanet(container, r, brightness, agentId);   break;
   }
+
+  // ── Waiting ring (amber pulsing ring, hidden by default) ────────────────
+  const waitingRing = new Graphics();
+  waitingRing.circle(0, 0, r * 1.8).stroke({ width: 2.5, color: 0xffaa33, alpha: 0.8 });
+  waitingRing.circle(0, 0, r * 2.1).stroke({ width: 1.2, color: 0xffcc66, alpha: 0.4 });
+  waitingRing.visible = false;
+  container.addChild(waitingRing);
+  container.__waitingRing = waitingRing;
 
   // ── Thinking ring (orbiting dots, hidden by default) ────────────────────
   const ringColor = (agentType ? THINKING_RING_COLORS[agentType] : undefined) ?? DEFAULT_RING_COLOR;

@@ -31,6 +31,8 @@ From that answer, Event Horizon was born.
   - **Volcanic planets** (Cursor, others) — Hot, restless surfaces that never fully settle.
   - Planet **size** scales with agent load — busier agents grow larger. Brightness increases with activity.
 
+- **Waiting Ring** — When an agent is waiting for user input (e.g. an AskUserQuestion prompt or a permission dialog), an amber pulsing ring appears around the planet. The ring breathes in and out to draw attention. It clears automatically when the agent resumes work after the user provides input.
+
 - **Moons** — Active subagents orbit their parent planet as small blue moons. Each subagent spawn creates a new moon at a different orbital distance and speed. When the subagent completes, the moon disappears.
 
 - **Spaceships** — Data transfers between agents are visualized as triangle ships flying curved bezier arcs between planets. Each ship leaves a colored trail matching the agent type. The arcs curve safely around the central black hole. Ships also appear automatically between cooperating agents (see **Agent Cooperation** below).
@@ -88,7 +90,15 @@ The table below shows which lifecycle events each agent supports and how they ma
 | **SubagentStart** | `SubagentStart` ✅ | `SubagentStart` ✅ ⚠️ | — | `task.start` |
 | **SubagentStop** | `SubagentStop` ✅ | `SubagentStop` ✅ | — | `task.complete` |
 | **Notification** | `Notification` ✅ | — | — | `message.receive` |
-| **PreCompact** | — | `PreCompact` (untested) | — | — |
+| **PermissionRequest** | `PermissionRequest` ✅ | — | — | `agent.waiting` |
+| **Stop** (Claude) | `Stop` ✅ | — | — | `task.complete` |
+| **TaskCompleted** | `TaskCompleted` ✅ | — | — | `task.complete` |
+| **InstructionsLoaded** | `InstructionsLoaded` ✅ | — | — | `message.receive` |
+| **ConfigChange** | `ConfigChange` ✅ | — | — | `message.receive` |
+| **PreCompact** | `PreCompact` ✅ | `PreCompact` (untested) | — | `message.receive` |
+| **WorktreeCreate** | `WorktreeCreate` ✅ | — | — | `message.receive` |
+| **WorktreeRemove** | `WorktreeRemove` ✅ | — | — | `message.receive` |
+| **TeammateIdle** | `TeammateIdle` ✅ | — | — | `agent.idle` |
 | **Error** | `PostToolUseFailure` ✅ | — | `session.error` ✅ | `agent.error` |
 
 #### Copilot-specific notes
@@ -98,6 +108,10 @@ The table below shows which lifecycle events each agent supports and how they ma
 - **`SubagentStart` uses the subagent's `session_id`**, not the parent's. This means subagent events arrive with a different session ID than the parent agent. The parent can be identified by correlating with the preceding `PreToolUse` where `tool_name = "runSubagent"`.
 - **Payload field names are `snake_case`**: `session_id`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, `tool_use_id`, `agent_id`, `agent_type`, `transcript_path`, `stop_hook_active`, `source`.
 - **`windows` field in hook config is ignored.** VS Code runs the `command` field directly through PowerShell on Windows, regardless of whether a `windows` override is present. Commands must be PowerShell-safe.
+
+### Known Limitations
+
+- **Subagent permission completion not signaled (Claude Code)** — When a subagent requests permission (e.g. to run a Bash command), the `PermissionRequest` hook fires and the waiting ring appears. However, Claude Code does not fire any hook when the user grants or denies the permission. The only signal is `PostToolUse`, which fires when the tool *finishes executing* — not when the user approves it. This means the waiting ring stays visible for the entire duration of the tool execution, not just during the approval prompt. This is a [known limitation on Claude Code's side](https://github.com/anthropics/claude-code/issues/33473). Once a permission completion hook is added upstream, Event Horizon will use it to clear the ring immediately after approval.
 
 ## Getting Started
 
