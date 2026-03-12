@@ -9,6 +9,13 @@ export interface TooltipProps {
   agentName: string;
   loadPercent: number;
   activeTask: string | null;
+  cwd?: string;
+}
+
+/** Extract the last folder name from a full path. */
+function folderName(cwd: string): string {
+  const normalized = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized.split('/').pop() || cwd;
 }
 
 const tooltipStyle = {
@@ -24,10 +31,15 @@ const tooltipStyle = {
   maxWidth: 220,
 };
 
-export const Tooltip: FC<TooltipProps> = ({ agentName, loadPercent, activeTask }) => {
+export const Tooltip: FC<TooltipProps> = ({ agentName, loadPercent, activeTask, cwd }) => {
   return (
     <div data-tooltip style={tooltipStyle} role="tooltip">
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{agentName}</div>
+      {cwd && (
+        <div style={{ color: '#6a8a9a', fontSize: 10, marginBottom: 3 }}>
+          {folderName(cwd)}
+        </div>
+      )}
       <div style={{ color: '#8899aa' }}>Load: {loadPercent}%</div>
       <div style={{ color: '#8899aa', marginTop: 2 }}>
         {activeTask ?? 'Idle'}

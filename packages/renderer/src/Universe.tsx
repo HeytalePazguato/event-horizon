@@ -21,6 +21,7 @@ export interface AgentView {
   id: string;
   name: string;
   agentType?: string;
+  cwd?: string;
 }
 
 export interface MetricsView {
@@ -742,10 +743,14 @@ export const Universe: FC<UniverseProps> = ({
           agentType: agent.agentType,
         });
 
-        // Name label beneath planet
+        // Name label beneath planet (+ folder name on second line)
+        const cwdFolder = agent.cwd
+          ? agent.cwd.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() || ''
+          : '';
+        const labelText = cwdFolder ? `${agent.name}\n${cwdFolder}` : agent.name;
         const label = new Text({
-          text: agent.name,
-          style: { fontSize: 8, fill: '#6688aa', fontFamily: 'system-ui', align: 'center' },
+          text: labelText,
+          style: { fontSize: 11, fill: '#6688aa', fontFamily: 'system-ui', align: 'center', lineHeight: 14 },
         });
         label.anchor.set(0.5, 0);
         label.x = 0;

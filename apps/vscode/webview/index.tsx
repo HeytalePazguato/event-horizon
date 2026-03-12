@@ -113,7 +113,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 }
 
 function App() {
-  const [agents, setAgents] = useState<Array<{ id: string; name: string; agentType?: string }>>([]);
+  const [agents, setAgents] = useState<Array<{ id: string; name: string; agentType?: string; cwd?: string }>>([]);
   const [connectedAgentTypes, setConnectedAgentTypes] = useState<string[]>(() => {
     // 1.6 — read initial state from data attribute set by the extension host
     try {
@@ -181,7 +181,7 @@ function App() {
       if (msg?.type === 'init-state') {
         clearAllBoostTimers(); // Clear stale boost timers from previous webview lifecycle
         const init = msg as unknown as { agents: AgentState[]; metrics: AgentMetrics[] };
-        setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type })));
+        setAgents(init.agents.map((a) => ({ id: a.id, name: a.name, agentType: a.type, cwd: a.cwd })));
         setAgentMap(Object.fromEntries(init.agents.map((a) => [a.id, a])));
         setMetricsMap(Object.fromEntries(init.metrics.map((m) => [m.agentId, m])));
         return;
@@ -259,11 +259,19 @@ function App() {
       }
 
       // Upsert agent — fire agent_connected when a genuinely new agent appears
+      const eventCwd = raw.payload?.cwd as string | undefined;
       setAgents((prev) => {
-        if (prev.some((a) => a.id === agentId)) return prev;
+        const existing = prev.find((a) => a.id === agentId);
+        if (existing) {
+          // Update cwd if it wasn't set yet
+          if (eventCwd && !existing.cwd) {
+            return prev.map((a) => a.id === agentId ? { ...a, cwd: eventCwd } : a);
+          }
+          return prev;
+        }
         store.incrementTieredAchievement('agent_connected');
         store.incrementSingularityStat('agentsSeen');
-        return [...prev, { id: agentId, name: agentName, agentType }];
+        return [...prev, { id: agentId, name: agentName, agentType, cwd: eventCwd }];
       });
       setAgentMap((prev) => {
         const prevAgent = prev[agentId];
@@ -963,6 +971,7 @@ function App() {
             agentName={hoveredAgent.name}
             loadPercent={Math.round((hoveredMetrics?.load ?? 0.5) * 100)}
             activeTask={hoveredAgent.currentTaskId}
+            cwd={hoveredAgent.cwd}
           />
         </div>
       )}

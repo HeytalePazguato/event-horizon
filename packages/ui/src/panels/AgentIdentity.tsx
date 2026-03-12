@@ -155,6 +155,12 @@ function SingularityIcon({ size = 52 }: { size?: number }) {
   );
 }
 
+/** Extract the last folder name from a full path. */
+function folderName(cwd: string): string {
+  const normalized = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized.split('/').pop() || cwd;
+}
+
 export const AgentIdentity: FC = () => {
   const selectedAgent = useCommandCenterStore((s) => s.selectedAgent);
   const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
@@ -185,15 +191,20 @@ export const AgentIdentity: FC = () => {
           <div style={{ width: 54, height: 54, border: '2px solid #3a6a4a', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,20,15,0.6)', boxShadow: 'inset 0 0 12px rgba(80,140,100,0.2), 0 0 8px rgba(60,120,80,0.15)', overflow: 'visible' }} aria-hidden>
             <PlanetIcon type={selectedAgent.type} size={48} />
           </div>
-          <span style={{ fontSize: 9, color: '#8fc08a', fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 11, color: '#8fc08a', fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {selectedAgent.name}
           </span>
-          <span style={{ fontSize: 8, color: stateColors[selectedAgent.state] ?? '#7a8a82' }}>
+          <span style={{ fontSize: 9, color: stateColors[selectedAgent.state] ?? '#7a8a82' }}>
             {selectedAgent.state}
           </span>
-          <span style={{ fontSize: 7, color: '#4a6a58', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          <span style={{ fontSize: 8, color: '#4a6a58', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {selectedAgent.type}
           </span>
+          {selectedAgent.cwd && (
+            <span style={{ fontSize: 8, color: '#5a7a6a', marginTop: 1, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {folderName(selectedAgent.cwd)}
+            </span>
+          )}
         </>
       )}
     </div>
