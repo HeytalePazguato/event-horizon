@@ -431,6 +431,7 @@ export const Universe: FC<UniverseProps> = ({
           backgroundColor: 0x0a0a12,
           antialias: true,
           autoDensity: true,
+          preserveDrawingBuffer: true,
         });
 
         if (!mountedRef.current || !appRef.current) {

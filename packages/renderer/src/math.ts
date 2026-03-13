@@ -210,6 +210,59 @@ export function computePlanetPositions(
     if (!anyOverlap) break;
   }
 
+  // Build workspace group membership set + group info for belt avoidance
+  const groupMemberIds = new Set<string>();
+  const groupInfos: Array<{ ids: Set<string>; centroid: { x: number; y: number } }> = [];
+  for (const group of wsGroups) {
+    if (group.length < 2) continue;
+    const ids = new Set(group.map((a) => a.id));
+    for (const id of ids) groupMemberIds.add(id);
+    groupInfos.push({ ids, centroid: { x: 0, y: 0 } }); // centroid computed below
+  }
+
+  // Push solo planets out of workspace group belt contours
+  for (let iter = 0; iter < 50; iter++) {
+    // Recompute group centroids from current positions
+    for (const gi of groupInfos) {
+      let cx = 0, cy = 0, count = 0;
+      for (const p of posArray) {
+        if (gi.ids.has(p.id)) { cx += p.x; cy += p.y; count++; }
+      }
+      gi.centroid.x = cx / (count || 1);
+      gi.centroid.y = cy / (count || 1);
+    }
+
+    let anyPushed = false;
+    for (const p of posArray) {
+      if (groupMemberIds.has(p.id)) continue; // skip grouped planets
+      for (const gi of groupInfos) {
+        const memberPositions = posArray.filter((pp) => gi.ids.has(pp.id));
+        const beltRadius = beltRadiusAtAngle(gi.centroid, memberPositions, p.x, p.y);
+        const ddx = p.x - gi.centroid.x;
+        const ddy = p.y - gi.centroid.y;
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.001;
+        // Planet must be outside belt contour + a margin for the planet's own visual size
+        const margin = 40;
+        if (dist < beltRadius + margin) {
+          const pushTo = beltRadius + margin + 10;
+          p.x = gi.centroid.x + (ddx / dist) * pushTo;
+          p.y = gi.centroid.y + (ddy / dist) * pushTo;
+          anyPushed = true;
+        }
+      }
+    }
+    if (!anyPushed) break;
+
+    // Re-enforce singularity minimum after belt push
+    for (const p of posArray) {
+      const d = Math.sqrt(p.x * p.x + p.y * p.y) || 0.001;
+      if (d < PLANET_MIN_RADIUS) {
+        p.x = (p.x / d) * PLANET_MIN_RADIUS;
+        p.y = (p.y / d) * PLANET_MIN_RADIUS;
+      }
+    }
+  }
+
   const positions = new Map<string, { x: number; y: number }>();
   for (const p of posArray) {
     const d = Math.sqrt(p.x * p.x + p.y * p.y) || 0.001;
@@ -230,6 +283,34 @@ export function computePlanetPositions(
   }
 
   return { positions, workspaceGroups };
+}
+
+/**
+ * Compute the belt contour radius at the angle from centroid toward a target point.
+ * Used to check if a solo planet is inside a workspace group's belt.
+ */
+function beltRadiusAtAngle(
+  centroid: { x: number; y: number },
+  memberPositions: Array<{ x: number; y: number }>,
+  tx: number, ty: number,
+): number {
+  const dirX = tx - centroid.x;
+  const dirY = ty - centroid.y;
+  const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+  const ndx = dirX / dirLen;
+  const ndy = dirY / dirLen;
+
+  let maxProj = 30;
+  for (const p of memberPositions) {
+    const ddx = p.x - centroid.x;
+    const ddy = p.y - centroid.y;
+    const proj = ddx * ndx + ddy * ndy;
+    const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+    const effective = Math.max(proj, dist * 0.6);
+    if (effective > maxProj) maxProj = effective;
+  }
+
+  return maxProj + BELT_PADDING;
 }
 
 /**

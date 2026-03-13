@@ -845,18 +845,44 @@ function App() {
     URL.revokeObjectURL(url);
   }, [exportRequestedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Screenshot — capture the PixiJS canvas as a PNG download
+  // Screenshot — capture the full view (WebGL universe + HTML Command Center)
   useEffect(() => {
     if (!screenshotRequestedAt) return;
-    const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
-    if (!canvas) return;
-    try {
-      const dataUrl = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `event-horizon-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
-      a.click();
-    } catch { /* canvas may be tainted or unavailable */ }
+    void (async () => {
+      try {
+        const html2canvas = (await import('html2canvas')).default;
+
+        // Snapshot the WebGL canvas frame BEFORE html2canvas clones the DOM.
+        // preserveDrawingBuffer keeps pixel data available for toDataURL().
+        const glCanvas = document.querySelector('canvas') as HTMLCanvasElement | null;
+        const frameDataUrl = glCanvas ? glCanvas.toDataURL('image/png') : null;
+
+        const result = await html2canvas(document.documentElement, {
+          backgroundColor: '#0a0a12',
+          useCORS: true,
+          scale: window.devicePixelRatio || 1,
+          onclone: (clonedDoc) => {
+            // html2canvas can't read WebGL — replace the cloned canvas with
+            // an <img> of the captured frame so it renders the actual scene.
+            if (!frameDataUrl) return;
+            const clonedCanvas = clonedDoc.querySelector('canvas');
+            if (!clonedCanvas) return;
+            const img = clonedDoc.createElement('img');
+            img.src = frameDataUrl;
+            img.style.cssText = clonedCanvas.style.cssText;
+            img.style.width = clonedCanvas.style.width || `${clonedCanvas.clientWidth}px`;
+            img.style.height = clonedCanvas.style.height || `${clonedCanvas.clientHeight}px`;
+            clonedCanvas.parentNode?.replaceChild(img, clonedCanvas);
+          },
+        });
+
+        const dataUrl = result.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `event-horizon-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+        a.click();
+      } catch { /* capture failed */ }
+    })();
   }, [screenshotRequestedAt]);
 
   return (

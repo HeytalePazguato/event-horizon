@@ -15,8 +15,19 @@
   "engines": {
     "vscode": "^1.110.0"
   },
-  "categories": ["Visualization", "Other"],
-  "keywords": ["ai", "agents", "claude", "copilot", "cursor", "visualization", "cosmic"],
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agents",
+    "claude",
+    "copilot",
+    "cursor",
+    "visualization",
+    "cosmic"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/HeytalePazguato/event-horizon.git"
@@ -67,10 +78,11 @@
     "clean": "rm -rf out webview-dist"
   },
   "dependencies": {
-    "@event-horizon/core": "workspace:*",
     "@event-horizon/connectors": "workspace:*",
+    "@event-horizon/core": "workspace:*",
     "@event-horizon/renderer": "workspace:*",
-    "@event-horizon/ui": "workspace:*"
+    "@event-horizon/ui": "workspace:*",
+    "html2canvas": "^1.4.1"
   },
   "devDependencies": {
     "@types/node": "^25.4.0",
