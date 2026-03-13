@@ -2,6 +2,11 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.0.5] — 2026-03-12
+
+### Fixed
+- **Achievement toast stacking**: multiple simultaneous unlocks no longer pile up infinitely. Toasts are now capped at 3 visible at a time with a 350ms stagger between entrances; overflow toasts queue automatically and a "+N more" indicator appears above the stack
+
 ## [0.0.4] — 2026-03-12
 
 ### Added
