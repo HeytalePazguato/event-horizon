@@ -37,35 +37,34 @@ const MedalsView: FC = () => {
   const achievementCounts = useCommandCenterStore((s) => s.achievementCounts);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  if (unlockedIds.length === 0) {
-    return <div style={{ color: '#3a5a4a', fontSize: 10, padding: '4px 2px' }}>No medals yet.</div>;
-  }
-
+  const unlockedSet = new Set(unlockedIds);
   const hovered = hoveredId ? ACHIEVEMENTS.find((a) => a.id === hoveredId) : null;
+  const isHoveredUnlocked = hoveredId ? unlockedSet.has(hoveredId) : false;
   const hoveredTier = hoveredId ? achievementTiers[hoveredId] : undefined;
   const hoveredCount = hoveredId ? achievementCounts[hoveredId] : undefined;
 
   return (
     <div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {unlockedIds.map((id) => {
-          const ach = ACHIEVEMENTS.find((a) => a.id === id);
-          const tier = achievementTiers[id];
-          const borderColor = ach?.tiers ? tierBorderColor(tier) : undefined;
+        {ACHIEVEMENTS.map((ach) => {
+          const unlocked = unlockedSet.has(ach.id);
+          const tier = achievementTiers[ach.id];
+          const borderColor = unlocked && ach.tiers ? tierBorderColor(tier) : undefined;
           return (
             <div
-              key={id}
-              onMouseEnter={() => setHoveredId(id)}
+              key={ach.id}
+              onMouseEnter={() => setHoveredId(ach.id)}
               onMouseLeave={() => setHoveredId(null)}
               style={{
                 cursor: 'default',
-                opacity: hoveredId && hoveredId !== id ? 0.55 : 1,
+                opacity: hoveredId && hoveredId !== ach.id ? 0.55 : 1,
                 position: 'relative',
                 ...(borderColor ? { border: `2px solid ${borderColor}`, borderRadius: 4, boxShadow: `0 0 6px ${borderColor}66` } : {}),
+                ...(!unlocked ? { filter: 'brightness(0) saturate(0)', opacity: hoveredId === ach.id ? 0.5 : 0.25, border: '1px solid #2a4a3a', borderRadius: 4 } : {}),
               }}
             >
-              <MedalById id={id} size={28} />
-              {ach?.tiers && tier != null && (
+              <MedalById id={ach.id} size={28} />
+              {unlocked && ach.tiers && tier != null && (
                 <span style={{
                   position: 'absolute',
                   bottom: -3,
@@ -86,16 +85,23 @@ const MedalsView: FC = () => {
           );
         })}
       </div>
-      <div style={{ minHeight: 14, marginTop: 4, fontSize: 9, color: '#a0d090', fontWeight: 600, letterSpacing: '0.04em' }}>
+      <div style={{ minHeight: 22, marginTop: 4, fontSize: 9, color: '#a0d090', fontWeight: 600, letterSpacing: '0.04em' }}>
         {hovered ? (
           <>
-            {hovered.name}
-            {hovered.tiers && hoveredTier != null ? ` ${TIER_LABELS[hoveredTier]}` : ''}
-            {hovered.tiers && hoveredCount != null ? (
-              <span style={{ color: '#6a8a72', fontWeight: 400 }}>
-                {' '}({hoveredCount}{hoveredTier != null && hoveredTier < hovered.tiers.length - 1 ? ` / ${hovered.tiers[hoveredTier + 1]}` : ''})
-              </span>
-            ) : null}
+            <div>
+              {hovered.name}
+              {isHoveredUnlocked && hovered.tiers && hoveredTier != null ? ` ${TIER_LABELS[hoveredTier]}` : ''}
+              {isHoveredUnlocked && hovered.tiers && hoveredCount != null ? (
+                <span style={{ color: '#6a8a72', fontWeight: 400 }}>
+                  {' '}({hoveredCount}{hoveredTier != null && hoveredTier < hovered.tiers.length - 1 ? ` / ${hovered.tiers[hoveredTier + 1]}` : ''})
+                </span>
+              ) : null}
+            </div>
+            {!isHoveredUnlocked && (
+              <div style={{ color: '#4a6a5a', fontWeight: 400, fontStyle: 'italic', marginTop: 1 }}>
+                {hovered.secret ? 'Figure this one out yourself…' : hovered.desc}
+              </div>
+            )}
           </>
         ) : ''}
       </div>
@@ -231,7 +237,7 @@ export const MetricsPanel: FC = () => {
         Logs{(effectiveView === 'logs' ? agentLogs : allLogs).length > 0 ? ` (${(effectiveView === 'logs' ? agentLogs : allLogs).length})` : ''}
       </button>
       <button type="button" style={tabStyle(effectiveView === 'medals')} onClick={() => setEffectiveView('medals')}>
-        Medals{unlockedCount > 0 ? ` (${unlockedCount})` : ''}
+        Medals ({unlockedCount}/{ACHIEVEMENTS.length})
       </button>
     </div>
   );
