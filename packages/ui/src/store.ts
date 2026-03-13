@@ -104,6 +104,9 @@ export interface CommandCenterState {
   /** Timestamp-based signal to trigger stats export from webview. */
   exportRequestedAt: number;
   requestExport: () => void;
+  /** Timestamp-based signal to trigger screenshot from webview. */
+  screenshotRequestedAt: number;
+  requestScreenshot: () => void;
   togglePause: (id: string) => void;
   toggleIsolate: (id: string) => void;
   triggerBoost: (id: string) => void;
@@ -142,6 +145,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   singularityStats: { ...EMPTY_SINGULARITY_STATS },
   centerRequestedAt: 0,
   exportRequestedAt: 0,
+  screenshotRequestedAt: 0,
   pausedAgentIds: {},
   isolatedAgentId: null,
   boostedAgentIds: {},
@@ -201,6 +205,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
 
   requestCenter: () => set({ centerRequestedAt: Date.now() }),
   requestExport: () => set({ exportRequestedAt: Date.now() }),
+  requestScreenshot: () => set({ screenshotRequestedAt: Date.now() }),
 
   togglePause: (id) =>
     set((s) => ({

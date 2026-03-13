@@ -12,6 +12,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Medals gallery**: medals tab now shows all 26 achievements — unearned ones appear as dark silhouettes with a subtle green border. Hovering an unearned medal reveals its name and how to earn it (secret medals show "Figure this one out yourself…"). Tab counter shows earned/total (e.g. `3/26`)
 - **Renderer test coverage**: 45 unit tests for collision math, bezier curves, ship arc avoidance, planet placement/overlap resolution, workspace grouping, belt contour generation. Pure math extracted to `packages/renderer/src/math.ts` for testability. Total test count: 112 → 164
 - **Export Stats button**: new command grid button (Row 2) downloads session metrics as a timestamped JSON file — includes agent list, per-agent metrics (load, tools, uptime, tool breakdown), singularity stats, and achievement progress
+- **Screenshot button**: new command grid button (Row 2) captures the PixiJS universe canvas as a PNG image download
 
 ### Changed
 - **Webview bundle size reduced 78%**: selective PixiJS 8 imports via custom esbuild plugin (`pixi-lite`). Only loads app, rendering, graphics, text, events, and DOM modules — skips accessibility, spritesheet, filters, compressed-textures, mesh, and advanced-blend-modes. Dev: 4.1MB → 2.8MB; Prod: 4.1MB → 922KB

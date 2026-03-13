@@ -157,6 +157,7 @@ function App() {
   const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
   const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
   const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
+  const screenshotRequestedAt = useCommandCenterStore((s) => s.screenshotRequestedAt);
 
   // Achievement tracking state
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -843,6 +844,20 @@ function App() {
     a.click();
     URL.revokeObjectURL(url);
   }, [exportRequestedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Screenshot — capture the PixiJS canvas as a PNG download
+  useEffect(() => {
+    if (!screenshotRequestedAt) return;
+    const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
+    if (!canvas) return;
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `event-horizon-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+      a.click();
+    } catch { /* canvas may be tainted or unavailable */ }
+  }, [screenshotRequestedAt]);
 
   return (
     <div
