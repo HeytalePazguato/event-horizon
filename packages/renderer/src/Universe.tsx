@@ -36,12 +36,19 @@ export interface ShipSpawn {
   fromAgentType?: string;
 }
 
+export interface SparkSpawn {
+  id: string;
+  agentIds: [string, string];
+  filePath: string;
+}
+
 export interface UniverseProps {
   width?: number;
   height?: number;
   agents?: AgentView[];
   metrics?: Record<string, MetricsView>;
   ships?: ShipSpawn[];
+  sparks?: SparkSpawn[];
   agentStates?: Record<string, string>;
   pausedAgentIds?: Record<string, boolean>;
   isolatedAgentId?: string | null;
@@ -473,8 +480,10 @@ function computeControlPoint(
   }
 
   if (nearDist >= SHIP_AVOID_RADIUS) {
-    // Straight path already clears the danger zone — subtle arc for visual interest
-    return { cx: mx + perpX * 30, cy: my + perpY * 30 };
+    // Straight path already clears the danger zone — scale arc with distance
+    // so close planets still get a visible curve (min 30, ~20% of distance, max 120)
+    const arcOffset = Math.max(30, Math.min(120, lineLen * 0.2));
+    return { cx: mx + perpX * arcOffset, cy: my + perpY * arcOffset };
   }
 
   // Path passes through the danger zone — push perpendicular.
@@ -510,6 +519,7 @@ export const Universe: FC<UniverseProps> = ({
   agents = [],
   metrics = {},
   ships = [],
+  sparks = [],
   agentStates = {},
   pausedAgentIds = {},
   isolatedAgentId = null,
@@ -554,6 +564,8 @@ export const Universe: FC<UniverseProps> = ({
   }>>([]);
   const activeShipsRef = useRef<ActiveShip[]>([]);
   const spawnedShipIdsRef = useRef<Set<string>>(new Set());
+  /** Active lightning arcs — one Graphics per collision, redrawn each frame. */
+  const lightningArcsRef = useRef<Map<string, Graphics>>(new Map());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const agentStatesRef    = useRef<Record<string, string>>(agentStates);
   const metricsRef        = useRef<Record<string, MetricsView>>(metrics);
@@ -837,6 +849,9 @@ export const Universe: FC<UniverseProps> = ({
       spiralRef.current = [];
       activeShipsRef.current = [];
       spawnedShipIdsRef.current = new Set();
+      for (const cp of collisionSparksRef.current) { try { cp.g.destroy(); } catch { /* ignore */ } }
+      collisionSparksRef.current = [];
+      spawnedSparkIdsRef.current = new Set();
       planetPositionsRef.current = new Map();
       ufoRef.current = null;
       singularityRef.current = null;
@@ -1059,6 +1074,54 @@ export const Universe: FC<UniverseProps> = ({
       spawnedShipIdsRef.current.add(ship.id);
     }
   }, [ships, canvasReady]);
+
+  // --- collision sparks -----------------------------------------------------
+  const SPARK_COLORS = [0xffee44, 0xffffff, 0x44ddff, 0xff8833, 0xffcc00];
+  useEffect(() => {
+    if (!canvasReady || sparks.length === 0) return;
+    const container = shipsContainerRef.current;
+    if (!container) return;
+    const posMap = planetPositionsRef.current;
+
+    for (const spark of sparks) {
+      if (spawnedSparkIdsRef.current.has(spark.id)) continue;
+      const posA = posMap.get(spark.agentIds[0]);
+      const posB = posMap.get(spark.agentIds[1]);
+      if (!posA || !posB) continue;
+
+      spawnedSparkIdsRef.current.add(spark.id);
+
+      // Midpoint between the two colliding planets
+      const mx = (posA.x + posB.x) / 2;
+      const my = (posA.y + posB.y) / 2;
+
+      // Burst 15–25 particles in random directions
+      const count = 15 + Math.floor(Math.random() * 11);
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 4;
+        const pg = new Graphics();
+        const pSize = 1 + Math.random() * 2.5;
+        const color = SPARK_COLORS[Math.floor(Math.random() * SPARK_COLORS.length)];
+        pg.circle(0, 0, pSize);
+        pg.fill({ color, alpha: 0.9 });
+        // Soft glow halo
+        pg.circle(0, 0, pSize * 3);
+        pg.fill({ color, alpha: 0.12 });
+        pg.x = mx;
+        pg.y = my;
+        container.addChild(pg);
+        collisionSparksRef.current.push({
+          g: pg,
+          x: mx, y: my,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 0,
+          maxLife: 0.4 + Math.random() * 0.6,
+        });
+      }
+    }
+  }, [sparks, canvasReady]);
 
   // --- pointer controls ----------------------------------------------------
   const onWheel = useCallback((e: WheelEvent) => {
@@ -1733,6 +1796,26 @@ export const Universe: FC<UniverseProps> = ({
         if (jp.life >= jp.maxLife) {
           jp.g.destroy();
           jets.splice(ji, 1);
+        }
+      }
+
+      // Collision sparks
+      const csparks = collisionSparksRef.current;
+      for (let ci = csparks.length - 1; ci >= 0; ci--) {
+        const cp = csparks[ci];
+        cp.life += dt;
+        cp.x += cp.vx;
+        cp.y += cp.vy;
+        cp.vx *= 0.94;
+        cp.vy *= 0.94;
+        cp.g.x = cp.x;
+        cp.g.y = cp.y;
+        const frac = cp.life / cp.maxLife;
+        cp.g.alpha = (1 - frac) * 0.9;
+        cp.g.scale.set(1 - frac * 0.6);
+        if (cp.life >= cp.maxLife) {
+          cp.g.destroy();
+          csparks.splice(ci, 1);
         }
       }
 

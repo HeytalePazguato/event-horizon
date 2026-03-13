@@ -19,6 +19,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **CodeQL ReDoS**: replaced polynomial regex `/\/+$/` with iterative `while(endsWith('/'))` loop in 3 files (Universe.tsx, Tooltip.tsx, AgentIdentity.tsx)
 - **Missing waiting state color**: added `waiting: '#d4944a'` to AgentIdentity state color map so waiting agents show amber instead of defaulting to white
 - **Memory leak**: subagent-to-parent mapping now cleaned up on `agent.terminate`
+- **Ship arc curvature**: ships flying between adjacent planets no longer have flat arcs — curve offset now scales with distance (min 30px, up to 120px at 20% of distance) for visually consistent arcs at any range
 - **Debug logging removed**: stripped verbose hook field logging from eventServer and state transition logging from webview
 - **Duplicated `folderName` utility**: extracted shared helper to `packages/ui/src/utils.ts`
 
