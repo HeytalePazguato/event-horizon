@@ -8,7 +8,9 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Full OpenCode event integration**: all 17 OpenCode plugin events now mapped — added `permission.asked` → waiting ring, `permission.replied`, `session.compacted`, `session.updated`, `command.executed`, `lsp.client.diagnostics`, `todo.updated`, `server.connected`, and more. OpenCode agents now show the amber waiting ring on permission dialogs
 - **Visual Effect column** in README hook matrix — every lifecycle event now documents its corresponding animation (e.g. "Planet appears + pulse wave", "Amber pulsing ring", "Blue tool-use glow")
 - **Workspace grouping**: agents working in the same folder/workspace are now clustered together visually. An irregular asteroid belt ring (scattered rocks with glowing highlights) surrounds each group, making workspace relationships immediately visible
+- **File collision lightning**: when 2+ agents edit the same file simultaneously, a continuous lightning stream arcs between their planets. Multiple jagged bolts (cyan, white, pale blue) with glow and endpoint sparks persist as long as both agents are actively touching the same file (10-second sliding window). File paths are extracted securely from connector payloads — only the path string, never file content
 - **Medals gallery**: medals tab now shows all 26 achievements — unearned ones appear as dark silhouettes with a subtle green border. Hovering an unearned medal reveals its name and how to earn it (secret medals show "Figure this one out yourself…"). Tab counter shows earned/total (e.g. `3/26`)
+- **Renderer test coverage**: 45 unit tests for collision math, bezier curves, ship arc avoidance, planet placement/overlap resolution, workspace grouping, belt contour generation. Pure math extracted to `packages/renderer/src/math.ts` for testability. Total test count: 112 → 164
 
 ### Changed
 - **Webview bundle size reduced 78%**: selective PixiJS 8 imports via custom esbuild plugin (`pixi-lite`). Only loads app, rendering, graphics, text, events, and DOM modules — skips accessibility, spritesheet, filters, compressed-textures, mesh, and advanced-blend-modes. Dev: 4.1MB → 2.8MB; Prod: 4.1MB → 922KB
@@ -23,6 +25,9 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **PixiJS memory leaks**: active ships (container + trail + route Graphics), moons, and astronauts are now explicitly destroyed on unmount instead of relying solely on `app.destroy()`. Prevents texture accumulation during long sessions with frequent panel reloads
 - **Debug logging removed**: stripped verbose hook field logging from eventServer and state transition logging from webview
 - **Duplicated `folderName` utility**: extracted shared helper to `packages/ui/src/utils.ts`
+
+### Changed
+- **Demo mode overhauled**: 8 simulated agents — 1 cluster of 2, 1 cluster of 3, and 3 solo planets. Ships now only travel between planets in the same workspace. Demo collision lightning fires between workspace-sharing agents with 4–8s persistence
 
 ## [0.0.4] — 2026-03-12
 
