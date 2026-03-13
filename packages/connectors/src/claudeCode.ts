@@ -87,6 +87,22 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     if (nested.cwd) safePayload.cwd = String(nested.cwd).slice(0, 512);
   }
 
+  // Extract file_path from tool_input for file-touching tools (never content/strings)
+  const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'ReadFile', 'WriteFile']);
+  const toolNameStr = safePayload.toolName as string | undefined;
+  if (toolNameStr && FILE_TOOLS.has(toolNameStr)) {
+    const toolInput = p.tool_input ?? nested?.tool_input;
+    if (toolInput && typeof toolInput === 'object') {
+      const fp = (toolInput as Record<string, unknown>).file_path;
+      if (typeof fp === 'string') safePayload.filePath = fp.slice(0, 512);
+    } else if (typeof toolInput === 'string') {
+      try {
+        const parsed = JSON.parse(toolInput);
+        if (typeof parsed.file_path === 'string') safePayload.filePath = parsed.file_path.slice(0, 512);
+      } catch { /* ignore non-JSON */ }
+    }
+  }
+
   return {
     id: nextId(),
     agentId,

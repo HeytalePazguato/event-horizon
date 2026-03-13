@@ -4,21 +4,27 @@
  */
 
 import type { FC } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import { ACHIEVEMENTS, getMedal } from './registry.js';
 import { TIER_LABELS, tierBorderColor } from './types.js';
 
 const TOAST_DURATION_MS = 10_000;
 const FADE_MS = 600;
+/** Maximum toasts visible at once — the rest wait in queue. */
+const MAX_VISIBLE = 3;
+/** Stagger delay between toasts that appear in the same batch. */
+const STAGGER_MS = 350;
 
 interface ToastProps {
   instanceId: string;
   achievementId: string;
+  /** Delay before the entrance animation begins (ms). */
+  entranceDelay: number;
   onDone: (id: string) => void;
 }
 
-const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDone }) => {
+const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, entranceDelay, onDone }) => {
   const [visible, setVisible] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const achievement = ACHIEVEMENTS.find((a) => a.id === achievementId);
@@ -28,15 +34,17 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
   const Medal = getMedal(achievementId);
 
   useEffect(() => {
-    const showTimer = requestAnimationFrame(() => setVisible(true));
-    const leaveTimer = setTimeout(() => setLeaving(true), TOAST_DURATION_MS - FADE_MS);
-    const doneTimer = setTimeout(() => onDone(instanceId), TOAST_DURATION_MS);
+    const showTimer = setTimeout(() => {
+      requestAnimationFrame(() => setVisible(true));
+    }, entranceDelay);
+    const leaveTimer = setTimeout(() => setLeaving(true), entranceDelay + TOAST_DURATION_MS - FADE_MS);
+    const doneTimer = setTimeout(() => onDone(instanceId), entranceDelay + TOAST_DURATION_MS);
     return () => {
-      cancelAnimationFrame(showTimer);
+      clearTimeout(showTimer);
       clearTimeout(leaveTimer);
       clearTimeout(doneTimer);
     };
-  }, [instanceId, onDone]);
+  }, [instanceId, onDone, entranceDelay]);
 
   if (!achievement) return null;
 
@@ -97,6 +105,8 @@ const AchievementToastItem: FC<ToastProps> = ({ instanceId, achievementId, onDon
           background: accentColor,
           transformOrigin: 'left',
           animation: `eh-toast-shrink ${TOAST_DURATION_MS}ms linear forwards`,
+          animationDelay: `${entranceDelay}ms`,
+          animationPlayState: visible ? 'running' : 'paused',
         }}
       />
     </div>
@@ -115,27 +125,65 @@ export const AchievementToasts: FC = () => {
   const toasts = useCommandCenterStore((s) => s.activeToasts);
   const dismiss = useCommandCenterStore((s) => s.dismissToast);
 
+  /** Tracks the timestamp each toast was first promoted to the visible set. */
+  const stagedRef = useRef<Map<string, number>>(new Map());
+
   useEffect(() => { ensureKeyframe(); }, []);
 
-  if (toasts.length === 0) return null;
+  // Only show the first MAX_VISIBLE toasts; the rest stay queued in the store.
+  const visible = toasts.slice(0, MAX_VISIBLE);
+
+  // Assign stagger delays to newly visible toasts.
+  const now = Date.now();
+  let batchIndex = 0;
+  for (const t of visible) {
+    if (!stagedRef.current.has(t.instanceId)) {
+      stagedRef.current.set(t.instanceId, now + batchIndex * STAGGER_MS);
+      batchIndex++;
+    }
+  }
+
+  // Prune entries for toasts that left the visible window (already dismissed).
+  const visibleIds = new Set(visible.map((t) => t.instanceId));
+  for (const key of stagedRef.current.keys()) {
+    if (!visibleIds.has(key)) stagedRef.current.delete(key);
+  }
+
+  if (visible.length === 0) return null;
+
+  const queuedCount = toasts.length - visible.length;
 
   return (
     <div
       style={{
         position: 'fixed',
         right: 12,
-        bottom: 280,
+        bottom: 285,
         zIndex: 200,
         display: 'flex',
         flexDirection: 'column-reverse',
         pointerEvents: 'none',
       }}
     >
-      {toasts.map((t) => (
+      {queuedCount > 0 && (
+        <div
+          style={{
+            fontSize: 9,
+            color: '#4a7a5a',
+            textAlign: 'right',
+            paddingRight: 4,
+            marginBottom: 4,
+          }}
+        >
+          +{queuedCount} more
+        </div>
+      )}
+      {visible.map((t) => (
         <AchievementToastItem
           key={t.instanceId}
           instanceId={t.instanceId}
           achievementId={t.achievementId}
+          entranceDelay={Math.max(0, (stagedRef.current.get(t.instanceId) ?? now) - now)}
           onDone={dismiss}
         />
       ))}

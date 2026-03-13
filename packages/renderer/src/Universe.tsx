@@ -16,13 +16,15 @@ import { createUfo, setUfoBeam } from './entities/Ufo.js';
 import type { ExtendedUfo } from './entities/Ufo.js';
 import { createShip } from './entities/Ship.js';
 import { createMoon } from './entities/Moon.js';
-
-export interface AgentView {
-  id: string;
-  name: string;
-  agentType?: string;
-  cwd?: string;
-}
+import {
+  bezierPoint,
+  computeControlPoint,
+  computePlanetPositions,
+  computeBeltContour,
+  PLANET_MIN_RADIUS,
+} from './math.js';
+import type { AgentView, WorkspaceGroup } from './math.js';
+export type { AgentView, WorkspaceGroup } from './math.js';
 
 export interface MetricsView {
   load: number;
@@ -36,12 +38,19 @@ export interface ShipSpawn {
   fromAgentType?: string;
 }
 
+export interface SparkSpawn {
+  id: string;
+  agentIds: [string, string];
+  filePath: string;
+}
+
 export interface UniverseProps {
   width?: number;
   height?: number;
   agents?: AgentView[];
   metrics?: Record<string, MetricsView>;
   ships?: ShipSpawn[];
+  sparks?: SparkSpawn[];
   agentStates?: Record<string, string>;
   pausedAgentIds?: Record<string, boolean>;
   isolatedAgentId?: string | null;
@@ -100,7 +109,7 @@ const ASTRONAUT_SUCK_RADIUS = 92;   // outer glow of singularity — suck-in sta
 const ASTRONAUT_GRAZE_RADIUS = 120; // near-miss zone just outside the gravity well
 const ASTRONAUT_DESTROY_RADIUS = 30;
 const SHIP_PROGRESS_SPEED = 0.006;
-const SHIP_AVOID_RADIUS = 95; // must clear singularity outer glow (DISK_OUTER 70 + glow 20 + margin)
+// SHIP_AVOID_RADIUS imported from math.ts
 const MAX_TRAIL_POINTS = 32;
 const UFO_INTERVAL_MIN_MS = 25000;
 const UFO_INTERVAL_MAX_MS = 55000;
@@ -111,9 +120,7 @@ const SHOOTING_STAR_MAX_BURST = 3; // up to 3 shooting stars per event
 const ASTRONAUT_JET_MIN_MS = 45_000;      // 45 seconds minimum before jet fires
 const ASTRONAUT_JET_MAX_MS = 120_000;     // 2 minutes max
 
-/** Minimum distance from singularity centre for a planet to be placed.
- *  Must clear DISK_OUTER(70) + outer-glow(20) + max-planet-size(20) + margin = ~130. */
-const PLANET_MIN_RADIUS = 130;
+// PLANET_MIN_RADIUS imported from math.ts
 
 /** Trail color keyed by agentType. */
 const TRAIL_COLORS: Record<string, number> = {
@@ -124,166 +131,92 @@ const TRAIL_COLORS: Record<string, number> = {
 const TRAIL_COLOR_DEFAULT = 0xffcc44;
 
 // --- helpers -------------------------------------------------------------
+// hashId, normCwd, groupByWorkspace imported from math.ts
 
-/**
- * Place planets so they never overlap.
- *
- * Strategy:
- *  1. Assign each agent to one of 3 orbit bands (by ID hash).
- *  2. Space agents evenly around their band orbit.
- *  3. Run a pixel-space repulsion pass to resolve any remaining overlaps
- *     (including cross-band ones), then re-clamp to PLANET_MIN_RADIUS.
- *
- * MIN_PIXEL_DIST = 120px accounts for the largest visual extent:
- * gas-giant ring arc ≈ size * 1.35 * 1.75 ≈ 38px at avg size 16,
- * so two gas giants need ≥ 76px center-to-center + margin = 120px.
- */
 // Session-random seed — varies each time the renderer mounts but stays stable within a session.
 const SESSION_SEED = Math.random();
 
-function computePlanetPositions(
-  agents: AgentView[],
-): Map<string, { x: number; y: number }> {
-  if (agents.length === 0) return new Map();
+// WorkspaceGroup re-exported from math.ts via Universe exports
 
-  function hashId(s: string): number {
-    let h = 5381;
-    for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) | 0;
-    return Math.abs(h);
-  }
+// computePlanetPositions, computeBeltContour imported from math.ts
 
-  // Band centre radii — gaps between bands are 100px+, well above the ~38px
-  // gas-giant ring extent, so cross-band overlap at the same angle is impossible.
-  const BAND_R = [155, 265, 375];
+// ── Workspace asteroid belt ─────────────────────────────────────────────────
 
-  const bands: AgentView[][] = [[], [], []];
-  for (const agent of agents) bands[hashId(agent.id) % 3].push(agent);
+/** Number of small rocks to scatter along the belt. */
+const BELT_ROCK_COUNT = 100;
 
-  const posArray: Array<{ id: string; x: number; y: number; origR: number }> = [];
-
-  // Session-random rotation offset — shifts all planets each session
-  const sessionAngleOffset = SESSION_SEED * Math.PI * 2;
-
-  for (let b = 0; b < 3; b++) {
-    const group = bands[b];
-    if (group.length === 0) continue;
-    const R = BAND_R[b];
-
-    // Deterministic but varied start angle per band, plus session randomization
-    const startAngle = (hashId((group[0].id) + 'b' + b) % 628) / 100 + sessionAngleOffset;
-
-    group.forEach((agent, idx) => {
-      const angle = startAngle + (idx / group.length) * Math.PI * 2;
-      // Radial jitter: deterministic base + session-random variation
-      const baseJitter = ((hashId(agent.id + 'r') % 40) / 40 - 0.5) * 14;
-      const sessionJitter = ((SESSION_SEED * hashId(agent.id) % 30) - 15);
-      const r = R + baseJitter + sessionJitter;
-      posArray.push({ id: agent.id, x: Math.cos(angle) * r, y: Math.sin(angle) * r, origR: r });
-    });
-  }
-
-  // ── Pixel-space repulsion — guarantees no overlap regardless of band layout ──
-  const MIN_PIXEL_DIST = 120;
-  for (let iter = 0; iter < 80; iter++) {
-    let anyOverlap = false;
-    for (let i = 0; i < posArray.length; i++) {
-      for (let j = i + 1; j < posArray.length; j++) {
-        const pi = posArray[i];
-        const pj = posArray[j];
-        const dx = pj.x - pi.x;
-        const dy = pj.y - pi.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
-        if (dist < MIN_PIXEL_DIST) {
-          anyOverlap = true;
-          const push = (MIN_PIXEL_DIST - dist) * 0.55 + 1;
-          const nx = (dx / dist) * push;
-          const ny = (dy / dist) * push;
-          pi.x -= nx;  pi.y -= ny;
-          pj.x += nx;  pj.y += ny;
-        }
-      }
-    }
-    if (!anyOverlap) break;
-  }
-
-  // Re-clamp to minimum safe radius so nothing ends up inside the singularity
-  const result = new Map<string, { x: number; y: number }>();
-  for (const p of posArray) {
-    const d = Math.sqrt(p.x * p.x + p.y * p.y) || 0.001;
-    if (d < PLANET_MIN_RADIUS) {
-      p.x = (p.x / d) * PLANET_MIN_RADIUS;
-      p.y = (p.y / d) * PLANET_MIN_RADIUS;
-    }
-    result.set(p.id, { x: p.x, y: p.y });
-  }
-  return result;
-}
-
-/** Quadratic bezier position at progress t. */
-function bezierPoint(
-  t: number,
-  x0: number, y0: number,
-  cx: number, cy: number,
-  x1: number, y1: number,
-): { x: number; y: number } {
-  const mt = 1 - t;
-  return {
-    x: mt * mt * x0 + 2 * mt * t * cx + t * t * x1,
-    y: mt * mt * y0 + 2 * mt * t * cy + t * t * y1,
-  };
-}
+/** Bright rock/dust palette — visible against the dark background. */
+const ROCK_COLORS = [0x99887a, 0xb8a888, 0x8899aa, 0xc0b090, 0xa8a8b8];
+/** Highlight colors for rare bright/glowing rocks. */
+const ROCK_GLOW_COLORS = [0xddccaa, 0xccddee, 0xeeddbb];
 
 /**
- * Bezier control point that guarantees the arc avoids the black hole and its halo.
- *
- * The old "push midpoint outward" approach fails for anti-podal planets: the midpoint
- * lands near the origin, so "outward" is ambiguous and the arc still slices through.
- *
- * Correct approach:
- *  1. Find the closest point on the straight-line path to origin.
- *  2. If it's already clear, add only a small aesthetic arc.
- *  3. If it passes within the danger zone, push the control point PERPENDICULAR
- *     to the from→to line (away from origin). The magnitude is chosen so the
- *     bezier apex is verified to stay > SHIP_AVOID_RADIUS at all t.
+ * Draw an asteroid belt around a workspace group using the member positions.
+ * Creates an irregular contour and scatters bright rocks along it.
  */
-function computeControlPoint(
-  fromX: number, fromY: number,
-  toX: number,   toY: number,
-): { cx: number; cy: number } {
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-  const lenSq = dx * dx + dy * dy || 1;
-  const lineLen = Math.sqrt(lenSq);
+function drawAsteroidBelt(memberPositions: Array<{ x: number; y: number }>): Container {
+  const container = new Container();
+  const g = new Graphics();
+  const contour = computeBeltContour(memberPositions);
+  const n = contour.length;
 
-  // Closest point on segment from→to to the origin
-  const tNear = Math.max(0, Math.min(1, -(fromX * dx + fromY * dy) / lenSq));
-  const nearX  = fromX + tNear * dx;
-  const nearY  = fromY + tNear * dy;
-  const nearDist = Math.sqrt(nearX * nearX + nearY * nearY);
+  // Draw a dashed contour outline
+  for (let i = 0; i < n; i++) {
+    if (i % 2 === 1) continue; // skip every other segment for dashes
+    const p0 = contour[i];
+    const p1 = contour[(i + 1) % n];
+    g.moveTo(p0.x, p0.y);
+    g.lineTo(p1.x, p1.y);
+  }
+  g.stroke({ width: 0.8, color: 0x6a7a8a, alpha: 0.3 });
 
-  const mx = (fromX + toX) / 2;
-  const my = (fromY + toY) / 2;
+  // Scatter rocks along the contour
+  for (let i = 0; i < BELT_ROCK_COUNT; i++) {
+    // Interpolate position along the contour
+    const t = i / BELT_ROCK_COUNT;
+    const idx = t * n;
+    const i0 = Math.floor(idx) % n;
+    const i1 = (i0 + 1) % n;
+    const frac = idx - Math.floor(idx);
+    const baseX = contour[i0].x + (contour[i1].x - contour[i0].x) * frac;
+    const baseY = contour[i0].y + (contour[i1].y - contour[i0].y) * frac;
 
-  // Perpendicular to from→to (unit vector), oriented away from origin
-  let perpX = -dy / lineLen;
-  let perpY =  dx / lineLen;
-  const midDist = Math.sqrt(mx * mx + my * my);
-  if (midDist > 1 && perpX * (mx / midDist) + perpY * (my / midDist) < 0) {
-    perpX = -perpX;
-    perpY = -perpY;
+    // Radial jitter (perpendicular to contour)
+    const jitter = (Math.random() - 0.5) * 22;
+    // Tangent direction for perpendicular offset
+    const tx = contour[i1].x - contour[i0].x;
+    const ty = contour[i1].y - contour[i0].y;
+    const tLen = Math.sqrt(tx * tx + ty * ty) || 1;
+    // Perpendicular
+    const px = -ty / tLen;
+    const py = tx / tLen;
+
+    const rx = baseX + px * jitter;
+    const ry = baseY + py * jitter;
+
+    // Most rocks are medium brightness; ~15% are bright glowing highlights
+    const isGlow = Math.random() < 0.15;
+    const rockSize = isGlow ? (1.2 + Math.random() * 2) : (0.8 + Math.random() * 1.6);
+    const color = isGlow
+      ? ROCK_GLOW_COLORS[Math.floor(Math.random() * ROCK_GLOW_COLORS.length)]
+      : ROCK_COLORS[i % ROCK_COLORS.length];
+    const alpha = isGlow ? (0.7 + Math.random() * 0.3) : (0.45 + Math.random() * 0.35);
+
+    g.circle(rx, ry, rockSize);
+    g.fill({ color, alpha });
+
+    // Glow rocks get a soft halo
+    if (isGlow) {
+      g.circle(rx, ry, rockSize * 2.5);
+      g.fill({ color, alpha: 0.08 });
+    }
   }
 
-  if (nearDist >= SHIP_AVOID_RADIUS) {
-    // Straight path already clears the danger zone — subtle arc for visual interest
-    return { cx: mx + perpX * 30, cy: my + perpY * 30 };
-  }
-
-  // Path passes through the danger zone — push perpendicular.
-  // push=260 verified (analytically) to keep arc ≥ SHIP_AVOID_RADIUS at all t,
-  // even when planets are exactly anti-podal.  Add extra for deeper penetrations.
-  const push = 260 + (SHIP_AVOID_RADIUS - nearDist);
-  return { cx: mx + perpX * push, cy: my + perpY * push };
+  container.addChild(g);
+  return container;
 }
+
+// bezierPoint, computeControlPoint imported from math.ts
 
 // --- active ship type ----------------------------------------------------
 
@@ -311,6 +244,7 @@ export const Universe: FC<UniverseProps> = ({
   agents = [],
   metrics = {},
   ships = [],
+  sparks = [],
   agentStates = {},
   pausedAgentIds = {},
   isolatedAgentId = null,
@@ -355,6 +289,8 @@ export const Universe: FC<UniverseProps> = ({
   }>>([]);
   const activeShipsRef = useRef<ActiveShip[]>([]);
   const spawnedShipIdsRef = useRef<Set<string>>(new Set());
+  /** Active lightning arcs — one Graphics per collision, redrawn each frame. */
+  const lightningArcsRef = useRef<Map<string, Graphics>>(new Map());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const agentStatesRef    = useRef<Record<string, string>>(agentStates);
   const metricsRef        = useRef<Record<string, MetricsView>>(metrics);
@@ -403,6 +339,8 @@ export const Universe: FC<UniverseProps> = ({
   const spiralContainerRef = useRef<Container | null>(null);
   const prevAgentsRef = useRef<AgentView[]>([]);
   const planetMapRef = useRef<Map<string, ExtendedPlanet>>(new Map());
+  const beltsContainerRef = useRef<Container | null>(null);
+  const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
   const tickTimeRef = useRef(0);
   const [initError, setInitError] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -461,6 +399,9 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { isolatedRef.current = isolatedAgentId; }, [isolatedAgentId]);
   useEffect(() => { boostedRef.current = boostedAgentIds; }, [boostedAgentIds]);
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
+
+  const sparksRef = useRef<SparkSpawn[]>(sparks);
+  useEffect(() => { sparksRef.current = sparks; }, [sparks]);
   useEffect(() => { selectedAgentIdRef.current = selectedAgentId; }, [selectedAgentId]);
 
   // --- init timeout (fallback if PixiJS silently fails) --------------------
@@ -490,6 +431,7 @@ export const Universe: FC<UniverseProps> = ({
           backgroundColor: 0x0a0a12,
           antialias: true,
           autoDensity: true,
+          preserveDrawingBuffer: true,
         });
 
         if (!mountedRef.current || !appRef.current) {
@@ -542,6 +484,10 @@ export const Universe: FC<UniverseProps> = ({
         const astronautsContainer = new Container();
         world.addChild(astronautsContainer);
         astronautsContainerRef.current = astronautsContainer;
+
+        const beltsContainer = new Container();
+        world.addChild(beltsContainer);
+        beltsContainerRef.current = beltsContainer;
 
         const planetsContainer = new Container();
         world.addChild(planetsContainer);
@@ -620,16 +566,33 @@ export const Universe: FC<UniverseProps> = ({
       panContainerRef.current = null;
       worldRef.current = null;
       planetsContainerRef.current = null;
+      beltsContainerRef.current = null;
+      workspaceGroupsRef.current = [];
+      if (moonsContainerRef.current) {
+        for (let i = moonsContainerRef.current.children.length - 1; i >= 0; i--) {
+          try { moonsContainerRef.current.children[i].destroy({ children: true }); } catch { /* ignore */ }
+        }
+      }
       moonsContainerRef.current = null;
       moonCountsRef.current = new Map();
       shipsContainerRef.current = null;
       spiralContainerRef.current = null;
       astronautsContainerRef.current = null;
+      for (const a of astronautsRef.current) {
+        try { a.c.destroy({ children: true }); } catch { /* ignore */ }
+      }
       astronautsRef.current = [];
       for (const s of spiralRef.current) { try { s.c.destroy({ children: true }); } catch { /* already destroyed */ } }
       spiralRef.current = [];
+      for (const s of activeShipsRef.current) {
+        try { s.c.destroy({ children: true }); } catch { /* ignore */ }
+        try { s.trailG.destroy(); } catch { /* ignore */ }
+        try { s.routeG.destroy(); } catch { /* ignore */ }
+      }
       activeShipsRef.current = [];
       spawnedShipIdsRef.current = new Set();
+      for (const g of lightningArcsRef.current.values()) { try { g.destroy(); } catch { /* ignore */ } }
+      lightningArcsRef.current = new Map();
       planetPositionsRef.current = new Map();
       ufoRef.current = null;
       singularityRef.current = null;
@@ -721,8 +684,22 @@ export const Universe: FC<UniverseProps> = ({
       }
     }
 
-    // 2. Compute positions
-    const posMap = computePlanetPositions(agents);
+    // 2. Compute positions + workspace groups
+    const { positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED);
+    workspaceGroupsRef.current = workspaceGroups;
+
+    // 2b. Draw workspace asteroid belts
+    const beltsContainer = beltsContainerRef.current;
+    if (beltsContainer) {
+      // Remove old belt graphics
+      while (beltsContainer.children.length > 0) {
+        beltsContainer.children[0].destroy({ children: true });
+      }
+      for (const group of workspaceGroups) {
+        const belt = drawAsteroidBelt(group.memberPositions);
+        beltsContainer.addChild(belt);
+      }
+    }
 
     // 3. Add new planets, update existing
     agents.forEach((agent) => {
@@ -838,6 +815,32 @@ export const Universe: FC<UniverseProps> = ({
       spawnedShipIdsRef.current.add(ship.id);
     }
   }, [ships, canvasReady]);
+
+  // --- file collision lightning arcs ----------------------------------------
+  // Sync Graphics objects with active sparks — add new, remove stale.
+  useEffect(() => {
+    if (!canvasReady) return;
+    const container = shipsContainerRef.current;
+    if (!container) return;
+    const arcs = lightningArcsRef.current;
+    const activeIds = new Set(sparks.map((s) => s.id));
+
+    // Remove arcs that are no longer active
+    for (const [id, g] of arcs) {
+      if (!activeIds.has(id)) {
+        g.destroy();
+        arcs.delete(id);
+      }
+    }
+    // Create Graphics for new sparks
+    for (const spark of sparks) {
+      if (!arcs.has(spark.id)) {
+        const g = new Graphics();
+        container.addChild(g);
+        arcs.set(spark.id, g);
+      }
+    }
+  }, [sparks, canvasReady]);
 
   // --- pointer controls ----------------------------------------------------
   const onWheel = useCallback((e: WheelEvent) => {
@@ -1515,6 +1518,77 @@ export const Universe: FC<UniverseProps> = ({
         }
       }
 
+      // File collision — lightning arcs between colliding planets
+      const arcs = lightningArcsRef.current;
+      const currentSparks = sparksRef.current;
+      const posMapLightning = planetPositionsRef.current;
+      for (const spark of currentSparks) {
+        const g = arcs.get(spark.id);
+        if (!g) continue;
+        const posA = posMapLightning.get(spark.agentIds[0]);
+        const posB = posMapLightning.get(spark.agentIds[1]);
+        if (!posA || !posB) { g.clear(); continue; }
+
+        g.clear();
+
+        // Draw 2–3 jagged lightning bolts between the two planets
+        const boltCount = 2 + Math.floor(Math.random() * 2);
+        const BOLT_COLORS = [0x44ddff, 0xaaeeff, 0xffffff];
+        for (let b = 0; b < boltCount; b++) {
+          const segments = 8 + Math.floor(Math.random() * 6);
+          const color = BOLT_COLORS[b % BOLT_COLORS.length];
+          const alpha = b === 0 ? 0.9 : 0.4 + Math.random() * 0.3;
+          const width = b === 0 ? 1.8 : 0.8 + Math.random() * 0.6;
+
+          // Direction vector
+          const dx = posB.x - posA.x;
+          const dy = posB.y - posA.y;
+          // Perpendicular for jitter
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          const perpX = -dy / len;
+          const perpY = dx / len;
+
+          g.moveTo(posA.x, posA.y);
+          for (let s = 1; s < segments; s++) {
+            const frac = s / segments;
+            const baseX = posA.x + dx * frac;
+            const baseY = posA.y + dy * frac;
+            // Jitter perpendicular to the line — larger in the middle, zero at endpoints
+            const jitterScale = Math.sin(frac * Math.PI) * len * 0.15;
+            const jitter = (Math.random() - 0.5) * 2 * jitterScale;
+            g.lineTo(baseX + perpX * jitter, baseY + perpY * jitter);
+          }
+          g.lineTo(posB.x, posB.y);
+          g.stroke({ width, color, alpha });
+
+          // Glow pass — same path, wider, lower alpha
+          if (b === 0) {
+            g.moveTo(posA.x, posA.y);
+            for (let s = 1; s < segments; s++) {
+              const frac = s / segments;
+              const baseX = posA.x + dx * frac;
+              const baseY = posA.y + dy * frac;
+              const jitterScale = Math.sin(frac * Math.PI) * len * 0.15;
+              const jitter = (Math.random() - 0.5) * 2 * jitterScale;
+              g.lineTo(baseX + perpX * jitter, baseY + perpY * jitter);
+            }
+            g.lineTo(posB.x, posB.y);
+            g.stroke({ width: 5, color: 0x44ddff, alpha: 0.12 });
+          }
+        }
+
+        // Small sparks at both endpoints
+        for (const pos of [posA, posB]) {
+          for (let i = 0; i < 3; i++) {
+            const sparkSize = 1 + Math.random() * 1.5;
+            const offsetX = (Math.random() - 0.5) * 12;
+            const offsetY = (Math.random() - 0.5) * 12;
+            g.circle(pos.x + offsetX, pos.y + offsetY, sparkSize);
+            g.fill({ color: 0xaaeeff, alpha: 0.5 + Math.random() * 0.4 });
+          }
+        }
+      }
+
       // Shooting stars
       const sstars = shootingStarsRef.current;
       for (let si = sstars.length - 1; si >= 0; si--) {
@@ -1694,6 +1768,13 @@ export const Universe: FC<UniverseProps> = ({
         clearTimeout(shootingStarTimerRef.current);
         shootingStarTimerRef.current = null;
       }
+      for (const s of activeShipsRef.current) {
+        try { s.c.destroy({ children: true }); } catch { /* ignore */ }
+        try { s.trailG.destroy(); } catch { /* ignore */ }
+        try { s.routeG.destroy(); } catch { /* ignore */ }
+      }
+      activeShipsRef.current = [];
+      spawnedShipIdsRef.current = new Set();
       for (const ss of shootingStarsRef.current) {
         try { ss.g.destroy(); } catch { /* ignore */ }
       }

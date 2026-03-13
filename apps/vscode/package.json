@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Visualize AI coding agents as a living cosmic system — planets, black holes, ships and more.",
@@ -15,8 +15,19 @@
   "engines": {
     "vscode": "^1.110.0"
   },
-  "categories": ["Visualization", "Other"],
-  "keywords": ["ai", "agents", "claude", "copilot", "cursor", "visualization", "cosmic"],
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agents",
+    "claude",
+    "copilot",
+    "cursor",
+    "visualization",
+    "cosmic"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/HeytalePazguato/event-horizon.git"
@@ -59,18 +70,19 @@
     "lint": "eslint src/ webview/",
     "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap",
     "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked",
-    "build:webview": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic",
-    "build:webview:prod": "esbuild webview/index.tsx --bundle --outfile=webview-dist/main.js --format=iife --platform=browser --loader:.tsx=tsx --jsx=automatic --minify",
+    "build:webview": "node webview/esbuild.mjs",
+    "build:webview:prod": "node webview/esbuild.mjs --minify",
     "package:vsix": "pnpm run build:ext:prod && pnpm run build:webview:prod && vsce package --no-dependencies",
     "test": "vitest run",
     "dev": "tsc --watch",
     "clean": "rm -rf out webview-dist"
   },
   "dependencies": {
-    "@event-horizon/core": "workspace:*",
     "@event-horizon/connectors": "workspace:*",
+    "@event-horizon/core": "workspace:*",
     "@event-horizon/renderer": "workspace:*",
-    "@event-horizon/ui": "workspace:*"
+    "@event-horizon/ui": "workspace:*",
+    "html2canvas": "^1.4.1"
   },
   "devDependencies": {
     "@types/node": "^25.4.0",
@@ -78,7 +90,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.110.0",
     "@vscode/vsce": "^3.2.1",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.27.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.2"

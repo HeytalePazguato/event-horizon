@@ -6,15 +6,28 @@
 import type { AgentEvent, AgentEventType } from '@event-horizon/core';
 
 const OPENCODE_TO_EVENT: Record<string, AgentEventType> = {
-  'session.created': 'agent.spawn',
-  'session.deleted': 'agent.terminate',
-  'session.idle': 'agent.idle',
-  'session.error': 'agent.error',
-  'server.instance.disposed': 'agent.terminate',
-  'tool.execute.before': 'tool.call',
-  'tool.execute.after': 'tool.result',
-  'file.edited': 'file.write',
-  'file.watcher.updated': 'file.read',
+  // Session lifecycle
+  'session.created':           'agent.spawn',
+  'session.deleted':           'agent.terminate',
+  'session.idle':              'agent.idle',
+  'session.error':             'agent.error',
+  'session.compacted':         'message.receive',
+  'session.updated':           'message.receive',
+  'server.instance.disposed':  'agent.terminate',
+  'server.connected':          'message.receive',
+  // Tool execution
+  'tool.execute.before':       'tool.call',
+  'tool.execute.after':        'tool.result',
+  // Permission (waiting ring)
+  'permission.asked':          'agent.waiting',
+  'permission.replied':        'message.receive',
+  // File operations
+  'file.edited':               'file.write',
+  'file.watcher.updated':      'file.read',
+  // Informational
+  'command.executed':          'message.receive',
+  'lsp.client.diagnostics':   'message.receive',
+  'todo.updated':              'message.receive',
 };
 
 function nextId(): string {
@@ -100,6 +113,17 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
       ?? ((payload.properties as Record<string, unknown>)?.tool as string)
       ?? undefined;
     if (toolName) enrichedPayload.toolName = toolName;
+    // Extract filePath from tool input
+    const input = (payload.input as Record<string, unknown>) ?? (payload.properties as Record<string, unknown>) ?? {};
+    const fpTool = (input.file_path as string) ?? (input.path as string) ?? (input.filePath as string);
+    if (typeof fpTool === 'string') enrichedPayload.filePath = fpTool.slice(0, 512);
+  }
+
+  // Extract filePath for file.write / file.read events
+  if (type === 'file.write' || type === 'file.read') {
+    const props = (payload.properties as Record<string, unknown>) ?? {};
+    const fpFile = (props.path as string) ?? (props.filePath as string) ?? (payload.path as string);
+    if (typeof fpFile === 'string') enrichedPayload.filePath = fpFile.slice(0, 512);
   }
 
   return {

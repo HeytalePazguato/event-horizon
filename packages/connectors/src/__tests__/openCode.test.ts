@@ -47,6 +47,39 @@ describe('mapOpenCodeToEvent', () => {
     mapOpenCodeToEvent({ event: 'session.deleted', agentId: 'oc-1' });
   });
 
+  it('maps permission.asked to agent.waiting', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'permission.asked',
+      agentId: 'oc-1',
+      payload: { tool: 'Bash', permission: 'execute' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.waiting');
+    expect(result!.payload.tool).toBe('Bash');
+  });
+
+  it('maps permission.replied to message.receive', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'permission.replied',
+      agentId: 'oc-1',
+      payload: { tool: 'Bash', granted: true },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('message.receive');
+  });
+
+  it('maps session.compacted to message.receive', () => {
+    const result = mapOpenCodeToEvent({ event: 'session.compacted', agentId: 'oc-1' });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('message.receive');
+  });
+
+  it('maps command.executed to message.receive', () => {
+    const result = mapOpenCodeToEvent({ event: 'command.executed', agentId: 'oc-1' });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('message.receive');
+  });
+
   it('returns null for unknown events', () => {
     expect(mapOpenCodeToEvent({ event: 'some.unknown.event' })).toBeNull();
   });
@@ -68,5 +101,26 @@ describe('mapOpenCodeToEvent', () => {
     expect(result).not.toBeNull();
     expect(result!.agentId.length).toBeLessThanOrEqual(128);
     expect(result!.agentName.length).toBeLessThanOrEqual(64);
+  });
+
+  it('extracts filePath from tool.call input', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'tool.execute.before',
+      agentId: 'oc-1',
+      payload: { toolName: 'Edit', input: { file_path: '/project/main.go' } },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.filePath).toBe('/project/main.go');
+  });
+
+  it('extracts filePath from file.edited event properties', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'file.edited',
+      agentId: 'oc-1',
+      payload: { properties: { path: '/project/utils.ts' } },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('file.write');
+    expect(result!.payload.filePath).toBe('/project/utils.ts');
   });
 });

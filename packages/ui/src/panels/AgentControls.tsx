@@ -72,6 +72,23 @@ const IconInfo: FC = () => (
   </svg>
 );
 
+const IconExport: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <path d="M7 1.5v7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <path d="M4 6l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2 10.5v1.5h10v-1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconScreenshot: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <rect x="1" y="3" width="12" height="9" rx="1.2" stroke="currentColor" strokeWidth="1.2" fill="none" />
+    <circle cx="7" cy="7.5" r="2.5" stroke="currentColor" strokeWidth="1.1" fill="none" />
+    <circle cx="7" cy="7.5" r="1" fill="currentColor" />
+    <rect x="5" y="1.5" width="4" height="2" rx="0.5" stroke="currentColor" strokeWidth="0.8" fill="none" />
+  </svg>
+);
+
 // ── Button definitions ────────────────────────────────────────────────────────
 
 interface CmdBtn {
@@ -98,7 +115,9 @@ const GRID: Array<CmdBtn | null> = [
   // Row 2 — setup actions
   { id: 'connect', label: 'Connect', desc: 'Connect a new agent to the universe.',  icon: IconConnect,  alwaysActive: true },
   { id: 'spawn',   label: 'Spawn',   desc: 'Open a terminal with an agent CLI.',    icon: IconSpawn,    alwaysActive: true },
-  null, null, null,
+  { id: 'export',  label: 'Export',  desc: 'Export session stats as JSON.',          icon: IconExport,      alwaysActive: true },
+  { id: 'screenshot', label: 'Screenshot', desc: 'Save the universe as an image.', icon: IconScreenshot,  alwaysActive: true },
+  null,
   // Row 3 — meta/utility (bottom-right)
   null, null, null,
   { id: 'demo',    label: 'Demo',    desc: 'Toggle demo simulation.',               icon: IconDemo,     alwaysActive: true },
@@ -168,7 +187,7 @@ const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
     <div
       style={{
         position: 'fixed',
-        bottom: 200,
+        bottom: 205,
         right: 12,
         width: 172,
         background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
@@ -209,6 +228,8 @@ export const AgentControls: FC = () => {
     infoOpen,
     toggleSpawn,
     spawnOpen,
+    requestExport,
+    requestScreenshot,
   } = useCommandCenterStore(useShallow((s) => ({
     selectedAgentId: s.selectedAgentId,
     requestCenter: s.requestCenter,
@@ -224,6 +245,8 @@ export const AgentControls: FC = () => {
     infoOpen: s.infoOpen,
     toggleSpawn: s.toggleSpawn,
     spawnOpen: s.spawnOpen,
+    requestExport: s.requestExport,
+    requestScreenshot: s.requestScreenshot,
   })));
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -237,6 +260,8 @@ export const AgentControls: FC = () => {
     else if (id === 'spawn') toggleSpawn();
     else if (id === 'demo') requestDemo();
     else if (id === 'info') toggleInfo();
+    else if (id === 'export') requestExport();
+    else if (id === 'screenshot') requestScreenshot();
   }
 
   function isActive(btn: CmdBtn): boolean {
