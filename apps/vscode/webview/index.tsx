@@ -843,7 +843,7 @@ function App() {
     a.download = `event-horizon-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [exportRequestedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [exportRequestedAt]);
 
   // Screenshot — capture the full view (WebGL universe + HTML Command Center)
   useEffect(() => {
