@@ -6,15 +6,28 @@
 import type { AgentEvent, AgentEventType } from '@event-horizon/core';
 
 const OPENCODE_TO_EVENT: Record<string, AgentEventType> = {
-  'session.created': 'agent.spawn',
-  'session.deleted': 'agent.terminate',
-  'session.idle': 'agent.idle',
-  'session.error': 'agent.error',
-  'server.instance.disposed': 'agent.terminate',
-  'tool.execute.before': 'tool.call',
-  'tool.execute.after': 'tool.result',
-  'file.edited': 'file.write',
-  'file.watcher.updated': 'file.read',
+  // Session lifecycle
+  'session.created':           'agent.spawn',
+  'session.deleted':           'agent.terminate',
+  'session.idle':              'agent.idle',
+  'session.error':             'agent.error',
+  'session.compacted':         'message.receive',
+  'session.updated':           'message.receive',
+  'server.instance.disposed':  'agent.terminate',
+  'server.connected':          'message.receive',
+  // Tool execution
+  'tool.execute.before':       'tool.call',
+  'tool.execute.after':        'tool.result',
+  // Permission (waiting ring)
+  'permission.asked':          'agent.waiting',
+  'permission.replied':        'message.receive',
+  // File operations
+  'file.edited':               'file.write',
+  'file.watcher.updated':      'file.read',
+  // Informational
+  'command.executed':          'message.receive',
+  'lsp.client.diagnostics':   'message.receive',
+  'todo.updated':              'message.receive',
 };
 
 function nextId(): string {

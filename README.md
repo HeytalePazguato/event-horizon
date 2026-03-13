@@ -79,27 +79,37 @@ Certain actions and milestones unlock achievements, displayed as medals in the C
 
 The table below shows which lifecycle events each agent supports and how they map to Event Horizon's internal `AgentEvent` types.
 
-| Hook / Event | Claude Code | GitHub Copilot | OpenCode | AgentEvent mapping |
-|---|---|---|---|---|
-| **SessionStart** | `SessionStart` ✅ | `SessionStart` ✅ | `session.created` ✅ | `agent.spawn` |
-| **SessionEnd** | `SessionEnd` ✅ | ❌ Never fires (see below) | `session.deleted` ✅ | `agent.terminate` |
-| **Stop** (per-turn) | — | `Stop` ✅ | — | `agent.idle` (not terminate) |
-| **UserPromptSubmit** | `UserPromptSubmit` ✅ | `UserPromptSubmit` ✅ | `message.updated` (role=user) ✅ | `task.start` |
-| **PreToolUse** | `PreToolUse` ✅ | `PreToolUse` ✅ | `tool.execute.before` ✅ | `tool.call` |
-| **PostToolUse** | `PostToolUse` ✅ | `PostToolUse` ✅ | `tool.execute.after` ✅ | `tool.result` |
-| **SubagentStart** | `SubagentStart` ✅ | `SubagentStart` ✅ ⚠️ | — | `task.start` |
-| **SubagentStop** | `SubagentStop` ✅ | `SubagentStop` ✅ | — | `task.complete` |
-| **Notification** | `Notification` ✅ | — | — | `message.receive` |
-| **PermissionRequest** | `PermissionRequest` ✅ | — | — | `agent.waiting` |
-| **Stop** (Claude) | `Stop` ✅ | — | — | `task.complete` |
-| **TaskCompleted** | `TaskCompleted` ✅ | — | — | `task.complete` |
-| **InstructionsLoaded** | `InstructionsLoaded` ✅ | — | — | `message.receive` |
-| **ConfigChange** | `ConfigChange` ✅ | — | — | `message.receive` |
-| **PreCompact** | `PreCompact` ✅ | `PreCompact` (untested) | — | `message.receive` |
-| **WorktreeCreate** | `WorktreeCreate` ✅ | — | — | `message.receive` |
-| **WorktreeRemove** | `WorktreeRemove` ✅ | — | — | `message.receive` |
-| **TeammateIdle** | `TeammateIdle` ✅ | — | — | `agent.idle` |
-| **Error** | `PostToolUseFailure` ✅ | — | `session.error` ✅ | `agent.error` |
+| Hook / Event | Claude Code | GitHub Copilot | OpenCode | AgentEvent | Visual Effect |
+|---|---|---|---|---|---|
+| **SessionStart** | `SessionStart` ✅ | `SessionStart` ✅ | `session.created` ✅ | `agent.spawn` | Planet appears + pulse wave |
+| **SessionEnd** | `SessionEnd` ✅ | ❌ Never fires (see below) | `session.deleted` ✅ | `agent.terminate` | Planet removed |
+| **Stop** (per-turn) | — | `Stop` ✅ | — | `agent.idle` | Planet slows, green glow |
+| **UserPromptSubmit** | `UserPromptSubmit` ✅ | `UserPromptSubmit` ✅ | `message.updated` (role=user) ✅ | `task.start` | Thinking ring + moon spawns |
+| **PreToolUse** | `PreToolUse` ✅ | `PreToolUse` ✅ | `tool.execute.before` ✅ | `tool.call` | Blue tool-use glow |
+| **PostToolUse** | `PostToolUse` ✅ | `PostToolUse` ✅ | `tool.execute.after` ✅ | `tool.result` | Returns to thinking ring |
+| **SubagentStart** | `SubagentStart` ✅ | `SubagentStart` ✅ ⚠️ | — | `task.start` | Moon spawns on parent planet |
+| **SubagentStop** | `SubagentStop` ✅ | `SubagentStop` ✅ | — | `task.complete` | Moon lands |
+| **Notification** | `Notification` ✅ | — | — | `message.receive` | — |
+| **PermissionRequest** | `PermissionRequest` ✅ | — | `permission.asked` ✅ | `agent.waiting` | Amber pulsing ring |
+| **PermissionReply** | — | — | `permission.replied` ✅ | `message.receive` | Clears waiting ring |
+| **Stop** (Claude) | `Stop` ✅ | — | — | `task.complete` | Planet returns to idle |
+| **TaskCompleted** | `TaskCompleted` ✅ | — | — | `task.complete` | Planet returns to idle |
+| **SessionStatus** | — | — | `session.status` ✅ | `task.progress` / `task.complete` | Planet rotation speed change |
+| **SessionCompacted** | `PreCompact` ✅ | `PreCompact` (untested) | `session.compacted` ✅ | `message.receive` | — |
+| **SessionUpdated** | — | — | `session.updated` ✅ | `message.receive` | — |
+| **FileEdited** | — | — | `file.edited` ✅ | `file.write` | — |
+| **FileWatcherUpdated** | — | — | `file.watcher.updated` ✅ | `file.read` | — |
+| **CommandExecuted** | — | — | `command.executed` ✅ | `message.receive` | — |
+| **LSP Diagnostics** | — | — | `lsp.client.diagnostics` ✅ | `message.receive` | — |
+| **TodoUpdated** | — | — | `todo.updated` ✅ | `message.receive` | — |
+| **InstructionsLoaded** | `InstructionsLoaded` ✅ | — | — | `message.receive` | — |
+| **ConfigChange** | `ConfigChange` ✅ | — | — | `message.receive` | — |
+| **WorktreeCreate** | `WorktreeCreate` ✅ | — | — | `message.receive` | — |
+| **WorktreeRemove** | `WorktreeRemove` ✅ | — | — | `message.receive` | — |
+| **TeammateIdle** | `TeammateIdle` ✅ | — | — | `agent.idle` | Planet slows, green glow |
+| **Error** | `PostToolUseFailure` ✅ | — | `session.error` ✅ | `agent.error` | Red error glow |
+
+**OpenCode events not mapped** (infrastructure/TUI-only, no visualization value): `installation.updated`, `lsp.updated`, `shell.env`, `server.connected`, `session.diff`, `message.removed`, `message.part.updated`, `message.part.removed`, `tui.prompt.append`, `tui.command.execute`, `tui.toast.show`.
 
 ### Known Limitations
 

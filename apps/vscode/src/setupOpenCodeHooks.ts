@@ -98,6 +98,22 @@ export default async function EventHorizon({ project, directory, worktree }) {
         payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
       });
     },
+    "permission.asked": async (input) => {
+      send("permission.asked", {
+        sessionId,
+        agentName,
+        cwd,
+        payload: { tool: input?.tool, permission: input?.permission },
+      });
+    },
+    "permission.replied": async (input) => {
+      send("permission.replied", {
+        sessionId,
+        agentName,
+        cwd,
+        payload: { tool: input?.tool, granted: input?.granted },
+      });
+    },
   };
 };
 `;
