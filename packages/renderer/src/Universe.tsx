@@ -674,6 +674,9 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { isolatedRef.current = isolatedAgentId; }, [isolatedAgentId]);
   useEffect(() => { boostedRef.current = boostedAgentIds; }, [boostedAgentIds]);
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
+
+  const sparksRef = useRef<SparkSpawn[]>(sparks);
+  useEffect(() => { sparksRef.current = sparks; }, [sparks]);
   useEffect(() => { selectedAgentIdRef.current = selectedAgentId; }, [selectedAgentId]);
 
   // --- init timeout (fallback if PixiJS silently fails) --------------------
@@ -839,19 +842,31 @@ export const Universe: FC<UniverseProps> = ({
       planetsContainerRef.current = null;
       beltsContainerRef.current = null;
       workspaceGroupsRef.current = [];
+      if (moonsContainerRef.current) {
+        for (let i = moonsContainerRef.current.children.length - 1; i >= 0; i--) {
+          try { moonsContainerRef.current.children[i].destroy({ children: true }); } catch { /* ignore */ }
+        }
+      }
       moonsContainerRef.current = null;
       moonCountsRef.current = new Map();
       shipsContainerRef.current = null;
       spiralContainerRef.current = null;
       astronautsContainerRef.current = null;
+      for (const a of astronautsRef.current) {
+        try { a.c.destroy({ children: true }); } catch { /* ignore */ }
+      }
       astronautsRef.current = [];
       for (const s of spiralRef.current) { try { s.c.destroy({ children: true }); } catch { /* already destroyed */ } }
       spiralRef.current = [];
+      for (const s of activeShipsRef.current) {
+        try { s.c.destroy({ children: true }); } catch { /* ignore */ }
+        try { s.trailG.destroy(); } catch { /* ignore */ }
+        try { s.routeG.destroy(); } catch { /* ignore */ }
+      }
       activeShipsRef.current = [];
       spawnedShipIdsRef.current = new Set();
-      for (const cp of collisionSparksRef.current) { try { cp.g.destroy(); } catch { /* ignore */ } }
-      collisionSparksRef.current = [];
-      spawnedSparkIdsRef.current = new Set();
+      for (const g of lightningArcsRef.current.values()) { try { g.destroy(); } catch { /* ignore */ } }
+      lightningArcsRef.current = new Map();
       planetPositionsRef.current = new Map();
       ufoRef.current = null;
       singularityRef.current = null;
@@ -1075,50 +1090,28 @@ export const Universe: FC<UniverseProps> = ({
     }
   }, [ships, canvasReady]);
 
-  // --- collision sparks -----------------------------------------------------
-  const SPARK_COLORS = [0xffee44, 0xffffff, 0x44ddff, 0xff8833, 0xffcc00];
+  // --- file collision lightning arcs ----------------------------------------
+  // Sync Graphics objects with active sparks — add new, remove stale.
   useEffect(() => {
-    if (!canvasReady || sparks.length === 0) return;
+    if (!canvasReady) return;
     const container = shipsContainerRef.current;
     if (!container) return;
-    const posMap = planetPositionsRef.current;
+    const arcs = lightningArcsRef.current;
+    const activeIds = new Set(sparks.map((s) => s.id));
 
+    // Remove arcs that are no longer active
+    for (const [id, g] of arcs) {
+      if (!activeIds.has(id)) {
+        g.destroy();
+        arcs.delete(id);
+      }
+    }
+    // Create Graphics for new sparks
     for (const spark of sparks) {
-      if (spawnedSparkIdsRef.current.has(spark.id)) continue;
-      const posA = posMap.get(spark.agentIds[0]);
-      const posB = posMap.get(spark.agentIds[1]);
-      if (!posA || !posB) continue;
-
-      spawnedSparkIdsRef.current.add(spark.id);
-
-      // Midpoint between the two colliding planets
-      const mx = (posA.x + posB.x) / 2;
-      const my = (posA.y + posB.y) / 2;
-
-      // Burst 15–25 particles in random directions
-      const count = 15 + Math.floor(Math.random() * 11);
-      for (let i = 0; i < count; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = 1.5 + Math.random() * 4;
-        const pg = new Graphics();
-        const pSize = 1 + Math.random() * 2.5;
-        const color = SPARK_COLORS[Math.floor(Math.random() * SPARK_COLORS.length)];
-        pg.circle(0, 0, pSize);
-        pg.fill({ color, alpha: 0.9 });
-        // Soft glow halo
-        pg.circle(0, 0, pSize * 3);
-        pg.fill({ color, alpha: 0.12 });
-        pg.x = mx;
-        pg.y = my;
-        container.addChild(pg);
-        collisionSparksRef.current.push({
-          g: pg,
-          x: mx, y: my,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          life: 0,
-          maxLife: 0.4 + Math.random() * 0.6,
-        });
+      if (!arcs.has(spark.id)) {
+        const g = new Graphics();
+        container.addChild(g);
+        arcs.set(spark.id, g);
       }
     }
   }, [sparks, canvasReady]);
@@ -1799,23 +1792,74 @@ export const Universe: FC<UniverseProps> = ({
         }
       }
 
-      // Collision sparks
-      const csparks = collisionSparksRef.current;
-      for (let ci = csparks.length - 1; ci >= 0; ci--) {
-        const cp = csparks[ci];
-        cp.life += dt;
-        cp.x += cp.vx;
-        cp.y += cp.vy;
-        cp.vx *= 0.94;
-        cp.vy *= 0.94;
-        cp.g.x = cp.x;
-        cp.g.y = cp.y;
-        const frac = cp.life / cp.maxLife;
-        cp.g.alpha = (1 - frac) * 0.9;
-        cp.g.scale.set(1 - frac * 0.6);
-        if (cp.life >= cp.maxLife) {
-          cp.g.destroy();
-          csparks.splice(ci, 1);
+      // File collision — lightning arcs between colliding planets
+      const arcs = lightningArcsRef.current;
+      const currentSparks = sparksRef.current;
+      const posMapLightning = planetPositionsRef.current;
+      for (const spark of currentSparks) {
+        const g = arcs.get(spark.id);
+        if (!g) continue;
+        const posA = posMapLightning.get(spark.agentIds[0]);
+        const posB = posMapLightning.get(spark.agentIds[1]);
+        if (!posA || !posB) { g.clear(); continue; }
+
+        g.clear();
+
+        // Draw 2–3 jagged lightning bolts between the two planets
+        const boltCount = 2 + Math.floor(Math.random() * 2);
+        const BOLT_COLORS = [0x44ddff, 0xaaeeff, 0xffffff];
+        for (let b = 0; b < boltCount; b++) {
+          const segments = 8 + Math.floor(Math.random() * 6);
+          const color = BOLT_COLORS[b % BOLT_COLORS.length];
+          const alpha = b === 0 ? 0.9 : 0.4 + Math.random() * 0.3;
+          const width = b === 0 ? 1.8 : 0.8 + Math.random() * 0.6;
+
+          // Direction vector
+          const dx = posB.x - posA.x;
+          const dy = posB.y - posA.y;
+          // Perpendicular for jitter
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          const perpX = -dy / len;
+          const perpY = dx / len;
+
+          g.moveTo(posA.x, posA.y);
+          for (let s = 1; s < segments; s++) {
+            const frac = s / segments;
+            const baseX = posA.x + dx * frac;
+            const baseY = posA.y + dy * frac;
+            // Jitter perpendicular to the line — larger in the middle, zero at endpoints
+            const jitterScale = Math.sin(frac * Math.PI) * len * 0.15;
+            const jitter = (Math.random() - 0.5) * 2 * jitterScale;
+            g.lineTo(baseX + perpX * jitter, baseY + perpY * jitter);
+          }
+          g.lineTo(posB.x, posB.y);
+          g.stroke({ width, color, alpha });
+
+          // Glow pass — same path, wider, lower alpha
+          if (b === 0) {
+            g.moveTo(posA.x, posA.y);
+            for (let s = 1; s < segments; s++) {
+              const frac = s / segments;
+              const baseX = posA.x + dx * frac;
+              const baseY = posA.y + dy * frac;
+              const jitterScale = Math.sin(frac * Math.PI) * len * 0.15;
+              const jitter = (Math.random() - 0.5) * 2 * jitterScale;
+              g.lineTo(baseX + perpX * jitter, baseY + perpY * jitter);
+            }
+            g.lineTo(posB.x, posB.y);
+            g.stroke({ width: 5, color: 0x44ddff, alpha: 0.12 });
+          }
+        }
+
+        // Small sparks at both endpoints
+        for (const pos of [posA, posB]) {
+          for (let i = 0; i < 3; i++) {
+            const sparkSize = 1 + Math.random() * 1.5;
+            const offsetX = (Math.random() - 0.5) * 12;
+            const offsetY = (Math.random() - 0.5) * 12;
+            g.circle(pos.x + offsetX, pos.y + offsetY, sparkSize);
+            g.fill({ color: 0xaaeeff, alpha: 0.5 + Math.random() * 0.4 });
+          }
         }
       }
 
@@ -1998,6 +2042,13 @@ export const Universe: FC<UniverseProps> = ({
         clearTimeout(shootingStarTimerRef.current);
         shootingStarTimerRef.current = null;
       }
+      for (const s of activeShipsRef.current) {
+        try { s.c.destroy({ children: true }); } catch { /* ignore */ }
+        try { s.trailG.destroy(); } catch { /* ignore */ }
+        try { s.routeG.destroy(); } catch { /* ignore */ }
+      }
+      activeShipsRef.current = [];
+      spawnedShipIdsRef.current = new Set();
       for (const ss of shootingStarsRef.current) {
         try { ss.g.destroy(); } catch { /* ignore */ }
       }
