@@ -125,66 +125,128 @@ const TRAIL_COLOR_DEFAULT = 0xffcc44;
 
 // --- helpers -------------------------------------------------------------
 
+// Session-random seed — varies each time the renderer mounts but stays stable within a session.
+const SESSION_SEED = Math.random();
+
+function hashId(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+/** Normalize a cwd path for grouping comparison (lowercase, forward slashes, no trailing slash). */
+function normCwd(p: string): string {
+  let s = p.replace(/\\/g, '/').toLowerCase();
+  while (s.endsWith('/')) s = s.slice(0, -1);
+  return s;
+}
+
+/**
+ * Group agents by workspace — agents whose cwd is the same, nested, or shares
+ * a common parent are placed in the same group.
+ * Returns a list of groups (each an array of AgentView).
+ * Solo agents (no cwd or no match) get their own single-element group.
+ */
+function groupByWorkspace(agents: AgentView[]): AgentView[][] {
+  // Build groups: for each agent with a cwd, try to merge into an existing group
+  const groups: Array<{ root: string; members: AgentView[] }> = [];
+  const ungrouped: AgentView[] = [];
+
+  for (const agent of agents) {
+    if (!agent.cwd) { ungrouped.push(agent); continue; }
+    const n = normCwd(agent.cwd);
+    let placed = false;
+    for (const g of groups) {
+      // Exact, nested, or parent match
+      if (n === g.root || n.startsWith(g.root + '/') || g.root.startsWith(n + '/')) {
+        g.members.push(agent);
+        // Widen root to the shorter (parent) path
+        if (n.length < g.root.length) g.root = n;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) groups.push({ root: n, members: [agent] });
+  }
+
+  const result: AgentView[][] = groups.map((g) => g.members);
+  // Solo agents get individual groups
+  for (const a of ungrouped) result.push([a]);
+  return result;
+}
+
+/** Workspace group info returned alongside positions for rendering belt rings. */
+export interface WorkspaceGroup {
+  /** Agent IDs in this group. */
+  agentIds: string[];
+  /** Resolved positions of each member planet. */
+  memberPositions: Array<{ x: number; y: number }>;
+}
+
 /**
  * Place planets so they never overlap.
  *
  * Strategy:
- *  1. Assign each agent to one of 3 orbit bands (by ID hash).
- *  2. Space agents evenly around their band orbit.
- *  3. Run a pixel-space repulsion pass to resolve any remaining overlaps
- *     (including cross-band ones), then re-clamp to PLANET_MIN_RADIUS.
+ *  1. Group agents by workspace (shared/nested cwd).
+ *  2. For multi-agent groups, place members in a tight cluster.
+ *  3. Assign each group/agent to one of 3 orbit bands (by hash).
+ *  4. Run a pixel-space repulsion pass to resolve overlaps.
  *
- * MIN_PIXEL_DIST = 120px accounts for the largest visual extent:
- * gas-giant ring arc ≈ size * 1.35 * 1.75 ≈ 38px at avg size 16,
- * so two gas giants need ≥ 76px center-to-center + margin = 120px.
+ * MIN_PIXEL_DIST accounts for the largest visual extent including moon orbits
+ * (up to 88px) and name labels (~15px below), plus margin.
  */
-// Session-random seed — varies each time the renderer mounts but stays stable within a session.
-const SESSION_SEED = Math.random();
-
 function computePlanetPositions(
   agents: AgentView[],
-): Map<string, { x: number; y: number }> {
-  if (agents.length === 0) return new Map();
+): { positions: Map<string, { x: number; y: number }>; workspaceGroups: WorkspaceGroup[] } {
+  if (agents.length === 0) return { positions: new Map(), workspaceGroups: [] };
 
-  function hashId(s: string): number {
-    let h = 5381;
-    for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) | 0;
-    return Math.abs(h);
-  }
+  const wsGroups = groupByWorkspace(agents);
 
-  // Band centre radii — gaps between bands are 100px+, well above the ~38px
-  // gas-giant ring extent, so cross-band overlap at the same angle is impossible.
+  // Band centre radii
   const BAND_R = [155, 265, 375];
-
-  const bands: AgentView[][] = [[], [], []];
-  for (const agent of agents) bands[hashId(agent.id) % 3].push(agent);
-
-  const posArray: Array<{ id: string; x: number; y: number; origR: number }> = [];
-
-  // Session-random rotation offset — shifts all planets each session
   const sessionAngleOffset = SESSION_SEED * Math.PI * 2;
 
-  for (let b = 0; b < 3; b++) {
-    const group = bands[b];
-    if (group.length === 0) continue;
-    const R = BAND_R[b];
+  const posArray: Array<{ id: string; x: number; y: number }> = [];
 
-    // Deterministic but varied start angle per band, plus session randomization
-    const startAngle = (hashId((group[0].id) + 'b' + b) % 628) / 100 + sessionAngleOffset;
+  // Assign each workspace group a single band slot; place members in a tight cluster.
+  for (const group of wsGroups) {
+    // Pick band by hashing the first member's ID
+    const bandIdx = hashId(group[0].id) % 3;
+    const R = BAND_R[bandIdx];
+    const startAngle = (hashId(group[0].id + 'b' + bandIdx) % 628) / 100 + sessionAngleOffset;
+    const groupAngle = startAngle + (hashId(group[0].id + 'g') % 628) / 100;
 
-    group.forEach((agent, idx) => {
-      const angle = startAngle + (idx / group.length) * Math.PI * 2;
-      // Radial jitter: deterministic base + session-random variation
-      const baseJitter = ((hashId(agent.id + 'r') % 40) / 40 - 0.5) * 14;
-      const sessionJitter = ((SESSION_SEED * hashId(agent.id) % 30) - 15);
+    if (group.length === 1) {
+      // Solo agent — place directly on the band
+      const baseJitter = ((hashId(group[0].id + 'r') % 40) / 40 - 0.5) * 14;
+      const sessionJitter = ((SESSION_SEED * hashId(group[0].id) % 30) - 15);
       const r = R + baseJitter + sessionJitter;
-      posArray.push({ id: agent.id, x: Math.cos(angle) * r, y: Math.sin(angle) * r, origR: r });
-    });
+      posArray.push({ id: group[0].id, x: Math.cos(groupAngle) * r, y: Math.sin(groupAngle) * r });
+    } else {
+      // Multi-agent group — place group center on the band, then fan members around it.
+      const cx = Math.cos(groupAngle) * R;
+      const cy = Math.sin(groupAngle) * R;
+      // Spread members in a small circle around the group center.
+      // Cluster radius grows with member count but stays compact.
+      const clusterR = 50 + (group.length - 2) * 20;
+      const memberStartAngle = (hashId(group[0].id + 'ms') % 628) / 100;
+      group.forEach((agent, idx) => {
+        const memberAngle = memberStartAngle + (idx / group.length) * Math.PI * 2;
+        posArray.push({
+          id: agent.id,
+          x: cx + Math.cos(memberAngle) * clusterR,
+          y: cy + Math.sin(memberAngle) * clusterR,
+        });
+      });
+    }
   }
 
-  // ── Pixel-space repulsion — guarantees no overlap regardless of band layout ──
-  const MIN_PIXEL_DIST = 120;
-  for (let iter = 0; iter < 80; iter++) {
+  // ── Pixel-space repulsion — guarantees no overlap including moon orbits + labels ──
+  // Moon max orbit = 28 + 5*12 = 88px, label ~15px below, planet radius ~20px.
+  // Two planets with max moons need ≥ 88+88+margin = ~190px.
+  // For typical cases (0-2 moons) 140px is sufficient; use 150 as a compromise.
+  const MIN_PIXEL_DIST = 150;
+  for (let iter = 0; iter < 100; iter++) {
     let anyOverlap = false;
     for (let i = 0; i < posArray.length; i++) {
       for (let j = i + 1; j < posArray.length; j++) {
@@ -207,16 +269,153 @@ function computePlanetPositions(
   }
 
   // Re-clamp to minimum safe radius so nothing ends up inside the singularity
-  const result = new Map<string, { x: number; y: number }>();
+  const positions = new Map<string, { x: number; y: number }>();
   for (const p of posArray) {
     const d = Math.sqrt(p.x * p.x + p.y * p.y) || 0.001;
     if (d < PLANET_MIN_RADIUS) {
       p.x = (p.x / d) * PLANET_MIN_RADIUS;
       p.y = (p.y / d) * PLANET_MIN_RADIUS;
     }
-    result.set(p.id, { x: p.x, y: p.y });
+    positions.set(p.id, { x: p.x, y: p.y });
   }
-  return result;
+
+  // Collect workspace group member positions (only for multi-member groups).
+  const workspaceGroups: WorkspaceGroup[] = [];
+  for (const group of wsGroups) {
+    if (group.length < 2) continue;
+    const ids = group.map((a) => a.id);
+    const pts = ids.map((id) => positions.get(id)).filter((p): p is { x: number; y: number } => !!p);
+    if (pts.length < 2) continue;
+    workspaceGroups.push({ agentIds: ids, memberPositions: pts });
+  }
+
+  return { positions, workspaceGroups };
+}
+
+// ── Workspace asteroid belt ─────────────────────────────────────────────────
+
+/** Number of small rocks to scatter along the belt. */
+const BELT_ROCK_COUNT = 100;
+/** Padding around each planet center when computing the belt contour.
+ *  Must clear planet body (~20) + label below (~35) + moon orbits (~40 typical) + margin. */
+const BELT_PADDING = 65;
+/** Number of angular samples for the belt contour. */
+const BELT_SAMPLES = 64;
+
+/** Bright rock/dust palette — visible against the dark background. */
+const ROCK_COLORS = [0x99887a, 0xb8a888, 0x8899aa, 0xc0b090, 0xa8a8b8];
+/** Highlight colors for rare bright/glowing rocks. */
+const ROCK_GLOW_COLORS = [0xddccaa, 0xccddee, 0xeeddbb];
+
+/**
+ * Compute an irregular belt contour around the given planet positions.
+ * For each angular sample from the centroid, find the farthest planet in that
+ * direction (within a wide cone), add padding, then apply noise for organic feel.
+ * Returns an array of {x,y} contour points.
+ */
+function computeBeltContour(
+  memberPositions: Array<{ x: number; y: number }>,
+): Array<{ x: number; y: number }> {
+  // Centroid
+  let cx = 0, cy = 0;
+  for (const p of memberPositions) { cx += p.x; cy += p.y; }
+  cx /= memberPositions.length; cy /= memberPositions.length;
+
+  // For each angular sample, find the distance to the farthest planet
+  // that lies roughly in that direction (± 90°), then add padding.
+  const contour: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < BELT_SAMPLES; i++) {
+    const angle = (i / BELT_SAMPLES) * Math.PI * 2;
+    const dirX = Math.cos(angle);
+    const dirY = Math.sin(angle);
+
+    // Find max projected distance of any planet onto this direction
+    let maxProj = 30; // minimum radius even if all planets are at center
+    for (const p of memberPositions) {
+      const dx = p.x - cx;
+      const dy = p.y - cy;
+      // Project onto direction and take the full distance if projection is positive
+      const proj = dx * dirX + dy * dirY;
+      // Also consider planets off to the side: use distance to the ray
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Blend: projected distance (tight) + full distance (round) for organic shape
+      const effective = Math.max(proj, dist * 0.6);
+      if (effective > maxProj) maxProj = effective;
+    }
+
+    // Add padding + deterministic noise for irregularity
+    const noise = ((hashId(`belt${i}`) % 20) - 10);
+    const r = maxProj + BELT_PADDING + noise;
+    contour.push({ x: cx + dirX * r, y: cy + dirY * r });
+  }
+
+  return contour;
+}
+
+/**
+ * Draw an asteroid belt around a workspace group using the member positions.
+ * Creates an irregular contour and scatters bright rocks along it.
+ */
+function drawAsteroidBelt(memberPositions: Array<{ x: number; y: number }>): Container {
+  const container = new Container();
+  const g = new Graphics();
+  const contour = computeBeltContour(memberPositions);
+  const n = contour.length;
+
+  // Draw a dashed contour outline
+  for (let i = 0; i < n; i++) {
+    if (i % 2 === 1) continue; // skip every other segment for dashes
+    const p0 = contour[i];
+    const p1 = contour[(i + 1) % n];
+    g.moveTo(p0.x, p0.y);
+    g.lineTo(p1.x, p1.y);
+  }
+  g.stroke({ width: 0.8, color: 0x6a7a8a, alpha: 0.3 });
+
+  // Scatter rocks along the contour
+  for (let i = 0; i < BELT_ROCK_COUNT; i++) {
+    // Interpolate position along the contour
+    const t = i / BELT_ROCK_COUNT;
+    const idx = t * n;
+    const i0 = Math.floor(idx) % n;
+    const i1 = (i0 + 1) % n;
+    const frac = idx - Math.floor(idx);
+    const baseX = contour[i0].x + (contour[i1].x - contour[i0].x) * frac;
+    const baseY = contour[i0].y + (contour[i1].y - contour[i0].y) * frac;
+
+    // Radial jitter (perpendicular to contour)
+    const jitter = (Math.random() - 0.5) * 22;
+    // Tangent direction for perpendicular offset
+    const tx = contour[i1].x - contour[i0].x;
+    const ty = contour[i1].y - contour[i0].y;
+    const tLen = Math.sqrt(tx * tx + ty * ty) || 1;
+    // Perpendicular
+    const px = -ty / tLen;
+    const py = tx / tLen;
+
+    const rx = baseX + px * jitter;
+    const ry = baseY + py * jitter;
+
+    // Most rocks are medium brightness; ~15% are bright glowing highlights
+    const isGlow = Math.random() < 0.15;
+    const rockSize = isGlow ? (1.2 + Math.random() * 2) : (0.8 + Math.random() * 1.6);
+    const color = isGlow
+      ? ROCK_GLOW_COLORS[Math.floor(Math.random() * ROCK_GLOW_COLORS.length)]
+      : ROCK_COLORS[i % ROCK_COLORS.length];
+    const alpha = isGlow ? (0.7 + Math.random() * 0.3) : (0.45 + Math.random() * 0.35);
+
+    g.circle(rx, ry, rockSize);
+    g.fill({ color, alpha });
+
+    // Glow rocks get a soft halo
+    if (isGlow) {
+      g.circle(rx, ry, rockSize * 2.5);
+      g.fill({ color, alpha: 0.08 });
+    }
+  }
+
+  container.addChild(g);
+  return container;
 }
 
 /** Quadratic bezier position at progress t. */
@@ -403,6 +602,8 @@ export const Universe: FC<UniverseProps> = ({
   const spiralContainerRef = useRef<Container | null>(null);
   const prevAgentsRef = useRef<AgentView[]>([]);
   const planetMapRef = useRef<Map<string, ExtendedPlanet>>(new Map());
+  const beltsContainerRef = useRef<Container | null>(null);
+  const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
   const tickTimeRef = useRef(0);
   const [initError, setInitError] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -543,6 +744,10 @@ export const Universe: FC<UniverseProps> = ({
         world.addChild(astronautsContainer);
         astronautsContainerRef.current = astronautsContainer;
 
+        const beltsContainer = new Container();
+        world.addChild(beltsContainer);
+        beltsContainerRef.current = beltsContainer;
+
         const planetsContainer = new Container();
         world.addChild(planetsContainer);
         planetsContainerRef.current = planetsContainer;
@@ -620,6 +825,8 @@ export const Universe: FC<UniverseProps> = ({
       panContainerRef.current = null;
       worldRef.current = null;
       planetsContainerRef.current = null;
+      beltsContainerRef.current = null;
+      workspaceGroupsRef.current = [];
       moonsContainerRef.current = null;
       moonCountsRef.current = new Map();
       shipsContainerRef.current = null;
@@ -721,8 +928,22 @@ export const Universe: FC<UniverseProps> = ({
       }
     }
 
-    // 2. Compute positions
-    const posMap = computePlanetPositions(agents);
+    // 2. Compute positions + workspace groups
+    const { positions: posMap, workspaceGroups } = computePlanetPositions(agents);
+    workspaceGroupsRef.current = workspaceGroups;
+
+    // 2b. Draw workspace asteroid belts
+    const beltsContainer = beltsContainerRef.current;
+    if (beltsContainer) {
+      // Remove old belt graphics
+      while (beltsContainer.children.length > 0) {
+        beltsContainer.children[0].destroy({ children: true });
+      }
+      for (const group of workspaceGroups) {
+        const belt = drawAsteroidBelt(group.memberPositions);
+        beltsContainer.addChild(belt);
+      }
+    }
 
     // 3. Add new planets, update existing
     agents.forEach((agent) => {
