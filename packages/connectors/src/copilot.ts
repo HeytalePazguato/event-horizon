@@ -59,6 +59,17 @@ export function mapCopilotHookToEvent(payload: unknown): AgentEvent | null {
     if (p.agent_type) safePayload.subagentType = String(p.agent_type).slice(0, 128);
   }
 
+  // Extract file_path from tool_input for file-touching tools (never content)
+  const COPILOT_FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file', 'insert_edit_into_file']);
+  if (safePayload.toolName && COPILOT_FILE_TOOLS.has(safePayload.toolName as string)) {
+    const toolInput = p.tool_input;
+    if (toolInput && typeof toolInput === 'object') {
+      const fp = (toolInput as Record<string, unknown>).file_path
+        ?? (toolInput as Record<string, unknown>).path;
+      if (typeof fp === 'string') safePayload.filePath = fp.slice(0, 512);
+    }
+  }
+
   return {
     id: nextId(),
     agentId,

@@ -72,6 +72,14 @@ const IconInfo: FC = () => (
   </svg>
 );
 
+const IconExport: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <path d="M7 1.5v7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <path d="M4 6l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2 10.5v1.5h10v-1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 // ── Button definitions ────────────────────────────────────────────────────────
 
 interface CmdBtn {
@@ -98,7 +106,8 @@ const GRID: Array<CmdBtn | null> = [
   // Row 2 — setup actions
   { id: 'connect', label: 'Connect', desc: 'Connect a new agent to the universe.',  icon: IconConnect,  alwaysActive: true },
   { id: 'spawn',   label: 'Spawn',   desc: 'Open a terminal with an agent CLI.',    icon: IconSpawn,    alwaysActive: true },
-  null, null, null,
+  { id: 'export',  label: 'Export',  desc: 'Export session stats as JSON.',          icon: IconExport,   alwaysActive: true },
+  null, null,
   // Row 3 — meta/utility (bottom-right)
   null, null, null,
   { id: 'demo',    label: 'Demo',    desc: 'Toggle demo simulation.',               icon: IconDemo,     alwaysActive: true },
@@ -209,6 +218,7 @@ export const AgentControls: FC = () => {
     infoOpen,
     toggleSpawn,
     spawnOpen,
+    requestExport,
   } = useCommandCenterStore(useShallow((s) => ({
     selectedAgentId: s.selectedAgentId,
     requestCenter: s.requestCenter,
@@ -224,6 +234,7 @@ export const AgentControls: FC = () => {
     infoOpen: s.infoOpen,
     toggleSpawn: s.toggleSpawn,
     spawnOpen: s.spawnOpen,
+    requestExport: s.requestExport,
   })));
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -237,6 +248,7 @@ export const AgentControls: FC = () => {
     else if (id === 'spawn') toggleSpawn();
     else if (id === 'demo') requestDemo();
     else if (id === 'info') toggleInfo();
+    else if (id === 'export') requestExport();
   }
 
   function isActive(btn: CmdBtn): boolean {

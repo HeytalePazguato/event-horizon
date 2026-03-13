@@ -37,6 +37,10 @@ From that answer, Event Horizon was born.
 
 - **Spaceships** — Data transfers between agents are visualized as triangle ships flying curved bezier arcs between planets. Each ship leaves a colored trail matching the agent type. The arcs curve safely around the central black hole. Ships also appear automatically between cooperating agents (see **Agent Cooperation** below).
 
+- **Asteroid Belts** — When multiple agents share a workspace, their planets are clustered together and surrounded by an irregular asteroid belt. The belt is an organic blob shape (not a perfect circle) made of scattered rocks with glowing highlights. The contour adapts to the cluster's shape, staying clear of planet labels and moon orbits.
+
+- **File Collision Lightning** — When two or more agents edit the same file simultaneously, a continuous lightning stream arcs between their planets. Multiple jagged bolts (cyan, white, pale blue) with glow effects and endpoint sparks persist as long as both agents are actively touching the same file. The collision detection uses a 10-second sliding window — if both agents touch the same file path within that window, lightning fires. The arcs are redrawn every frame with random jitter for a crackling, electric look.
+
 - **Black Hole** — The singularity at the center of the universe. A layered disc (dark core, glowing accretion rings, outer halo) that exerts gravitational pull on nearby objects. Click anywhere in space to spawn astronauts that drift and spiral toward it.
 
 ### Command Center
@@ -46,6 +50,10 @@ A StarCraft-inspired control panel at the bottom of the viewport with chamfered 
 - **Agent Identity** (left) — Selected agent name, type icon, and live state indicator
 - **Metrics** (center) — 5x2 grid showing Load, Tools, Prompts, Errors, Success%, Subagents, Tasks, Top Tool, Uptime, Last Active. Tabs for Info / Logs / Medals.
 - **Controls** (right) — Command buttons: Pause, Isolate, Center, Connect, Spawn, Demo, Info
+
+### Workspace Grouping
+
+When multiple agents share a workspace (same or nested directories), Event Horizon automatically clusters their planets together and wraps them in an irregular asteroid belt. This makes workspace relationships immediately visible — you can tell at a glance which agents are collaborating on the same project. Solo agents orbit independently outside any belt.
 
 ### Agent Cooperation
 
@@ -61,6 +69,17 @@ Each agent reports its working directory when it connects:
 - **Claude Code** sends `cwd` in every hook payload.
 - **OpenCode** captures the `directory` and `worktree` from its plugin context.
 - As a fallback, the extension host assigns the primary VS Code workspace folder to any agent that doesn't report its own.
+
+### File Collision Detection
+
+When two agents edit the same file within a 10-second window, a lightning stream crackles between their planets. This visualizes real-time file contention — useful for spotting when multiple agents are stepping on each other's changes.
+
+File paths are extracted from each agent's tool-use payloads:
+- **Claude Code** — `file_path` from `Read`, `Write`, `Edit`, `MultiEdit` tool inputs
+- **OpenCode** — `path` from `file.edited`, `file.watcher.updated` events, and `file_path` from tool inputs
+- **Copilot** — `file_path` from `read_file`, `write_file`, `edit_file`, `insert_edit_into_file` tool inputs
+
+Only the file path string is extracted — file content is never captured or transmitted.
 
 ### Achievements
 
@@ -97,8 +116,8 @@ The table below shows which lifecycle events each agent supports and how they ma
 | **SessionStatus** | — | — | `session.status` ✅ | `task.progress` / `task.complete` | Planet rotation speed change |
 | **SessionCompacted** | `PreCompact` ✅ | `PreCompact` (untested) | `session.compacted` ✅ | `message.receive` | — |
 | **SessionUpdated** | — | — | `session.updated` ✅ | `message.receive` | — |
-| **FileEdited** | — | — | `file.edited` ✅ | `file.write` | — |
-| **FileWatcherUpdated** | — | — | `file.watcher.updated` ✅ | `file.read` | — |
+| **FileEdited** | — | — | `file.edited` ✅ | `file.write` | Lightning arc if collision |
+| **FileWatcherUpdated** | — | — | `file.watcher.updated` ✅ | `file.read` | Lightning arc if collision |
 | **CommandExecuted** | — | — | `command.executed` ✅ | `message.receive` | — |
 | **LSP Diagnostics** | — | — | `lsp.client.diagnostics` ✅ | `message.receive` | — |
 | **TodoUpdated** | — | — | `todo.updated` ✅ | `message.receive` | — |

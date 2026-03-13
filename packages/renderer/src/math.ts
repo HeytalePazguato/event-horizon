@@ -23,12 +23,12 @@ export interface WorkspaceGroup {
 
 /** Minimum pixel distance between planet centers (prevents overlap). */
 export const MIN_PIXEL_DIST = 150;
-/** Minimum distance from origin — planets must stay outside the singularity. */
-export const PLANET_MIN_RADIUS = 130;
+/** Minimum distance from origin — planets must stay outside the singularity + belt padding. */
+export const PLANET_MIN_RADIUS = 180;
 /** Ship arcs must clear the singularity outer glow. */
 export const SHIP_AVOID_RADIUS = 95;
 /** Orbital band centre radii. */
-export const BAND_R = [155, 265, 375];
+export const BAND_R = [220, 310, 400];
 /** Number of angular samples for belt contour. */
 export const BELT_SAMPLES = 64;
 /** Padding around planets when computing belt contour. */
@@ -178,7 +178,7 @@ export function computePlanetPositions(
     }
   }
 
-  // Repulsion pass
+  // Repulsion pass — also enforces minimum distance from origin (singularity)
   for (let iter = 0; iter < 100; iter++) {
     let anyOverlap = false;
     for (let i = 0; i < posArray.length; i++) {
@@ -196,6 +196,15 @@ export function computePlanetPositions(
           pi.x -= nx;  pi.y -= ny;
           pj.x += nx;  pj.y += ny;
         }
+      }
+    }
+    // Push any planet that drifted too close to the singularity back out
+    for (const p of posArray) {
+      const d = Math.sqrt(p.x * p.x + p.y * p.y) || 0.001;
+      if (d < PLANET_MIN_RADIUS) {
+        p.x = (p.x / d) * PLANET_MIN_RADIUS;
+        p.y = (p.y / d) * PLANET_MIN_RADIUS;
+        anyOverlap = true;
       }
     }
     if (!anyOverlap) break;

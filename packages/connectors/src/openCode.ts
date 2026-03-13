@@ -113,6 +113,17 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
       ?? ((payload.properties as Record<string, unknown>)?.tool as string)
       ?? undefined;
     if (toolName) enrichedPayload.toolName = toolName;
+    // Extract filePath from tool input
+    const input = (payload.input as Record<string, unknown>) ?? (payload.properties as Record<string, unknown>) ?? {};
+    const fpTool = (input.file_path as string) ?? (input.path as string) ?? (input.filePath as string);
+    if (typeof fpTool === 'string') enrichedPayload.filePath = fpTool.slice(0, 512);
+  }
+
+  // Extract filePath for file.write / file.read events
+  if (type === 'file.write' || type === 'file.read') {
+    const props = (payload.properties as Record<string, unknown>) ?? {};
+    const fpFile = (props.path as string) ?? (props.filePath as string) ?? (payload.path as string);
+    if (typeof fpFile === 'string') enrichedPayload.filePath = fpFile.slice(0, 512);
   }
 
   return {

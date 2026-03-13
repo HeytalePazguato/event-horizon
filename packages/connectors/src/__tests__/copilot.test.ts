@@ -100,6 +100,29 @@ describe('mapCopilotHookToEvent', () => {
     expect(result).not.toBeNull();
     expect(result!.agentId).toBe('copilot-1');
   });
+
+  it('extracts filePath from tool_input for file tools', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: 'edit_file',
+      tool_input: { file_path: '/project/src/app.ts', content: 'SECRET' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.filePath).toBe('/project/src/app.ts');
+    expect((result!.payload as Record<string, unknown>).content).toBeUndefined();
+  });
+
+  it('does not extract filePath for non-file tools', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: 'run_in_terminal',
+      tool_input: { file_path: '/some/path' },
+    });
+    expect(result).not.toBeNull();
+    expect((result!.payload as Record<string, unknown>).filePath).toBeUndefined();
+  });
 });
 
 describe('mapCopilotOutputToEvent (legacy)', () => {

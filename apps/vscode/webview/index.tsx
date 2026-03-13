@@ -5,7 +5,7 @@
 import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
-import type { ShipSpawn } from '@event-horizon/renderer';
+import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
 import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { AgentState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
@@ -134,6 +134,7 @@ function App() {
   const [agentMap, setAgentMap] = useState<Record<string, AgentState>>({});
   const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
   const [ships, setShips] = useState<ShipSpawn[]>([]);
+  const [sparks, setSparks] = useState<SparkSpawn[]>([]);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -155,7 +156,7 @@ function App() {
   const selectSingularity    = useCommandCenterStore((s) => s.selectSingularity);
   const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
   const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
-
+  const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
 
   // Achievement tracking state
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -165,6 +166,10 @@ function App() {
   agentMapRef.current = agentMap;
   // Track last tool event timestamp per agent — used to suppress stale permission_prompt notifications
   const shipTimerIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  /** Active files per normalized path — tracks which agents touched a file recently. */
+  const activeFilesRef = useRef<Map<string, Array<{ agentId: string; ts: number }>>>(new Map());
+  /** Tracks recent spark pairs to avoid spam. Key = sorted agent ID pair. */
+  const recentSparkPairsRef = useRef<Map<string, number>>(new Map());
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
   useEffect(() => {
@@ -345,6 +350,48 @@ function App() {
           },
         };
       });
+
+      // ── File collision lightning — persistent arc while agents share a file ──
+      const filePath = raw.payload?.filePath as string | undefined;
+      if (filePath && (type === 'tool.call' || type === 'tool.result' || type === 'file.write' || type === 'file.read')) {
+        const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+        const now = Date.now();
+        const FILE_WINDOW_MS = 10_000;
+
+        let entries = activeFilesRef.current.get(normalized);
+        if (!entries) { entries = []; activeFilesRef.current.set(normalized, entries); }
+
+        // Prune stale entries and add current
+        const fresh = entries.filter((e) => now - e.ts < FILE_WINDOW_MS);
+        fresh.push({ agentId, ts: now });
+        activeFilesRef.current.set(normalized, fresh);
+
+        // Find other agents that also touched this file recently
+        const others = [...new Set(fresh.filter((e) => e.agentId !== agentId).map((e) => e.agentId))];
+        for (const otherId of others) {
+          const pairKey = [agentId, otherId].sort().join('::');
+          const sparkId = `collision-${pairKey}`;
+          const basename = filePath.split(/[/\\]/).pop() ?? filePath;
+
+          // Add or refresh the collision arc
+          setSparks((prev) => {
+            const existing = prev.find((s) => s.id === sparkId);
+            if (existing) return prev; // already active
+            return [...prev, { id: sparkId, agentIds: [agentId, otherId], filePath: basename }];
+          });
+
+          // Reset the removal timer for this pair
+          const existingTimer = recentSparkPairsRef.current.get(pairKey);
+          if (existingTimer) { clearTimeout(existingTimer); shipTimerIdsRef.current.delete(existingTimer); }
+          const timerId = setTimeout(() => {
+            setSparks((prev) => prev.filter((s) => s.id !== sparkId));
+            recentSparkPairsRef.current.delete(pairKey);
+            shipTimerIdsRef.current.delete(timerId);
+          }, FILE_WINDOW_MS);
+          recentSparkPairsRef.current.set(pairKey, timerId as unknown as number);
+          shipTimerIdsRef.current.add(timerId);
+        }
+      }
     };
     window.addEventListener('message', handler);
     // Signal the extension host that the webview is ready to receive messages
@@ -575,16 +622,32 @@ function App() {
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const runDemoSimulation = useCallback(() => {
+    // Demo agents: 2 in workspace A, 3 in workspace B, 3 independent (no cwd)
+    const DEMO_CWD_A = '/home/user/projects/event-horizon';
+    const DEMO_CWD_B = '/home/user/projects/backend-api';
     const demoAgents = [
-      { id: 'demo-opencode', name: 'OpenCode', agentType: 'opencode' },
-      { id: 'demo-claude',   name: 'Claude',   agentType: 'claude-code' },
-      { id: 'demo-copilot',  name: 'Copilot',  agentType: 'copilot' },
-      { id: 'demo-cursor',   name: 'Cursor',   agentType: 'cursor' },
-      { id: 'demo-agent',    name: 'Agent',    agentType: 'unknown' },
+      // Workspace A — cluster of 2
+      { id: 'demo-claude',   name: 'Claude',   agentType: 'claude-code', cwd: DEMO_CWD_A },
+      { id: 'demo-opencode', name: 'OpenCode', agentType: 'opencode',    cwd: DEMO_CWD_A },
+      // Workspace B — cluster of 3
+      { id: 'demo-copilot',  name: 'Copilot',  agentType: 'copilot',     cwd: DEMO_CWD_B },
+      { id: 'demo-cursor',   name: 'Cursor',   agentType: 'cursor',      cwd: DEMO_CWD_B },
+      { id: 'demo-gemini',   name: 'Gemini',   agentType: 'unknown',     cwd: DEMO_CWD_B },
+      // 3 solo agents — no workspace grouping
+      { id: 'demo-solo-1',   name: 'Windsurf', agentType: 'unknown' },
+      { id: 'demo-solo-2',   name: 'Aider',    agentType: 'unknown' },
+      { id: 'demo-solo-3',   name: 'Devin',    agentType: 'unknown' },
     ];
+    // Groups that share a workspace — ships & collision sparks only between these
+    const DEMO_WS_GROUPS: string[][] = [
+      ['demo-claude', 'demo-opencode'],
+      ['demo-copilot', 'demo-cursor', 'demo-gemini'],
+    ];
+    const DEMO_FILES = ['src/index.ts', 'src/utils.ts', 'package.json', 'README.md', 'src/app.tsx'];
     setAgents((prev) => {
       const existing = new Set(prev.map((a) => a.id));
-      const toAdd = demoAgents.filter((a) => !existing.has(a.id));
+      const toAdd = demoAgents.filter((a) => !existing.has(a.id))
+        .map((a) => ({ id: a.id, name: a.name, agentType: a.agentType, cwd: a.cwd }));
       return toAdd.length ? [...prev, ...toAdd] : prev;
     });
     const demoAgentTypeMap = Object.fromEntries(demoAgents.map((a) => [a.id, a.agentType]));
@@ -597,6 +660,7 @@ function App() {
           type: a.agentType,
           state: 'idle',
           currentTaskId: null,
+          cwd: a.cwd,
         },
       }));
       setMetricsMap((m) => ({
@@ -651,22 +715,48 @@ function App() {
         });
         return next;
       });
-      // Occasionally spawn a demo ship between two random agents
-      if (Math.random() < 0.35) {
-        const ids = demoAgents.map((a) => a.id);
-        const fromIdx = Math.floor(Math.random() * ids.length);
-        let toIdx = Math.floor(Math.random() * (ids.length - 1));
-        if (toIdx >= fromIdx) toIdx++;
-        const shipId = `demo-ship-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        setShips((prev) => [
-          ...prev,
-          { id: shipId, fromAgentId: ids[fromIdx], toAgentId: ids[toIdx], payloadSize: Math.floor(Math.random() * 10) + 1, fromAgentType: demoAgentTypeMap[ids[fromIdx]] },
-        ]);
-        const timerId = setTimeout(() => {
-          setShips((prev) => prev.filter((s) => s.id !== shipId));
-          shipTimerIdsRef.current.delete(timerId);
-        }, 20000);
-        shipTimerIdsRef.current.add(timerId);
+      // Ships only between agents sharing a workspace
+      if (Math.random() < 0.35 && DEMO_WS_GROUPS.length > 0) {
+        const group = DEMO_WS_GROUPS[Math.floor(Math.random() * DEMO_WS_GROUPS.length)];
+        if (group.length >= 2) {
+          const fromIdx = Math.floor(Math.random() * group.length);
+          let toIdx = Math.floor(Math.random() * (group.length - 1));
+          if (toIdx >= fromIdx) toIdx++;
+          const shipId = `demo-ship-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          setShips((prev) => [
+            ...prev,
+            { id: shipId, fromAgentId: group[fromIdx], toAgentId: group[toIdx], payloadSize: Math.floor(Math.random() * 10) + 1, fromAgentType: demoAgentTypeMap[group[fromIdx]] },
+          ]);
+          const timerId = setTimeout(() => {
+            setShips((prev) => prev.filter((s) => s.id !== shipId));
+            shipTimerIdsRef.current.delete(timerId);
+          }, 20000);
+          shipTimerIdsRef.current.add(timerId);
+        }
+      }
+      // File collision lightning — toggle on/off for a random pair in a workspace
+      if (Math.random() < 0.12 && DEMO_WS_GROUPS.length > 0) {
+        const group = DEMO_WS_GROUPS[Math.floor(Math.random() * DEMO_WS_GROUPS.length)];
+        if (group.length >= 2) {
+          const fromIdx = Math.floor(Math.random() * group.length);
+          let toIdx = Math.floor(Math.random() * (group.length - 1));
+          if (toIdx >= fromIdx) toIdx++;
+          const pairKey = [group[fromIdx], group[toIdx]].sort().join('::');
+          const file = DEMO_FILES[Math.floor(Math.random() * DEMO_FILES.length)];
+          const sparkId = `demo-spark-${pairKey}`;
+          setSparks((prev) => {
+            // If already active for this pair, skip (will be removed by its timer)
+            if (prev.some((s) => s.id === sparkId)) return prev;
+            return [...prev, { id: sparkId, agentIds: [group[fromIdx], group[toIdx]], filePath: file }];
+          });
+          // Persist for 4–8 seconds (simulates agents working on same file)
+          const duration = 4000 + Math.random() * 4000;
+          const timerId = setTimeout(() => {
+            setSparks((prev) => prev.filter((s) => s.id !== sparkId));
+            shipTimerIdsRef.current.delete(timerId);
+          }, duration);
+          shipTimerIdsRef.current.add(timerId);
+        }
       }
     }, 1400);
     setDemoSimRunning(true);
@@ -680,6 +770,7 @@ function App() {
     setDemoSimRunning(false);
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
     setShips((prev) => prev.filter((s) => !s.id.startsWith('demo-ship-')));
+    setSparks((prev) => prev.filter((s) => !s.id.startsWith('demo-spark-')));
     // Clean up demo agent entries from lastSeen tracking
     for (const id of Object.keys(agentLastSeenRef.current)) {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
@@ -707,6 +798,52 @@ function App() {
     for (const id of shipTimerIdsRef.current) clearTimeout(id);
   }, []);
 
+  // Export session stats as JSON download
+  useEffect(() => {
+    if (!exportRequestedAt) return;
+    const agentArray = Object.values(agentMap);
+    const metricsArray = Object.fromEntries(
+      Object.entries(metricsMap).map(([id, m]) => [id, {
+        load: m.load,
+        toolCalls: m.toolCalls,
+        toolFailures: m.toolFailures,
+        promptsSubmitted: m.promptsSubmitted,
+        errorCount: m.errorCount,
+        subagentSpawns: m.subagentSpawns,
+        activeSubagents: m.activeSubagents,
+        activeTasks: m.activeTasks,
+        uptime: Date.now() - m.sessionStartedAt,
+        toolBreakdown: m.toolBreakdown,
+      }]),
+    );
+    const store = useCommandCenterStore.getState();
+    const exportData = {
+      exportedAt: new Date().toISOString(),
+      agents: agentArray.map((a) => ({
+        id: a.id,
+        name: a.name,
+        type: a.agentType,
+        state: a.state,
+        cwd: a.cwd,
+      })),
+      metrics: metricsArray,
+      singularity: store.singularityStats,
+      achievements: {
+        unlocked: store.unlockedAchievements,
+        tiers: store.achievementTiers,
+        counts: store.achievementCounts,
+      },
+    };
+    const json = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `event-horizon-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [exportRequestedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div
       style={{
@@ -731,6 +868,7 @@ function App() {
           metrics={metricsView}
           activeSubagents={activeSubagentsView}
           ships={ships}
+          sparks={sparks}
           agentStates={agentStates}
           pausedAgentIds={pausedAgentIds}
           isolatedAgentId={isolatedAgentId}

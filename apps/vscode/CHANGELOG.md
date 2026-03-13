@@ -15,6 +15,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Changed
 - **Webview bundle size reduced 78%**: selective PixiJS 8 imports via custom esbuild plugin (`pixi-lite`). Only loads app, rendering, graphics, text, events, and DOM modules — skips accessibility, spritesheet, filters, compressed-textures, mesh, and advanced-blend-modes. Dev: 4.1MB → 2.8MB; Prod: 4.1MB → 922KB
 - Webview build migrated from esbuild CLI to `esbuild.mjs` config file to support the pixi-lite plugin and React production mode (`process.env.NODE_ENV = "production"`)
+- **Demo mode overhauled**: 8 simulated agents — 1 cluster of 2, 1 cluster of 3, and 3 solo planets. Ships now only travel between planets in the same workspace. Demo collision lightning fires between workspace-sharing agents with 4–8s persistence
 
 ### Fixed
 - **Achievement toast stacking**: multiple simultaneous unlocks no longer pile up infinitely. Toasts are now capped at 3 visible at a time with a 350ms stagger between entrances; overflow toasts queue automatically and a "+N more" indicator appears above the stack
@@ -25,9 +26,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **PixiJS memory leaks**: active ships (container + trail + route Graphics), moons, and astronauts are now explicitly destroyed on unmount instead of relying solely on `app.destroy()`. Prevents texture accumulation during long sessions with frequent panel reloads
 - **Debug logging removed**: stripped verbose hook field logging from eventServer and state transition logging from webview
 - **Duplicated `folderName` utility**: extracted shared helper to `packages/ui/src/utils.ts`
-
-### Changed
-- **Demo mode overhauled**: 8 simulated agents — 1 cluster of 2, 1 cluster of 3, and 3 solo planets. Ships now only travel between planets in the same workspace. Demo collision lightning fires between workspace-sharing agents with 4–8s persistence
+- **Planet-singularity overlap**: planets and asteroid belts no longer overlap the central black hole. Minimum planet distance increased to 180px, orbital bands pushed outward, and singularity avoidance enforced during repulsion passes
 
 ## [0.0.4] — 2026-03-12
 

@@ -73,4 +73,41 @@ describe('mapClaudeHookToEvent', () => {
     expect(result).not.toBeNull();
     expect(result!.payload.cwd).toBe('/nested/path');
   });
+
+  it('extracts filePath from tool_input for file tools (object)', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Edit',
+      tool_input: { file_path: '/home/user/project/src/index.ts', old_string: 'SECRET', new_string: 'SECRET2' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.filePath).toBe('/home/user/project/src/index.ts');
+    // Content fields must not leak
+    expect((result!.payload as Record<string, unknown>).old_string).toBeUndefined();
+    expect((result!.payload as Record<string, unknown>).new_string).toBeUndefined();
+  });
+
+  it('extracts filePath from stringified tool_input for file tools', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Write',
+      tool_input: JSON.stringify({ file_path: '/tmp/out.json', content: 'SECRET CONTENT' }),
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.filePath).toBe('/tmp/out.json');
+    expect((result!.payload as Record<string, unknown>).content).toBeUndefined();
+  });
+
+  it('does not extract filePath for non-file tools', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Bash',
+      tool_input: { file_path: '/some/path', command: 'ls' },
+    });
+    expect(result).not.toBeNull();
+    expect((result!.payload as Record<string, unknown>).filePath).toBeUndefined();
+  });
 });

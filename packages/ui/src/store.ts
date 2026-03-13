@@ -101,6 +101,9 @@ export interface CommandCenterState {
   incrementSingularityStat: (key: keyof SingularityStats, amount?: number) => void;
   setSingularityStats: (stats: SingularityStats) => void;
   requestCenter: () => void;
+  /** Timestamp-based signal to trigger stats export from webview. */
+  exportRequestedAt: number;
+  requestExport: () => void;
   togglePause: (id: string) => void;
   toggleIsolate: (id: string) => void;
   triggerBoost: (id: string) => void;
@@ -138,6 +141,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   singularitySelected: false,
   singularityStats: { ...EMPTY_SINGULARITY_STATS },
   centerRequestedAt: 0,
+  exportRequestedAt: 0,
   pausedAgentIds: {},
   isolatedAgentId: null,
   boostedAgentIds: {},
@@ -196,6 +200,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   setSingularityStats: (stats) => set({ singularityStats: stats }),
 
   requestCenter: () => set({ centerRequestedAt: Date.now() }),
+  requestExport: () => set({ exportRequestedAt: Date.now() }),
 
   togglePause: (id) =>
     set((s) => ({
