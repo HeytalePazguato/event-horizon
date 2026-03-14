@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [0.0.7] — 2026-03-14
+## [0.0.6] — 2026-03-14
 
 ### Added
 - **Skills integration**: full lifecycle management for [Agent Skills](https://agentskills.io) — discover, browse, create, duplicate, move, and organize skills directly from Event Horizon
@@ -18,8 +18,6 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **"Skill Master" achievement**: tiered [1, 5, 10, 25, 50] — tracks unique skills invoked across all agents
 - **"Plugin Collector" achievement**: tiered [1, 5, 10, 25, 50, 100] — tracks unique skills discovered on disk
 - **30 new tests**: SKILL.md generation (14), scope deduplication (8), legacy command parsing (7), path construction (4). Total test count: 143 → 173
-
-## [0.0.6] — 2026-03-14
 
 ### Changed
 - **Claude Code hooks switched to silent `command` wrapper**: hooks now use `type: "command"` with `curl ... || true` so they exit 0 even when Event Horizon is not running — eliminates `Stop hook error: ECONNREFUSED` and similar messages. The `--connect-timeout 2` flag prevents hanging. Stale hooks (including previous `http` type) are auto-detected and replaced on extension activation
