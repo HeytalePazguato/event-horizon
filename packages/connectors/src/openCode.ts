@@ -117,6 +117,14 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     const input = (payload.input as Record<string, unknown>) ?? (payload.properties as Record<string, unknown>) ?? {};
     const fpTool = (input.file_path as string) ?? (input.path as string) ?? (input.filePath as string);
     if (typeof fpTool === 'string') enrichedPayload.filePath = fpTool.slice(0, 512);
+
+    // Detect skill tool invocation — OpenCode uses a native 'skill' tool
+    const toolNameLower = typeof toolName === 'string' ? toolName.toLowerCase() : '';
+    if (toolNameLower === 'skill') {
+      enrichedPayload.isSkill = true;
+      const skillName = (input.name as string) ?? (input.skill as string);
+      if (typeof skillName === 'string') enrichedPayload.skillName = skillName.slice(0, 128);
+    }
   }
 
   // Extract filePath for file.write / file.read events

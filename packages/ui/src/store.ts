@@ -14,7 +14,50 @@ export interface LogEntry {
   agentId: string;
   agentName: string;
   type: string;
+  /** Skill name if this event is a skill invocation. */
+  skillName?: string;
 }
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  scope: 'personal' | 'project' | 'plugin' | 'legacy';
+  filePath: string;
+  userInvocable: boolean;
+  disableModelInvocation: boolean;
+  allowedTools: string[];
+  model: string | null;
+  context: 'inline' | 'fork';
+  agent: string | null;
+  argumentHint: string | null;
+  pluginName: string | null;
+  /** Category folder (e.g. 'documentation') — null if at root level. */
+  category: string | null;
+  /** Which agent types can use this skill. */
+  agentTypes: Array<'claude-code' | 'opencode' | 'copilot'>;
+}
+
+export interface MarketplaceEntry {
+  name: string;
+  url: string;
+  /** 'api' = has searchable API (inline results), 'browse' = open in browser */
+  type: 'browse' | 'api';
+}
+
+export interface MarketplaceSkillResult {
+  name: string;
+  description: string;
+  author: string;
+  url: string;
+  source: string;
+}
+
+export const DEFAULT_MARKETPLACES: MarketplaceEntry[] = [
+  { name: 'SkillHub', url: 'https://www.skillhub.club/', type: 'api' },
+  { name: 'SkillsMP', url: 'https://skillsmp.com', type: 'browse' },
+  { name: 'Anthropic Official', url: 'https://github.com/anthropics/skills', type: 'browse' },
+  { name: 'MCP Market', url: 'https://mcpmarket.com/tools/skills', type: 'browse' },
+];
 
 export interface ToastEntry {
   instanceId: string;
@@ -94,6 +137,20 @@ export interface CommandCenterState {
   spawnOpen: boolean;
   /** Non-null when the user requested connecting a specific agent type; cleared after handling. */
   pendingConnectAgent: string | null;
+  /** Installed skills discovered from disk. */
+  skills: SkillInfo[];
+  setSkills: (skills: SkillInfo[]) => void;
+  /** Whether the "Create Skill" wizard is open. */
+  createSkillOpen: boolean;
+  toggleCreateSkill: () => void;
+  /** Whether the marketplace browser is open. */
+  marketplaceOpen: boolean;
+  toggleMarketplace: () => void;
+  /** Registered marketplace sources. */
+  registeredMarketplaces: MarketplaceEntry[];
+  addMarketplace: (entry: MarketplaceEntry) => void;
+  removeMarketplace: (url: string) => void;
+  setMarketplaces: (entries: MarketplaceEntry[]) => void;
 
   setSelectedAgent: (id: string | null) => void;
   setSelectedAgentData: (agent: AgentState | null, metrics: AgentMetrics | null) => void;
@@ -161,6 +218,21 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   connectOpen: false,
   spawnOpen: false,
   pendingConnectAgent: null,
+  skills: [],
+  setSkills: (skills) => set({ skills }),
+  createSkillOpen: false,
+  toggleCreateSkill: () => set((s) => ({ createSkillOpen: !s.createSkillOpen })),
+  marketplaceOpen: false,
+  toggleMarketplace: () => set((s) => ({ marketplaceOpen: !s.marketplaceOpen })),
+  registeredMarketplaces: [...DEFAULT_MARKETPLACES],
+  addMarketplace: (entry) => set((s) => {
+    if (s.registeredMarketplaces.some((m) => m.url === entry.url)) return s;
+    return { registeredMarketplaces: [...s.registeredMarketplaces, entry] };
+  }),
+  removeMarketplace: (url) => set((s) => ({
+    registeredMarketplaces: s.registeredMarketplaces.filter((m) => m.url !== url),
+  })),
+  setMarketplaces: (entries) => set({ registeredMarketplaces: entries }),
 
   setSelectedAgent: (id) => set((s) => ({
     selectedAgentId: id,

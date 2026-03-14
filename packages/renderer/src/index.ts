@@ -10,3 +10,5 @@ export { createShip } from './entities/Ship.js';
 export { createSingularity } from './entities/Singularity.js';
 export { createStars } from './entities/Stars.js';
 export { createTrafficRoute } from './effects/TrafficRoute.js';
+export { createSkillOrbit, updateSkillOrbit } from './entities/SkillOrbit.js';
+export type { SkillOrbitProps, ExtendedSkillOrbit } from './entities/SkillOrbit.js';

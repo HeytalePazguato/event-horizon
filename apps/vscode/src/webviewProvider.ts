@@ -3,16 +3,209 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as os from 'os';
+import * as fsp from 'fs/promises';
 import type { AgentStateManager, MetricsEngine } from '@event-horizon/core';
 import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
+import type { SkillInfo } from './skillScanner.js';
+
+async function handleMarketplaceSearch(
+  webview: vscode.Webview,
+  marketplaceUrl: string,
+  query: string,
+): Promise<void> {
+  try {
+    // SkillHub API — the only marketplace with a known API
+    if (marketplaceUrl.includes('skillhub.club')) {
+      const searchUrl = `https://www.skillhub.club/api/skills/search?q=${encodeURIComponent(query)}&limit=20`;
+      const response = await fetch(searchUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json() as { skills?: Array<{ name?: string; description?: string; author?: string; slug?: string }> };
+      const results = (data.skills ?? []).map((s: { name?: string; description?: string; author?: string; slug?: string }) => ({
+        name: s.name ?? 'Unknown',
+        description: s.description ?? '',
+        author: s.author ?? 'Unknown',
+        url: `https://www.skillhub.club/skills/${s.slug ?? s.name ?? ''}`,
+        source: 'SkillHub',
+      }));
+      void webview.postMessage({ type: 'marketplace-search-results', results, source: marketplaceUrl });
+    } else {
+      // Unknown API marketplace — try a generic JSON endpoint
+      const searchUrl = `${marketplaceUrl.replace(/\/$/, '')}/api/search?q=${encodeURIComponent(query)}`;
+      const response = await fetch(searchUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json() as { results?: Array<{ name?: string; description?: string; author?: string; url?: string }> };
+      const results = (data.results ?? []).map((s: { name?: string; description?: string; author?: string; url?: string }) => ({
+        name: s.name ?? 'Unknown',
+        description: s.description ?? '',
+        author: s.author ?? 'Unknown',
+        url: s.url ?? marketplaceUrl,
+        source: new URL(marketplaceUrl).hostname,
+      }));
+      void webview.postMessage({ type: 'marketplace-search-results', results, source: marketplaceUrl });
+    }
+  } catch {
+    void webview.postMessage({ type: 'marketplace-search-error', source: marketplaceUrl });
+    void vscode.window.showWarningMessage('Marketplace search failed. The API may be unavailable.');
+  }
+}
+
+async function handleCreateSkill(msg: Record<string, unknown>): Promise<void> {
+  const name = msg.name as string;
+  const scope = msg.scope as string;
+  const category = (msg.category as string) || '';
+  if (!name || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+    void vscode.window.showErrorMessage('Invalid skill name.');
+    return;
+  }
+  if (category && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(category)) {
+    void vscode.window.showErrorMessage('Invalid category name — use kebab-case.');
+    return;
+  }
+
+  // Build frontmatter — only spec-supported fields
+  const lines: string[] = ['---'];
+  lines.push(`name: ${name}`);
+  if (msg.description) lines.push(`description: "${msg.description}"`);
+  lines.push(`user-invocable: ${msg.userInvocable !== false}`);
+  if (msg.disableModelInvocation === true) lines.push('disable-model-invocation: true');
+  if (msg.argumentHint) lines.push(`argument-hint: "${msg.argumentHint}"`);
+  lines.push('---');
+  lines.push('');
+  lines.push('<!-- Write your skill instructions here -->');
+  lines.push('');
+  const content = lines.join('\n');
+
+  // Determine target directory — includes category subfolder if provided
+  let skillsBase: string;
+  if (scope === 'personal') {
+    skillsBase = path.join(os.homedir(), '.claude', 'skills');
+  } else {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!wsFolder) {
+      void vscode.window.showErrorMessage('No workspace folder open.');
+      return;
+    }
+    skillsBase = path.join(wsFolder, '.claude', 'skills');
+  }
+  const targetDir = category
+    ? path.join(skillsBase, category, name)
+    : path.join(skillsBase, name);
+
+  const filePath = path.join(targetDir, 'SKILL.md');
+  try {
+    await fsp.mkdir(targetDir, { recursive: true });
+    await fsp.writeFile(filePath, content, 'utf8');
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    await vscode.window.showTextDocument(doc);
+    void vscode.window.showInformationMessage(`Skill "${name}" created at ${filePath}`);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Failed to create skill: ${err}`);
+  }
+}
+
+/**
+ * Move a skill's folder to a new category (or root).
+ * e.g. skills/my-skill/ → skills/documentation/my-skill/
+ *      skills/old-cat/my-skill/ → skills/new-cat/my-skill/
+ *      skills/old-cat/my-skill/ → skills/my-skill/ (move to root)
+ */
+async function handleMoveSkill(filePath: string, newCategory: string): Promise<void> {
+  if (newCategory && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newCategory)) {
+    void vscode.window.showErrorMessage('Invalid category name — use kebab-case.');
+    return;
+  }
+
+  const skillDir = path.dirname(filePath);
+  const skillName = path.basename(skillDir);
+
+  // Find the "skills" directory in the path to determine the root
+  const normalized = filePath.replace(/\\/g, '/');
+  const parts = normalized.split('/');
+  const skillsIdx = parts.lastIndexOf('skills');
+  if (skillsIdx < 0) {
+    void vscode.window.showErrorMessage('Cannot determine skills root directory.');
+    return;
+  }
+  // Reconstruct with native separators
+  const skillsRoot = parts.slice(0, skillsIdx + 1).join(path.sep);
+  const parentDir = path.dirname(skillDir);
+
+  const newDir = newCategory
+    ? path.join(skillsRoot, newCategory, skillName)
+    : path.join(skillsRoot, skillName);
+
+  if (path.resolve(newDir) === path.resolve(skillDir)) return;
+
+  try {
+    await fsp.mkdir(path.dirname(newDir), { recursive: true });
+    await fsp.rename(skillDir, newDir);
+
+    // Clean up empty old category folder
+    try {
+      const remaining = await fsp.readdir(parentDir);
+      if (remaining.length === 0 && path.resolve(parentDir) !== path.resolve(skillsRoot)) {
+        await fsp.rmdir(parentDir);
+      }
+    } catch { /* ignore */ }
+
+    void vscode.window.showInformationMessage(
+      `Skill "${skillName}" moved to ${newCategory || 'root'}.`,
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Failed to move skill: ${err}`);
+  }
+}
+
+/**
+ * Duplicate a skill: copy its SKILL.md to a new folder with an updated name.
+ * The new skill is placed in the same scope/category as the original.
+ */
+async function handleDuplicateSkill(filePath: string, newName: string): Promise<void> {
+  if (!newName || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newName)) {
+    void vscode.window.showErrorMessage('Invalid skill name — use kebab-case (e.g. my-skill-copy).');
+    return;
+  }
+
+  const skillDir = path.dirname(filePath);
+  const parentDir = path.dirname(skillDir);
+
+  // Read source SKILL.md
+  let content: string;
+  try {
+    content = await fsp.readFile(filePath, 'utf8');
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Failed to read source skill: ${err}`);
+    return;
+  }
+
+  // Update the name field in frontmatter
+  content = content.replace(/^(name:\s*).+$/m, `$1${newName}`);
+
+  const newDir = path.join(parentDir, newName);
+  const newFilePath = path.join(newDir, 'SKILL.md');
+
+  try {
+    await fsp.mkdir(newDir, { recursive: true });
+    await fsp.writeFile(newFilePath, content, 'utf8');
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(newFilePath));
+    await vscode.window.showTextDocument(doc);
+    void vscode.window.showInformationMessage(`Skill "${newName}" duplicated from "${path.basename(skillDir)}".`);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Failed to duplicate skill: ${err}`);
+  }
+}
 
 export function createWebviewProvider(
   context: vscode.ExtensionContext,
   webviewRef: { current: vscode.Webview | null },
   agentStateManager: AgentStateManager,
   metricsEngine: MetricsEngine,
+  getSkills?: () => SkillInfo[],
+  rescanSkills?: () => Promise<SkillInfo[]>,
 ): vscode.WebviewViewProvider {
   const version = (context.extension.packageJSON as { version: string }).version;
 
@@ -75,6 +268,20 @@ export function createWebviewProvider(
         if (savedSingularity) {
           void webviewView.webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
         }
+
+        // Hydrate installed skills — if initial scan isn't done yet, re-scan now
+        const cachedSkills = getSkills?.() ?? [];
+        if (cachedSkills.length > 0) {
+          void webviewView.webview.postMessage({ type: 'skills-update', skills: cachedSkills });
+        } else {
+          // Initial scan may not have finished — re-scan and send
+          const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+          void import('./skillScanner.js').then(({ getInstalledSkills }) =>
+            getInstalledSkills(folders).then((skills) => {
+              void webviewView.webview.postMessage({ type: 'skills-update', skills });
+            })
+          );
+        }
       }
 
       webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
@@ -131,6 +338,40 @@ export function createWebviewProvider(
           const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
           terminal.sendText(msg.command);
           terminal.show();
+        } else if (msg?.type === 'open-skill-file' && typeof msg.filePath === 'string') {
+          const uri = vscode.Uri.file(msg.filePath);
+          void vscode.workspace.openTextDocument(uri).then((doc) => {
+            void vscode.window.showTextDocument(doc);
+          });
+        } else if (msg?.type === 'create-skill') {
+          void handleCreateSkill(msg).then(async () => {
+            if (rescanSkills) {
+              const skills = await rescanSkills();
+              void webviewView.webview.postMessage({ type: 'skills-update', skills });
+            }
+          });
+        } else if (msg?.type === 'open-marketplace-url' && typeof msg.url === 'string') {
+          void vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        } else if (msg?.type === 'marketplace-search' && typeof msg.marketplaceUrl === 'string' && typeof msg.query === 'string') {
+          void handleMarketplaceSearch(webviewView.webview, msg.marketplaceUrl, msg.query);
+        } else if (msg?.type === 'install-skill-from-url' && typeof msg.url === 'string') {
+          // Open the skill URL in the browser — users install manually or via CLI
+          void vscode.env.openExternal(vscode.Uri.parse(msg.url));
+          void vscode.window.showInformationMessage(`Opening skill page. Use "skillhub install" or download manually to install.`);
+        } else if (msg?.type === 'move-skill' && typeof msg.filePath === 'string' && typeof msg.newCategory === 'string') {
+          void handleMoveSkill(msg.filePath, msg.newCategory).then(async () => {
+            if (rescanSkills) {
+              const skills = await rescanSkills();
+              void webviewView.webview.postMessage({ type: 'skills-update', skills });
+            }
+          });
+        } else if (msg?.type === 'duplicate-skill' && typeof msg.filePath === 'string' && typeof msg.newName === 'string') {
+          void handleDuplicateSkill(msg.filePath, msg.newName).then(async () => {
+            if (rescanSkills) {
+              const skills = await rescanSkills();
+              void webviewView.webview.postMessage({ type: 'skills-update', skills });
+            }
+          });
         }
       });
     },

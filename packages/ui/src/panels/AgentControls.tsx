@@ -89,6 +89,17 @@ const IconScreenshot: FC = () => (
   </svg>
 );
 
+const IconMarketplace: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <rect x="1.5" y="5" width="11" height="7.5" rx="0.8" stroke="currentColor" strokeWidth="1.2" fill="none" />
+    <path d="M1.5 5L3 1.5h8L12.5 5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" fill="none" />
+    <line x1="5" y1="5" x2="5" y2="1.5" stroke="currentColor" strokeWidth="0.8" />
+    <line x1="9" y1="5" x2="9" y2="1.5" stroke="currentColor" strokeWidth="0.8" />
+    <circle cx="7" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.8" fill="none" />
+    <line x1="7" y1="7.5" x2="7" y2="9" stroke="currentColor" strokeWidth="0.8" />
+  </svg>
+);
+
 // ── Button definitions ────────────────────────────────────────────────────────
 
 interface CmdBtn {
@@ -119,7 +130,8 @@ const GRID: Array<CmdBtn | null> = [
   { id: 'screenshot', label: 'Screenshot', desc: 'Save the universe as an image.', icon: IconScreenshot,  alwaysActive: true },
   null,
   // Row 3 — meta/utility (bottom-right)
-  null, null, null,
+  { id: 'marketplace', label: 'Marketplace', desc: 'Browse skill marketplaces.', icon: IconMarketplace, alwaysActive: true },
+  null, null,
   { id: 'demo',    label: 'Demo',    desc: 'Toggle demo simulation.',               icon: IconDemo,     alwaysActive: true },
   { id: 'info',    label: 'Info',    desc: 'Show the universe guide.',              icon: IconInfo,     alwaysActive: true },
 ];
@@ -187,7 +199,7 @@ const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
     <div
       style={{
         position: 'fixed',
-        bottom: 205,
+        bottom: 210,
         right: 12,
         width: 172,
         background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
@@ -230,6 +242,8 @@ export const AgentControls: FC = () => {
     spawnOpen,
     requestExport,
     requestScreenshot,
+    toggleMarketplace,
+    marketplaceOpen,
   } = useCommandCenterStore(useShallow((s) => ({
     selectedAgentId: s.selectedAgentId,
     requestCenter: s.requestCenter,
@@ -247,6 +261,8 @@ export const AgentControls: FC = () => {
     spawnOpen: s.spawnOpen,
     requestExport: s.requestExport,
     requestScreenshot: s.requestScreenshot,
+    toggleMarketplace: s.toggleMarketplace,
+    marketplaceOpen: s.marketplaceOpen,
   })));
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -262,6 +278,7 @@ export const AgentControls: FC = () => {
     else if (id === 'info') toggleInfo();
     else if (id === 'export') requestExport();
     else if (id === 'screenshot') requestScreenshot();
+    else if (id === 'marketplace') toggleMarketplace();
   }
 
   function isActive(btn: CmdBtn): boolean {
@@ -272,6 +289,7 @@ export const AgentControls: FC = () => {
   function isLit(btn: CmdBtn): boolean {
     if (btn.id === 'connect') return connectOpen;
     if (btn.id === 'spawn') return spawnOpen;
+    if (btn.id === 'marketplace') return marketplaceOpen;
     if (btn.id === 'demo') return demoRequested;
     if (btn.id === 'info') return infoOpen;
     if (btn.id === 'pause' && selectedAgentId) return !!pausedAgentIds[selectedAgentId];

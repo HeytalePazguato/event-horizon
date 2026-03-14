@@ -123,4 +123,48 @@ describe('mapOpenCodeToEvent', () => {
     expect(result!.type).toBe('file.write');
     expect(result!.payload.filePath).toBe('/project/utils.ts');
   });
+
+  it('detects skill tool invocation with input.name', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'tool.execute.before',
+      agentId: 'oc-1',
+      payload: { toolName: 'skill', input: { name: 'deploy-staging' } },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('tool.call');
+    expect(result!.payload.isSkill).toBe(true);
+    expect(result!.payload.skillName).toBe('deploy-staging');
+  });
+
+  it('detects skill tool with case-insensitive tool name', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'tool.execute.before',
+      agentId: 'oc-1',
+      payload: { toolName: 'Skill', input: { name: 'lint-fix' } },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.isSkill).toBe(true);
+    expect(result!.payload.skillName).toBe('lint-fix');
+  });
+
+  it('sets isSkill without skillName when input has no name', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'tool.execute.before',
+      agentId: 'oc-1',
+      payload: { toolName: 'skill' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.isSkill).toBe(true);
+    expect(result!.payload.skillName).toBeUndefined();
+  });
+
+  it('does not set isSkill for non-skill tools', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'tool.execute.before',
+      agentId: 'oc-1',
+      payload: { toolName: 'Bash', input: { command: 'ls' } },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.isSkill).toBeUndefined();
+  });
 });

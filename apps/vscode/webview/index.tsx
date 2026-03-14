@@ -6,8 +6,9 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
-import type { AgentState } from '@event-horizon/core';
+import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
+import type { SkillInfo, CreateSkillRequest, MarketplaceSkillResult } from '@event-horizon/ui';
+import type { AgentState, AgentRuntimeState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
 
 // acquireVsCodeApi() may only be called once per webview lifetime — call at module level.
@@ -153,6 +154,10 @@ function App() {
   const toggleConnect        = useCommandCenterStore((s) => s.toggleConnect);
   const spawnOpen            = useCommandCenterStore((s) => s.spawnOpen);
   const toggleSpawn          = useCommandCenterStore((s) => s.toggleSpawn);
+  const createSkillOpen      = useCommandCenterStore((s) => s.createSkillOpen);
+  const toggleCreateSkill    = useCommandCenterStore((s) => s.toggleCreateSkill);
+  const marketplaceOpen      = useCommandCenterStore((s) => s.marketplaceOpen);
+  const toggleMarketplace    = useCommandCenterStore((s) => s.toggleMarketplace);
   const selectSingularity    = useCommandCenterStore((s) => s.selectSingularity);
   const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
   const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
@@ -171,6 +176,12 @@ function App() {
   const activeFilesRef = useRef<Map<string, Array<{ agentId: string; ts: number }>>>(new Map());
   /** Tracks recent spark pairs to avoid spam. Key = sorted agent ID pair. */
   const recentSparkPairsRef = useRef<Map<string, number>>(new Map());
+  /** Active skill invocations per agent (agentId → skillName). */
+  const activeSkillsRef = useRef<Map<string, string>>(new Map());
+  /** Unique skill names invoked (for skill_master achievement). */
+  const invokedSkillNamesRef = useRef<Set<string>>(new Set());
+  /** Skill file paths already counted for plugin_collector achievement. */
+  const discoveredSkillPathsRef = useRef<Set<string>>(new Set());
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
   useEffect(() => {
@@ -215,6 +226,37 @@ function App() {
         return;
       }
 
+      // skills-update: hydrate installed skills from extension host
+      if (msg?.type === 'skills-update') {
+        const data = msg as unknown as { skills: SkillInfo[] };
+        const newSkills = data.skills ?? [];
+        useCommandCenterStore.getState().setSkills(newSkills);
+        // Track newly discovered skills for plugin_collector achievement
+        for (const sk of newSkills) {
+          if (!discoveredSkillPathsRef.current.has(sk.filePath)) {
+            discoveredSkillPathsRef.current.add(sk.filePath);
+            useCommandCenterStore.getState().incrementTieredAchievement('plugin_collector');
+          }
+        }
+        return;
+      }
+
+      // marketplace-search-results: inline search results from extension host
+      if (msg?.type === 'marketplace-search-results') {
+        const data = msg as unknown as { results: MarketplaceSkillResult[]; source: string };
+        setMarketplaceSearchResults(data.results ?? []);
+        setMarketplaceSearchLoading(false);
+        setMarketplaceSearchSource(data.source ?? '');
+        return;
+      }
+
+      // marketplace-search-error: search failed
+      if (msg?.type === 'marketplace-search-error') {
+        setMarketplaceSearchResults([]);
+        setMarketplaceSearchLoading(false);
+        return;
+      }
+
       if (msg?.type !== 'event' || !msg.payload) return;
 
       const raw = msg.payload as {
@@ -229,7 +271,8 @@ function App() {
       const agentType = raw.agentType ?? 'unknown';
       const type = raw.type ?? 'agent.spawn';
 
-      addLog({ ts: new Date().toLocaleTimeString(), agentId, agentName, type });
+      const logSkillName = raw.payload?.isSkill ? (raw.payload.skillName as string | undefined) : undefined;
+      addLog({ id: `${Date.now()}-${agentId}`, ts: new Date().toLocaleTimeString(), agentId, agentName, type, skillName: logSkillName });
 
       // ── Singularity stats tracking ──
       const store = useCommandCenterStore.getState();
@@ -245,6 +288,8 @@ function App() {
         setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
         setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
         delete agentLastSeenRef.current[agentId];
+        activeSkillsRef.current.delete(agentId);
+        setActiveSkillsView((prev) => { const next = { ...prev }; delete next[agentId]; return next; });
         return;
       }
 
@@ -282,12 +327,12 @@ function App() {
       setAgentMap((prev) => {
         const prevAgent = prev[agentId];
 
-        let state: string;
+        let state: AgentRuntimeState;
         if (type === 'agent.error') state = 'error';
         else if (type === 'agent.waiting') state = 'waiting';
         else if (type === 'task.start') state = 'thinking';
-        else if (type === 'tool.call') state = 'tool_use';
-        else if (type === 'task.progress') state = 'working';
+        else if (type === 'tool.call') state = 'thinking';
+        else if (type === 'task.progress') state = 'thinking';
         else if (type === 'tool.result') state = 'thinking';
         else if (type === 'task.complete' || type === 'task.fail') state = 'idle';
         else if (type === 'agent.spawn') state = 'idle';
@@ -351,6 +396,36 @@ function App() {
           },
         };
       });
+
+      // ── Active skill tracking ──
+      if (raw.payload?.isSkill) {
+        const skillName = raw.payload.skillName as string | undefined;
+        if (type === 'tool.call' && skillName) {
+          activeSkillsRef.current.set(agentId, skillName);
+          if (!invokedSkillNamesRef.current.has(skillName)) {
+            invokedSkillNamesRef.current.add(skillName);
+            incrementTiered('skill_master');
+          }
+          const currentSkills = useCommandCenterStore.getState().skills;
+          const idx = currentSkills.findIndex((s) => s.name === skillName);
+          setActiveSkillsView((prev) => ({ ...prev, [agentId]: { name: skillName, index: idx >= 0 ? idx : 0 } }));
+
+          // Spawn a skill fork probe ship if this is a fork-context skill
+          const matchedSkill = idx >= 0 ? currentSkills[idx] : null;
+          if (matchedSkill?.context === 'fork' || raw.payload?.isSubagent) {
+            const probeId = `skill-probe-${agentId}-${Date.now()}`;
+            setShips((prev) => [...prev, { id: probeId, fromAgentId: agentId, toAgentId: agentId, payloadSize: 1, isSkillProbe: true }]);
+            const probeTimerId = setTimeout(() => {
+              setShips((prev) => prev.filter((s) => s.id !== probeId));
+              shipTimerIdsRef.current.delete(probeTimerId);
+            }, 15000);
+            shipTimerIdsRef.current.add(probeTimerId);
+          }
+        } else if (type === 'tool.result') {
+          activeSkillsRef.current.delete(agentId);
+          setActiveSkillsView((prev) => { const next = { ...prev }; delete next[agentId]; return next; });
+        }
+      }
 
       // ── File collision lightning — persistent arc while agents share a file ──
       const filePath = raw.payload?.filePath as string | undefined;
@@ -572,6 +647,46 @@ function App() {
     unlockAchievement(id);
   }, [agents, unlockAchievement]);
 
+  // ── Skill actions ──────────────────────────────────────────────────────────
+
+  const handleOpenSkill = useCallback((filePath: string) => {
+    vscodeApi?.postMessage({ type: 'open-skill-file', filePath });
+  }, []);
+
+  const handleCreateSkill = useCallback((req: CreateSkillRequest) => {
+    vscodeApi?.postMessage({ type: 'create-skill', ...req });
+    toggleCreateSkill();
+  }, [toggleCreateSkill]);
+
+  const handleMoveSkill = useCallback((filePath: string, newCategory: string) => {
+    vscodeApi?.postMessage({ type: 'move-skill', filePath, newCategory });
+  }, []);
+
+  const handleDuplicateSkill = useCallback((filePath: string, newName: string) => {
+    vscodeApi?.postMessage({ type: 'duplicate-skill', filePath, newName });
+  }, []);
+
+  // ── Marketplace actions ───────────────────────────────────────────────────
+
+  const [marketplaceSearchResults, setMarketplaceSearchResults] = useState<MarketplaceSkillResult[]>([]);
+  const [marketplaceSearchLoading, setMarketplaceSearchLoading] = useState(false);
+  const [marketplaceSearchSource, setMarketplaceSearchSource] = useState<string>('');
+
+  const handleMarketplaceBrowse = useCallback((url: string) => {
+    vscodeApi?.postMessage({ type: 'open-marketplace-url', url });
+  }, []);
+
+  const handleMarketplaceSearch = useCallback((marketplaceUrl: string, query: string) => {
+    setMarketplaceSearchLoading(true);
+    setMarketplaceSearchSource(marketplaceUrl);
+    setMarketplaceSearchResults([]);
+    vscodeApi?.postMessage({ type: 'marketplace-search', marketplaceUrl, query });
+  }, []);
+
+  const handleInstallSkill = useCallback((result: MarketplaceSkillResult) => {
+    vscodeApi?.postMessage({ type: 'install-skill-from-url', ...result });
+  }, []);
+
   // ── Planet hover / click ──────────────────────────────────────────────────
 
   useEffect(() => {
@@ -618,6 +733,20 @@ function App() {
     () => Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, v.activeSubagents ?? 0])),
     [metricsMap],
   );
+
+  // Skill orbit data for renderer — per agent type (only count skills compatible with the agent)
+  const skills = useCommandCenterStore((s) => s.skills);
+  const agentSkillCounts = useMemo(
+    () => Object.fromEntries(agents.map((a) => {
+      const at = a.agentType ?? 'unknown';
+      const count = skills.filter((s) => s.agentTypes.includes(at as 'claude-code' | 'opencode' | 'copilot')).length;
+      return [a.id, count];
+    })),
+    [agents, skills],
+  );
+
+  // Active skills state — driven from activeSkillsRef, re-rendered via agentStates changes
+  const [activeSkillsView, setActiveSkillsView] = useState<Record<string, { name: string; index: number }>>({});
 
   const [demoSimRunning, setDemoSimRunning] = useState(false);
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -823,7 +952,7 @@ function App() {
       agents: agentArray.map((a) => ({
         id: a.id,
         name: a.name,
-        type: a.agentType,
+        type: a.type,
         state: a.state,
         cwd: a.cwd,
       })),
@@ -908,6 +1037,8 @@ function App() {
           agents={agents}
           metrics={metricsView}
           activeSubagents={activeSubagentsView}
+          agentSkillCounts={agentSkillCounts}
+          activeSkills={activeSkillsView}
           ships={ships}
           sparks={sparks}
           agentStates={agentStates}
@@ -955,7 +1086,7 @@ function App() {
           <div>No agents yet — press Demo in the Command Center</div>
         </div>
       )}
-      <CommandCenter />
+      <CommandCenter onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       <AchievementToasts />
       {infoOpen && (
         <div
@@ -1068,8 +1199,6 @@ function App() {
                       style={{ padding: '4px 10px', border: '1px solid #25904a', background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)', color: '#50c070', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
                       Install
                     </button>
-                  ) : c.status === 'auto' ? (
-                    <div style={{ fontSize: 9, color: '#4a88cc', flexShrink: 0, paddingTop: 2 }}>Auto</div>
                   ) : (
                     <div style={{ fontSize: 9, color: '#2a3a2a', flexShrink: 0, paddingTop: 2 }}>Soon</div>
                   )}
@@ -1127,6 +1256,76 @@ function App() {
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {createSkillOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 300,
+            background: 'rgba(0,0,0,0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onClick={toggleCreateSkill}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(180deg, #0b1a12 0%, #060e09 100%)',
+              border: '1px solid #1e4030',
+              boxShadow: '0 4px 32px rgba(0,0,0,0.85)',
+              clipPath: 'polygon(16px 0, 100% 0, 100% 100%, 0 100%, 0 16px)',
+              padding: '14px 16px',
+              width: 'min(420px, 90vw)',
+              maxHeight: 'min(600px, 85vh)',
+              overflowY: 'auto',
+              fontFamily: 'Consolas, monospace',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CreateSkillWizard onClose={toggleCreateSkill} onCreate={handleCreateSkill} />
+          </div>
+        </div>
+      )}
+      {marketplaceOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 300,
+            background: 'rgba(0,0,0,0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onClick={toggleMarketplace}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(180deg, #0b1a12 0%, #060e09 100%)',
+              border: '1px solid #1e4030',
+              boxShadow: '0 4px 32px rgba(0,0,0,0.85)',
+              clipPath: 'polygon(16px 0, 100% 0, 100% 100%, 0 100%, 0 16px)',
+              padding: '14px 16px',
+              width: 'min(480px, 92vw)',
+              maxHeight: 'min(650px, 88vh)',
+              overflowY: 'auto',
+              fontFamily: 'Consolas, monospace',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MarketplacePanel
+              onClose={toggleMarketplace}
+              onBrowse={handleMarketplaceBrowse}
+              onSearch={handleMarketplaceSearch}
+              onInstallSkill={handleInstallSkill}
+              searchResults={marketplaceSearchResults}
+              searchLoading={marketplaceSearchLoading}
+              searchSource={marketplaceSearchSource}
+            />
           </div>
         </div>
       )}

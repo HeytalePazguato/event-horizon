@@ -110,4 +110,54 @@ describe('mapClaudeHookToEvent', () => {
     expect(result).not.toBeNull();
     expect((result!.payload as Record<string, unknown>).filePath).toBeUndefined();
   });
+
+  it('extracts skill metadata from Skill tool use', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Skill',
+      tool_input: { skill: 'commit', args: '-m "fix bug"' },
+    });
+    expect(result).not.toBeNull();
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.isSkill).toBe(true);
+    expect(p.skillName).toBe('commit');
+    expect(p.skillArgs).toBe('-m "fix bug"');
+  });
+
+  it('extracts skill metadata from stringified tool_input', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Skill',
+      tool_input: JSON.stringify({ skill: 'review-pr', args: '123' }),
+    });
+    expect(result).not.toBeNull();
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.isSkill).toBe(true);
+    expect(p.skillName).toBe('review-pr');
+  });
+
+  it('sets isSkill without skillName when tool_input is missing', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Skill',
+    });
+    expect(result).not.toBeNull();
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.isSkill).toBe(true);
+    expect(p.skillName).toBeUndefined();
+  });
+
+  it('does not set isSkill for non-Skill tools', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Edit',
+      tool_input: { file_path: '/test.ts', old_string: 'a', new_string: 'b' },
+    });
+    expect(result).not.toBeNull();
+    expect((result!.payload as Record<string, unknown>).isSkill).toBeUndefined();
+  });
 });

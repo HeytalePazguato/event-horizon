@@ -39,6 +39,8 @@ import { conquerorOpencode } from './defs/conqueror-opencode.js';
 import { conquerorCopilot } from './defs/conqueror-copilot.js';
 import { conquerorUnknown } from './defs/conqueror-unknown.js';
 import { starCatcher } from './defs/star-catcher.js';
+import { skillMaster } from './defs/skill_master.js';
+import { pluginCollector } from './defs/plugin_collector.js';
 
 /** Ordered list of all achievement definitions. */
 const ALL_DEFS: AchievementDef[] = [
@@ -68,6 +70,8 @@ const ALL_DEFS: AchievementDef[] = [
   conquerorCopilot,
   conquerorUnknown,
   starCatcher,
+  skillMaster,
+  pluginCollector,
 ];
 
 /** Legacy-compatible shape consumed by AchievementsBar / AchievementToasts. */
