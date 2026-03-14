@@ -24,13 +24,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -56,13 +56,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -95,7 +95,7 @@ jobs:
           cd apps/vscode && pnpm run build:ext:prod && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: event-horizon-${{ env.VERSION }}.vsix
           path: apps/vscode/*.vsix
@@ -110,7 +110,7 @@ jobs:
 
     steps:
       - name: Delete old dev artifacts (keep latest 3)
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const artifacts = await github.rest.actions.listArtifactsForRepo({
@@ -143,13 +143,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -212,7 +212,7 @@ jobs:
           cd apps/vscode && pnpm run build:ext:prod && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: event-horizon-${{ env.VERSION }}.vsix
           path: apps/vscode/*.vsix
@@ -243,7 +243,7 @@ jobs:
 
     steps:
       - name: Delete old pre-releases (keep latest 5)
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const releases = await github.rest.repos.listReleases({
@@ -287,13 +287,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
