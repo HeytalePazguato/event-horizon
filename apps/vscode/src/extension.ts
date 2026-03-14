@@ -11,8 +11,11 @@ import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
 import { setupCopilotHooks, hasStaleCopilotHooks } from './setupCopilotHooks';
+import { getInstalledSkills, createSkillWatcher } from './skillScanner';
+import type { SkillInfo } from './skillScanner';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
+let cachedSkills: SkillInfo[] = [];
 
 // ── Workspace-aware cooperation detection ────────────────────────────────────
 
@@ -121,7 +124,25 @@ export function activate(context: vscode.ExtensionContext): void {
   const copilotDisposable = setupCopilotOutputChannel((event) => eventBus.emit(event));
   context.subscriptions.push(copilotDisposable);
 
-  const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine);
+  // ── Skill scanner ─────────────────────────────────────────────────────────
+  const workspaceFolderPaths = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+  void getInstalledSkills(workspaceFolderPaths).then((skills) => {
+    cachedSkills = skills;
+    // Send to webview — if it's not open yet, hydration will pick it up from cachedSkills
+    webviewRef.current?.postMessage({ type: 'skills-update', skills });
+  });
+  const skillWatcherDisposable = createSkillWatcher((skills) => {
+    cachedSkills = skills;
+    webviewRef.current?.postMessage({ type: 'skills-update', skills });
+  });
+  context.subscriptions.push(skillWatcherDisposable);
+
+  const rescanSkills = async () => {
+    const skills = await getInstalledSkills(workspaceFolderPaths);
+    cachedSkills = skills;
+    return skills;
+  };
+  const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('eventHorizon.universe', provider, {
       webviewOptions: { retainContextWhenHidden: true }, // 2.2 — keep WebGL context alive when panel is hidden

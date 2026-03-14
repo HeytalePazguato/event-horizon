@@ -48,8 +48,8 @@ From that answer, Event Horizon was born.
 A StarCraft-inspired control panel at the bottom of the viewport with chamfered corners and LED indicators. Three sections:
 
 - **Agent Identity** (left) — Selected agent name, type icon, and live state indicator
-- **Metrics** (center) — 5x2 grid showing Load, Tools, Prompts, Errors, Success%, Subagents, Tasks, Top Tool, Uptime, Last Active. Tabs for Info / Logs / Medals.
-- **Controls** (right) — Command buttons: Pause, Isolate, Center, Connect, Spawn, Demo, Info
+- **Metrics** (center) — 5x2 grid showing Load, Tools, Prompts, Errors, Success%, Subagents, Tasks, Top Tool, Uptime, Last Active. Tabs for Info / Logs / Medals / Skills.
+- **Controls** (right) — 5x3 command grid: Pause, Isolate, Center, Connect, Spawn, Export, Screenshot, Marketplace, Demo, Info
 
 ### Workspace Grouping
 
@@ -81,9 +81,79 @@ File paths are extracted from each agent's tool-use payloads:
 
 Only the file path string is extracted — file content is never captured or transmitted.
 
+### Skills
+
+Event Horizon discovers installed [Agent Skills](https://agentskills.io) (`SKILL.md` files) and provides full lifecycle management — browse, create, organize, duplicate, and move skills without leaving the extension.
+
+#### Discovery & Visualization
+
+- **Auto-scan**: all skill directories are scanned on startup and watched for live changes. Skills appear in the **Skills tab** in the Command Center with scope badges (Personal/Project/Plugin/Legacy), agent type badges (Claude/OC/Copilot), and category badges. Skills compatible with all three agent types show a gold "Universal" badge.
+- **Skill orbit ring**: each planet displays a faint dotted ring with one dot per compatible skill. When a skill is actively executing, its dot pulses bright cyan with a floating `/skill-name` label above the planet.
+- **Skill fork probe**: when a fork-context skill spawns a subagent, a cyan diamond "probe" ship launches from the planet with a matching trail.
+- **Logs integration**: skill invocations are highlighted in cyan in the Logs tab with `/skill-name` labels.
+
+#### Category Folders
+
+Skills can be organized into category subfolders for better structure:
+
+```
+~/.claude/skills/
+  documentation/
+    integration-plan/SKILL.md
+    update-docs/SKILL.md
+  development/
+    code-review/SKILL.md
+    run-tests/SKILL.md
+  my-flat-skill/SKILL.md          # also works without a category
+```
+
+#### Create, Duplicate & Move
+
+- **Create Skill wizard** (click "+" in Skills tab): 3-step guided flow — choose a template (Blank, Code Review, Test Runner, Documentation), configure name/description/scope/category/options, preview the generated SKILL.md frontmatter, then create. The category field is a combobox that lists existing folders and allows typing new ones.
+- **Duplicate**: expand a skill card and click Duplicate — enter a new name and the SKILL.md is copied with the `name:` field updated.
+- **Move**: expand a skill card and click Move — pick a new category from the combobox (or type a new one) and the skill folder is relocated. Empty source folders are auto-cleaned.
+
+#### Marketplace Browser
+
+Click the **Marketplace** button in the command grid (or "Browse Marketplace" in the empty Skills tab) to open the marketplace browser. Pre-populated with four sources:
+
+| Marketplace | Type | Description |
+|-------------|------|-------------|
+| [SkillHub](https://www.skillhub.club/) | API | Inline search — results appear directly in the panel |
+| [SkillsMP](https://skillsmp.com) | Browse | Opens in your browser |
+| [Anthropic Official](https://github.com/anthropics/skills) | Browse | Opens in your browser |
+| [MCP Market](https://mcpmarket.com/tools/skills) | Browse | Opens in your browser |
+
+You can add and remove custom marketplace URLs — similar to how VS Code manages extension repositories.
+
+#### Skill Directory Locations
+
+| Path | Scope | Claude Code | OpenCode | Copilot |
+|------|-------|:-----------:|:--------:|:-------:|
+| `~/.claude/skills/` | Personal | ✅ | ✅ | ✅ |
+| `~/.config/opencode/skills/` | Personal | — | ✅ | — |
+| `~/.copilot/skills/` | Personal | — | — | ✅ |
+| `~/.agents/skills/` | Personal | ✅ | ✅ | ✅ |
+| `.claude/skills/` | Project | ✅ | ✅ | ✅ |
+| `.opencode/skills/` | Project | — | ✅ | — |
+| `.github/skills/` | Project | — | — | ✅ |
+| `.agents/skills/` | Project | ✅ | ✅ | ✅ |
+| `~/.claude/plugins/*/skills/` | Plugin | ✅ | — | — |
+| `.claude/commands/` | Legacy | ✅ | — | — |
+
+Skills in shared directories (`.claude/skills/`, `.agents/skills/`) are shown for all agent types. Skills in agent-specific directories are only shown for that agent's planets and filtered accordingly in the UI. Both flat (`skills/<name>/`) and categorized (`skills/<category>/<name>/`) layouts are supported.
+
 ### Achievements
 
-Certain actions and milestones unlock achievements, displayed as medals in the Command Center. Some achievements have multiple tiers with escalating thresholds (I through VI), shown with colored borders progressing from gray to diamond. Medals persist across sessions.
+Certain actions and milestones unlock achievements, displayed as medals in the Command Center. Some achievements have multiple tiers with escalating thresholds (I through VI), shown with colored borders progressing from gray to diamond. Medals persist across sessions. 28 achievements in total, including:
+
+- **Skill Master** (tiered) — Invoke different skills across your agents
+- **Plugin Collector** (tiered) — Discover skills installed on your system
+- **First Contact / Ground Control / The Horde** — Connect 1 / 3 / 10 agents
+- **Traffic Control** (tiered) — Data ships launched between agents
+- **Supernova** (tiered) — Agents entering error state
+- **Gravity Well** (tiered) — Astronauts consumed by the black hole
+- And 22 more covering UFO encounters, astronaut feats, shooting stars, and agent-specific conquests
 
 ## Supported Agent Ecosystems
 
@@ -199,6 +269,7 @@ pnpm build
 - [Contributing](docs/CONTRIBUTING.md) — Development setup and PR guidelines
 - [Code of Conduct](docs/CODE_OF_CONDUCT.md) — Community standards
 - [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) — Phased development roadmap
+- [Skills Integration Plan](docs/SKILLS_INTEGRATION_PLAN.md) — Skills discovery, UI, marketplace, and authoring
 
 ## License
 

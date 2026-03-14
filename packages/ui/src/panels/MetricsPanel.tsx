@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import type { LogEntry, SingularityStats } from '../store.js';
 import { ACHIEVEMENTS, getMedal, TIER_LABELS, tierBorderColor } from '../achievements/index.js';
+import { SkillsPanel } from './SkillsPanel.js';
 
 /** Renders a medal by achievement ID. */
 const MedalById: FC<{ id: string; size?: number }> = ({ id, size }) => {
@@ -16,7 +17,7 @@ const MedalById: FC<{ id: string; size?: number }> = ({ id, size }) => {
 };
 
 const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
-  <div style={{ fontFamily: 'Consolas, monospace', fontSize: 9, color: '#7a9a82', overflowY: 'auto', maxHeight: 80, lineHeight: 1.5 }}>
+  <div style={{ fontFamily: 'Consolas, monospace', fontSize: 9, color: '#7a9a82', overflowY: 'auto', maxHeight: 85, lineHeight: 1.5 }}>
     {entries.length === 0 ? (
       <span style={{ color: '#4a5a52' }}>No events yet.</span>
     ) : entries.map((e) => (
@@ -25,7 +26,10 @@ const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
         {' '}
         <span style={{ color: '#8ab880' }}>[{e.agentName}]</span>
         {' '}
-        <span style={{ color: '#a0c090' }}>{e.type}</span>
+        <span style={{ color: e.skillName ? '#44ddff' : '#a0c090' }}>{e.type}</span>
+        {e.skillName && (
+          <span style={{ color: '#44ddff', marginLeft: 4, fontSize: 8 }}>/{e.skillName}</span>
+        )}
       </div>
     ))}
   </div>
@@ -207,9 +211,17 @@ const SingularityView: FC<{ stats: SingularityStats }> = ({ stats }) => {
   );
 };
 
-type View = 'info' | 'logs' | 'medals';
+type View = 'info' | 'logs' | 'medals' | 'skills';
 
-export const MetricsPanel: FC = () => {
+export interface MetricsPanelProps {
+  onOpenSkill?: (filePath: string) => void;
+  onCreateSkill?: () => void;
+  onOpenMarketplace?: () => void;
+  onMoveSkill?: (filePath: string, newCategory: string) => void;
+  onDuplicateSkill?: (filePath: string, newName: string) => void;
+}
+
+export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
   const selectedMetrics = useCommandCenterStore((s) => s.selectedMetrics);
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
   const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
@@ -218,6 +230,7 @@ export const MetricsPanel: FC = () => {
   const closeLogs       = useCommandCenterStore((s) => s.closeLogs);
   const allLogs         = useCommandCenterStore((s) => s.logs);
   const unlockedCount   = useCommandCenterStore((s) => s.unlockedAchievements.length);
+  const skillsCount     = useCommandCenterStore((s) => s.skills.length);
   const [view, setView] = useState<View>('info');
 
   const effectiveView: View = logsOpen ? 'logs' : view;
@@ -239,6 +252,9 @@ export const MetricsPanel: FC = () => {
       <button type="button" style={tabStyle(effectiveView === 'medals')} onClick={() => setEffectiveView('medals')}>
         Medals ({unlockedCount}/{ACHIEVEMENTS.length})
       </button>
+      <button type="button" style={tabStyle(effectiveView === 'skills')} onClick={() => setEffectiveView('skills')}>
+        Skills{skillsCount > 0 ? ` (${skillsCount})` : ''}
+      </button>
     </div>
   );
 
@@ -248,6 +264,7 @@ export const MetricsPanel: FC = () => {
         {tabs}
         {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
         {effectiveView === 'medals' && <MedalsView />}
+        {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
         {effectiveView === 'info' && singularitySelected && <SingularityView stats={singularityStats} />}
         {effectiveView === 'info' && !singularitySelected && (
           <div style={{ color: '#4a5a52', fontSize: 11, padding: 8, border: '1px dashed #2a4a3a' }}>
@@ -272,6 +289,7 @@ export const MetricsPanel: FC = () => {
       {tabs}
       {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
       {effectiveView === 'medals' && <MedalsView />}
+      {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
       {effectiveView === 'info' && (
         <div style={gridStyle}>
           <div style={cellStyle}>

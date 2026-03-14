@@ -38,6 +38,12 @@ function buildEhUrl(): string {
   return `http://127.0.0.1:${PORT}/claude${tokenParam}`;
 }
 
+/** Build a command that POSTs stdin to the EH server, silently succeeding if it's down. */
+function buildEhCommand(): string {
+  const url = buildEhUrl();
+  return `curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d @- ${url} > /dev/null 2>&1 || true`;
+}
+
 /** True if a hook entry is our Event Horizon hook (any version — command or http). */
 function isEhHook(h: Record<string, unknown>): boolean {
   // Legacy command-based hooks
@@ -49,7 +55,11 @@ function isEhHook(h: Record<string, unknown>): boolean {
 
 /** True if the hook matches the current expected format exactly. */
 function isCurrentEhHook(h: Record<string, unknown>): boolean {
-  return h.type === 'http' && h.url === buildEhUrl();
+  // Current: command-based silent hook
+  if (typeof h.command === 'string' && h.command === buildEhCommand()) return true;
+  // Also match http-based (previous format) so we can migrate it
+  if (h.type === 'http' && h.url === buildEhUrl()) return true;
+  return false;
 }
 
 /** Returns true if Event Horizon hooks exist in ~/.claude/settings.json (any token version). */
@@ -143,7 +153,6 @@ export async function setupClaudeCodeHooks(): Promise<void> {
 
   const existing = (settings.hooks ?? {}) as Record<string, unknown[]>;
   const merged: Record<string, unknown[]> = { ...existing };
-  const currentUrl = buildEhUrl();
 
   for (const hookEvent of EH_HOOK_EVENTS) {
     const current = (merged[hookEvent] ?? []) as unknown[];
@@ -156,16 +165,16 @@ export async function setupClaudeCodeHooks(): Promise<void> {
       return !hasStale;
     });
 
-    // Skip only if current correct http hook is already present
+    // Skip only if current correct hook is already present
     const alreadyCurrent = withoutStale.some((h) => {
       const hh = h as Record<string, unknown>;
       const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
-      return hs.some((c) => isCurrentEhHook(c));
+      return hs.some((c) => typeof c.command === 'string' && c.command === buildEhCommand());
     });
 
     merged[hookEvent] = alreadyCurrent
       ? withoutStale
-      : [...withoutStale, { matcher: '', hooks: [{ type: 'http', url: currentUrl }] }];
+      : [...withoutStale, { matcher: '', hooks: [{ type: 'command', command: buildEhCommand() }] }];
   }
 
   settings.hooks = merged;

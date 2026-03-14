@@ -70,6 +70,19 @@ export function mapCopilotHookToEvent(payload: unknown): AgentEvent | null {
     }
   }
 
+  // Detect skill tool invocation — Copilot may use 'skill' or 'use_skill' tool names
+  const toolNameStr = typeof safePayload.toolName === 'string' ? safePayload.toolName : '';
+  const toolNameLower = toolNameStr.toLowerCase();
+  if (toolNameLower === 'skill' || toolNameLower === 'use_skill') {
+    safePayload.isSkill = true;
+    const toolInput = p.tool_input;
+    if (toolInput && typeof toolInput === 'object') {
+      const ti = toolInput as Record<string, unknown>;
+      const skillName = (ti.name as string) ?? (ti.skill as string);
+      if (typeof skillName === 'string') safePayload.skillName = skillName.slice(0, 128);
+    }
+  }
+
   return {
     id: nextId(),
     agentId,

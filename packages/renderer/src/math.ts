@@ -178,6 +178,49 @@ export function computePlanetPositions(
     }
   }
 
+  // Group-level repulsion — push overlapping workspace clusters apart as a whole.
+  // Build group membership index so we can move entire groups together.
+  const groupIndices: Array<{ memberIdxs: number[]; clusterR: number }> = [];
+  {
+    let offset = 0;
+    for (const group of wsGroups) {
+      const idxs: number[] = [];
+      for (let k = 0; k < group.length; k++) idxs.push(offset + k);
+      const clusterR = group.length >= 2 ? 50 + (group.length - 2) * 20 : 0;
+      groupIndices.push({ memberIdxs: idxs, clusterR });
+      offset += group.length;
+    }
+  }
+  for (let iter = 0; iter < 60; iter++) {
+    let anyGroupOverlap = false;
+    for (let i = 0; i < groupIndices.length; i++) {
+      for (let j = i + 1; j < groupIndices.length; j++) {
+        const gi = groupIndices[i];
+        const gj = groupIndices[j];
+        // Compute centroids
+        let cix = 0, ciy = 0, cjx = 0, cjy = 0;
+        for (const idx of gi.memberIdxs) { cix += posArray[idx].x; ciy += posArray[idx].y; }
+        cix /= gi.memberIdxs.length; ciy /= gi.memberIdxs.length;
+        for (const idx of gj.memberIdxs) { cjx += posArray[idx].x; cjy += posArray[idx].y; }
+        cjx /= gj.memberIdxs.length; cjy /= gj.memberIdxs.length;
+        // Min distance = sum of cluster radii + padding between groups
+        const minDist = gi.clusterR + gj.clusterR + MIN_PIXEL_DIST;
+        const ddx = cjx - cix;
+        const ddy = cjy - ciy;
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.001;
+        if (dist < minDist) {
+          anyGroupOverlap = true;
+          const push = (minDist - dist) * 0.5 + 1;
+          const nx = (ddx / dist) * push;
+          const ny = (ddy / dist) * push;
+          for (const idx of gi.memberIdxs) { posArray[idx].x -= nx; posArray[idx].y -= ny; }
+          for (const idx of gj.memberIdxs) { posArray[idx].x += nx; posArray[idx].y += ny; }
+        }
+      }
+    }
+    if (!anyGroupOverlap) break;
+  }
+
   // Repulsion pass — also enforces minimum distance from origin (singularity)
   for (let iter = 0; iter < 100; iter++) {
     let anyOverlap = false;

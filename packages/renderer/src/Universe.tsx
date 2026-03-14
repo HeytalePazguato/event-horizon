@@ -14,8 +14,10 @@ import type { ExtendedPlanet, PlanetVariant } from './entities/Planet.js';
 import { createAstronaut } from './entities/Astronaut.js';
 import { createUfo, setUfoBeam } from './entities/Ufo.js';
 import type { ExtendedUfo } from './entities/Ufo.js';
-import { createShip } from './entities/Ship.js';
+import { createShip, createSkillProbe } from './entities/Ship.js';
 import { createMoon } from './entities/Moon.js';
+import { createSkillOrbit, updateSkillOrbit } from './entities/SkillOrbit.js';
+import type { ExtendedSkillOrbit } from './entities/SkillOrbit.js';
 import {
   bezierPoint,
   computeControlPoint,
@@ -36,6 +38,8 @@ export interface ShipSpawn {
   toAgentId: string;
   payloadSize?: number;
   fromAgentType?: string;
+  /** When true, renders as a skill fork probe (cyan diamond) instead of a data ship. */
+  isSkillProbe?: boolean;
 }
 
 export interface SparkSpawn {
@@ -59,6 +63,10 @@ export interface UniverseProps {
   centerRequestedAt?: number;
   /** Number of active subagents per agent — rendered as orbiting moons. */
   activeSubagents?: Record<string, number>;
+  /** Number of installed skills per agent. */
+  agentSkillCounts?: Record<string, number>;
+  /** Currently active skill per agent: { agentId: { name, index } }. */
+  activeSkills?: Record<string, { name: string; index: number }>;
   onPlanetHover?: (agentId: string | null) => void;
   onPlanetClick?: (agentId: string) => void;
   onReady?: (app: Application) => void;
@@ -252,6 +260,8 @@ export const Universe: FC<UniverseProps> = ({
   selectedAgentId = null,
   centerRequestedAt = 0,
   activeSubagents = {},
+  agentSkillCounts = {},
+  activeSkills = {},
   onPlanetHover,
   onPlanetClick,
   onReady,
@@ -341,6 +351,9 @@ export const Universe: FC<UniverseProps> = ({
   const planetMapRef = useRef<Map<string, ExtendedPlanet>>(new Map());
   const beltsContainerRef = useRef<Container | null>(null);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
+  const skillOrbitsRef = useRef<Map<string, ExtendedSkillOrbit>>(new Map());
+  const agentSkillCountsRef = useRef<Record<string, number>>(agentSkillCounts);
+  const activeSkillsRef = useRef<Record<string, { name: string; index: number }>>(activeSkills);
   const tickTimeRef = useRef(0);
   const [initError, setInitError] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -399,6 +412,8 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { isolatedRef.current = isolatedAgentId; }, [isolatedAgentId]);
   useEffect(() => { boostedRef.current = boostedAgentIds; }, [boostedAgentIds]);
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
+  useEffect(() => { agentSkillCountsRef.current = agentSkillCounts; }, [agentSkillCounts]);
+  useEffect(() => { activeSkillsRef.current = activeSkills; }, [activeSkills]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
   useEffect(() => { sparksRef.current = sparks; }, [sparks]);
@@ -593,6 +608,8 @@ export const Universe: FC<UniverseProps> = ({
       spawnedShipIdsRef.current = new Set();
       for (const g of lightningArcsRef.current.values()) { try { g.destroy(); } catch { /* ignore */ } }
       lightningArcsRef.current = new Map();
+      for (const o of skillOrbitsRef.current.values()) { try { o.destroy({ children: true }); } catch { /* ignore */ } }
+      skillOrbitsRef.current = new Map();
       planetPositionsRef.current = new Map();
       ufoRef.current = null;
       singularityRef.current = null;
@@ -754,6 +771,49 @@ export const Universe: FC<UniverseProps> = ({
       }
     });
 
+    // Manage skill orbit rings — add/remove/update based on skill counts
+    const skillCounts = agentSkillCountsRef.current;
+    const orbitsMap = skillOrbitsRef.current;
+    const currentAgentIds = new Set(agents.map((a) => a.id));
+
+    // Remove orbits for agents that no longer exist
+    for (const [agentId, orbit] of orbitsMap) {
+      if (!currentAgentIds.has(agentId)) {
+        orbit.destroy({ children: true });
+        orbitsMap.delete(agentId);
+      }
+    }
+
+    // Add or update orbits
+    for (const agent of agents) {
+      const count = skillCounts[agent.id] ?? 0;
+      const planet = planetMap.get(agent.id);
+      if (!planet || count === 0) {
+        // Remove orbit if no skills
+        const existing = orbitsMap.get(agent.id);
+        if (existing) {
+          existing.destroy({ children: true });
+          orbitsMap.delete(agent.id);
+        }
+        continue;
+      }
+
+      const existing = orbitsMap.get(agent.id);
+      if (existing && existing.__skillCount === count) continue; // no change
+
+      // Recreate orbit if count changed
+      if (existing) {
+        existing.destroy({ children: true });
+      }
+      const orbit = createSkillOrbit({
+        agentId: agent.id,
+        planetRadius: planet.__radius ?? 16,
+        skillCount: count,
+      });
+      planet.addChild(orbit);
+      orbitsMap.set(agent.id, orbit);
+    }
+
     planetPositionsRef.current = posMap;
     prevAgentsRef.current = agents;
   // metrics intentionally excluded — read via metricsRef to avoid recreating planets on every update
@@ -773,7 +833,7 @@ export const Universe: FC<UniverseProps> = ({
       if (!from || !to) continue;
 
       const { cx, cy } = computeControlPoint(from.x, from.y, to.x, to.y);
-      const trailColor = (ship.fromAgentType ? TRAIL_COLORS[ship.fromAgentType] : undefined) ?? TRAIL_COLOR_DEFAULT;
+      const trailColor = ship.isSkillProbe ? 0x44ddff : ((ship.fromAgentType ? TRAIL_COLORS[ship.fromAgentType] : undefined) ?? TRAIL_COLOR_DEFAULT);
 
       // Static ghost route arc (drawn once)
       const routeG = new Graphics();
@@ -786,7 +846,8 @@ export const Universe: FC<UniverseProps> = ({
       const trailG = new Graphics();
       shipsContainer.addChild(trailG);
 
-      const shipContainer = createShip({
+      const shipFactory = ship.isSkillProbe ? createSkillProbe : createShip;
+      const shipContainer = shipFactory({
         fromAgentId: ship.fromAgentId,
         toAgentId: ship.toAgentId,
         payloadSize: ship.payloadSize ?? 1,
@@ -1201,6 +1262,14 @@ export const Universe: FC<UniverseProps> = ({
             wr.alpha = 0.45 + 0.35 * breathe;
           }
         }
+      }
+
+      // Animate skill orbit rings
+      const skillOrbits = skillOrbitsRef.current;
+      const activeSkillsMap = activeSkillsRef.current;
+      for (const [agentId, orbit] of skillOrbits) {
+        const skill = activeSkillsMap[agentId];
+        updateSkillOrbit(orbit, t, skill?.name ?? null, skill?.index ?? -1);
       }
 
       // Manage + animate moons (subagents) — add/remove only when counts change

@@ -123,6 +123,51 @@ describe('mapCopilotHookToEvent', () => {
     expect(result).not.toBeNull();
     expect((result!.payload as Record<string, unknown>).filePath).toBeUndefined();
   });
+
+  it('detects skill tool invocation with tool_input.name', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: 'skill',
+      tool_input: { name: 'deploy-preview' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.isSkill).toBe(true);
+    expect(result!.payload.skillName).toBe('deploy-preview');
+  });
+
+  it('detects use_skill tool name', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: 'use_skill',
+      tool_input: { skill: 'code-review' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.isSkill).toBe(true);
+    expect(result!.payload.skillName).toBe('code-review');
+  });
+
+  it('sets isSkill without skillName when tool_input is missing', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: 'skill',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.isSkill).toBe(true);
+    expect(result!.payload.skillName).toBeUndefined();
+  });
+
+  it('does not set isSkill for non-skill tools', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: 'run_in_terminal',
+    });
+    expect(result).not.toBeNull();
+    expect((result!.payload as Record<string, unknown>).isSkill).toBeUndefined();
+  });
 });
 
 describe('mapCopilotOutputToEvent (legacy)', () => {

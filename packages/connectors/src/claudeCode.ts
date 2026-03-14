@@ -103,6 +103,23 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     }
   }
 
+  // Extract skill metadata when the Skill tool is invoked
+  if (toolNameStr === 'Skill') {
+    safePayload.isSkill = true;
+    const toolInput = p.tool_input ?? nested?.tool_input;
+    if (toolInput && typeof toolInput === 'object') {
+      const ti = toolInput as Record<string, unknown>;
+      if (typeof ti.skill === 'string') safePayload.skillName = ti.skill.slice(0, 128);
+      if (typeof ti.args === 'string') safePayload.skillArgs = ti.args.slice(0, 128);
+    } else if (typeof toolInput === 'string') {
+      try {
+        const parsed = JSON.parse(toolInput);
+        if (typeof parsed.skill === 'string') safePayload.skillName = parsed.skill.slice(0, 128);
+        if (typeof parsed.args === 'string') safePayload.skillArgs = parsed.args.slice(0, 128);
+      } catch { /* ignore non-JSON */ }
+    }
+  }
+
   return {
     id: nextId(),
     agentId,

@@ -96,7 +96,7 @@ const leftPanelStyle: React.CSSProperties = {
   flex: '0 0 114px',
   width: 114,
   minWidth: 114,
-  height: 128,
+  height: 133,
   background: 'linear-gradient(155deg, #0c1318 0%, #070a0e 100%)',
   border: '2px solid #1c3028',
   boxShadow: [
@@ -115,7 +115,7 @@ const leftPanelStyle: React.CSSProperties = {
 const centerPanelStyle: React.CSSProperties = {
   flex: '1 1 auto',
   minWidth: 0,
-  height: 128,
+  height: 133,
   background: 'linear-gradient(180deg, #050709 0%, #030507 100%)',
   border: '2px solid #162420',
   boxShadow: [
@@ -132,7 +132,7 @@ const centerPanelStyle: React.CSSProperties = {
 const rightPanelStyle: React.CSSProperties = {
   flex: '0 0 180px',
   minWidth: 180,
-  height: 128,
+  height: 133,
   background: 'linear-gradient(155deg, #0c1318 0%, #070a0e 100%)',
   border: '2px solid #1c3028',
   boxShadow: [
@@ -148,7 +148,15 @@ const rightPanelStyle: React.CSSProperties = {
 const LED_ON = '#25904a';
 const LED_DIM = '#154a28';
 
-export const CommandCenter: FC = () => {
+export interface CommandCenterProps {
+  onOpenSkill?: (filePath: string) => void;
+  onCreateSkill?: () => void;
+  onOpenMarketplace?: () => void;
+  onMoveSkill?: (filePath: string, newCategory: string) => void;
+  onDuplicateSkill?: (filePath: string, newName: string) => void;
+}
+
+export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
   const [minimized, setMinimized] = useState(false);
   return (
     <div data-command-center style={outerWrapper}>
@@ -209,7 +217,7 @@ export const CommandCenter: FC = () => {
 
           {/* CENTER — metrics / info */}
           <div style={centerPanelStyle}>
-            <MetricsPanel />
+            <MetricsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />
           </div>
 
           {/* RIGHT — command grid */}

@@ -2,11 +2,31 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [0.0.6] — 2026-03-13
+## [0.0.7] — 2026-03-14
+
+### Added
+- **Skills integration**: full lifecycle management for [Agent Skills](https://agentskills.io) — discover, browse, create, duplicate, move, and organize skills directly from Event Horizon
+- **Skill Discovery**: scans `~/.claude/skills/`, `.claude/skills/`, `~/.claude/commands/`, `~/.config/opencode/skills/`, `~/.copilot/skills/`, and plugin directories. Live file watcher detects changes instantly. Supports both flat (`skills/<name>/`) and categorized (`skills/<category>/<name>/`) layouts
+- **Skills tab** in Command Center: searchable, filterable skill list with scope badges (Personal/Project/Plugin/Legacy), agent type badges (Claude/OC/Copilot), category badges, and a "Universal" gold badge for cross-agent skills. Arrow key navigation, expand to see details, Open in Editor / Move / Duplicate actions
+- **Skill orbit ring**: each planet shows a faint dotted ring with one dot per installed skill. When a skill is actively executing, the corresponding dot pulses bright cyan with a floating `/skill-name` label
+- **Skill fork probe**: when a fork-context skill spawns a subagent, a cyan diamond "probe" ship launches from the planet with a matching cyan trail
+- **Create Skill wizard**: 3-step guided flow (template → configure → preview) with proper SKILL.md frontmatter generation. Templates: Blank, Code Review, Test Runner, Documentation. Category folder combobox with existing categories dropdown + free text for new ones
+- **Duplicate skill**: copy any skill with a new name — the SKILL.md content is cloned with the `name:` field updated
+- **Move skill**: reorganize skills into category folders via inline combobox on skill cards. Empty source folders are auto-cleaned
+- **Skills Marketplace browser**: hybrid approach with 4 pre-populated sources (SkillHub, SkillsMP, Anthropic Official, MCP Market). API marketplaces (SkillHub) support inline search; others open in browser. Add/remove custom marketplace URLs. Marketplace button in command grid
+- **Skill activity in Logs tab**: skill invocations highlighted in cyan with `/skill-name` labels
+- **"Skill Master" achievement**: tiered [1, 5, 10, 25, 50] — tracks unique skills invoked across all agents
+- **"Plugin Collector" achievement**: tiered [1, 5, 10, 25, 50, 100] — tracks unique skills discovered on disk
+- **30 new tests**: SKILL.md generation (14), scope deduplication (8), legacy command parsing (7), path construction (4). Total test count: 143 → 173
+
+## [0.0.6] — 2026-03-14
 
 ### Changed
-- **Claude Code hooks migrated from `command` to `http` type**: hooks now use native HTTP POST (`type: "http"`) instead of shelling out to `curl` (`type: "command"`). Connection failures (e.g. Event Horizon not running) are handled silently by Claude Code — eliminates `UserPromptSubmit hook error` and `Stop hook error` messages. The installer detects and replaces legacy curl-based hooks automatically
+- **Claude Code hooks switched to silent `command` wrapper**: hooks now use `type: "command"` with `curl ... || true` so they exit 0 even when Event Horizon is not running — eliminates `Stop hook error: ECONNREFUSED` and similar messages. The `--connect-timeout 2` flag prevents hanging. Stale hooks (including previous `http` type) are auto-detected and replaced on extension activation
 - Event server returns empty 200 body on `/claude` route to avoid Claude Code misinterpreting response JSON as hook output
+
+### Fixed
+- **Workspace group overlap**: when demo simulation agents shared a workspace name with real agents, the two groups could visually stack on top of each other. Added a group-level repulsion pass in `computePlanetPositions` that detects overlapping cluster centroids and pushes entire groups apart before individual planet repulsion runs
 
 ## [0.0.5] — 2026-03-12
 

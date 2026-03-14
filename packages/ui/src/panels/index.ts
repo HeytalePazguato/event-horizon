@@ -1,3 +1,9 @@
 export { AgentIdentity } from './AgentIdentity.js';
 export { MetricsPanel } from './MetricsPanel.js';
 export { AgentControls } from './AgentControls.js';
+export { SkillsPanel } from './SkillsPanel.js';
+export type { SkillsPanelProps } from './SkillsPanel.js';
+export { CreateSkillWizard } from './CreateSkillWizard.js';
+export type { CreateSkillRequest } from './CreateSkillWizard.js';
+export { MarketplacePanel } from './MarketplacePanel.js';
+export type { MarketplacePanelProps } from './MarketplacePanel.js';
