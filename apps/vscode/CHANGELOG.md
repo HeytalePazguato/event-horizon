@@ -2,6 +2,12 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.0.6] — 2026-03-13
+
+### Changed
+- **Claude Code hooks migrated from `command` to `http` type**: hooks now use native HTTP POST (`type: "http"`) instead of shelling out to `curl` (`type: "command"`). Connection failures (e.g. Event Horizon not running) are handled silently by Claude Code — eliminates `UserPromptSubmit hook error` and `Stop hook error` messages. The installer detects and replaces legacy curl-based hooks automatically
+- Event server returns empty 200 body on `/claude` route to avoid Claude Code misinterpreting response JSON as hook output
+
 ## [0.0.5] — 2026-03-12
 
 ### Added

@@ -212,7 +212,11 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
 
       if (event) {
         cb.onEvent(event);
-        send(200, JSON.stringify({ ok: true }));
+        if (route === '/claude') {
+          send(200, '');
+        } else {
+          send(200, JSON.stringify({ ok: true }));
+        }
       } else {
         send(400, JSON.stringify({ error: 'Could not parse event' }));
       }
