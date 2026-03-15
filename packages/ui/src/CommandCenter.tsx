@@ -97,7 +97,7 @@ const leftPanelStyle: React.CSSProperties = {
   flex: '0 0 114px',
   width: 114,
   minWidth: 114,
-  height: 133,
+  height: 134,
   background: 'linear-gradient(155deg, #0c1318 0%, #070a0e 100%)',
   border: '2px solid #1c3028',
   boxShadow: [
@@ -116,7 +116,7 @@ const leftPanelStyle: React.CSSProperties = {
 const centerPanelStyle: React.CSSProperties = {
   flex: '1 1 auto',
   minWidth: 0,
-  height: 133,
+  height: 134,
   background: 'linear-gradient(180deg, #050709 0%, #030507 100%)',
   border: '2px solid #162420',
   boxShadow: [
@@ -133,7 +133,7 @@ const centerPanelStyle: React.CSSProperties = {
 const rightPanelStyle: React.CSSProperties = {
   flex: '0 0 180px',
   minWidth: 180,
-  height: 133,
+  height: 134,
   background: 'linear-gradient(155deg, #0c1318 0%, #070a0e 100%)',
   border: '2px solid #1c3028',
   boxShadow: [

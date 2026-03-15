@@ -33,7 +33,7 @@ function getAgentTypeColor(agentType: string): string {
 
 const AGENT_TYPE_LABELS: Record<string, string> = {
   'claude-code': 'Claude',
-  'opencode':    'OC',
+  'opencode':    'OpenCode',
   'copilot':     'Copilot',
 };
 
@@ -205,23 +205,6 @@ const SkillCard: FC<{
             {AGENT_TYPE_LABELS[at] ?? at}
           </span>
         ))}
-        {/* Universal compatibility badge — skill works across all agent types */}
-        {skill.agentTypes.includes('claude-code') &&
-         skill.agentTypes.includes('opencode') &&
-         skill.agentTypes.includes('copilot') && (
-          <span style={{
-            fontSize: 7,
-            padding: '1px 3px',
-            background: 'rgba(212,168,68,0.15)',
-            border: '1px solid rgba(212,168,68,0.4)',
-            color: '#d4a844',
-            borderRadius: 2,
-            letterSpacing: '0.03em',
-            fontWeight: 600,
-          }}>
-            &#x1F310; Universal
-          </span>
-        )}
         {skill.userInvocable && (
           <span title="User-invocable" style={{ fontSize: 9, color: '#d4c44a' }}>&#x26A1;</span>
         )}
@@ -415,12 +398,11 @@ export interface SkillsPanelProps {
 
 export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
   const skills = useCommandCenterStore((s) => s.skills);
-  const selectedAgentType = useCommandCenterStore((s) => s.selectedAgent?.type ?? null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [scopeFilter, setScopeFilter] = useState<string | null>(null);
-  const [agentTypeFilter, setAgentTypeFilter] = useState<string | null>(null);
+  const [activeAgentFilters, setActiveAgentFilters] = useState<Set<string>>(new Set(['claude-code', 'opencode', 'copilot']));
 
   // Debounce search input by 150ms
   useEffect(() => {
@@ -428,12 +410,20 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
     return () => clearTimeout(timer);
   }, [search]);
 
-  // When a planet is selected, default to filtering by its agent type
-  const effectiveAgentTypeFilter = agentTypeFilter ?? selectedAgentType;
+  const toggleAgentFilter = (at: string) => {
+    setActiveAgentFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(at)) next.delete(at);
+      else next.add(at);
+      return next;
+    });
+  };
 
   const filtered = skills.filter((s) => {
     if (scopeFilter && s.scope !== scopeFilter) return false;
-    if (effectiveAgentTypeFilter && !s.agentTypes.includes(effectiveAgentTypeFilter as 'claude-code' | 'opencode' | 'copilot')) return false;
+    // Skill must be compatible with at least one active agent type
+    if (activeAgentFilters.size === 0) return false;
+    if (!s.agentTypes.some((at) => activeAgentFilters.has(at))) return false;
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase();
       return s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
@@ -554,17 +544,17 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
           </button>
         ))}
       </div>
-      {/* Agent type filters */}
+      {/* Agent type filters (multi-select toggle) */}
       <div style={{ display: 'flex', gap: 3, marginBottom: 4, alignItems: 'center' }}>
         <span style={{ fontSize: 7, color: '#5a6a62', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Agent:</span>
         {(['claude-code', 'opencode', 'copilot'] as const).map((at) => {
-          const active = effectiveAgentTypeFilter === at;
+          const active = activeAgentFilters.has(at);
           const color = getAgentTypeColor(at);
           return (
             <button
               key={at}
               type="button"
-              onClick={() => setAgentTypeFilter(effectiveAgentTypeFilter === at ? null : at)}
+              onClick={() => toggleAgentFilter(at)}
               style={{
                 padding: '1px 5px',
                 fontSize: 7,
@@ -579,22 +569,6 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
             </button>
           );
         })}
-        {effectiveAgentTypeFilter && (
-          <button
-            type="button"
-            onClick={() => setAgentTypeFilter(null)}
-            style={{
-              padding: '1px 4px',
-              fontSize: 7,
-              border: '1px solid #2a4a3a',
-              background: 'transparent',
-              color: '#6a7a72',
-              cursor: 'pointer',
-            }}
-          >
-            ✕
-          </button>
-        )}
       </div>
       {/* Skill list */}
       <div style={{ maxHeight: 85, overflowY: 'auto' }}>

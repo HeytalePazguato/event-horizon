@@ -248,11 +248,8 @@ function App() {
         const data = msg as unknown as { skills: SkillInfo[] };
         const newSkills = data.skills ?? [];
         useCommandCenterStore.getState().setSkills(newSkills);
-        // Set absolute count of discovered skills for plugin_collector achievement
-        // (idempotent — only toasts when a new tier threshold is crossed)
-        if (newSkills.length > 0) {
-          useCommandCenterStore.getState().setTieredAchievementCount('plugin_collector', newSkills.length);
-        }
+        // Recalibrate plugin_collector to actual skill count (corrects inflated persisted values)
+        useCommandCenterStore.getState().recalibrateTieredAchievement('plugin_collector', newSkills.length);
         return;
       }
 

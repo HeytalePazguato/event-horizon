@@ -158,7 +158,7 @@ export const AchievementToasts: FC = () => {
       style={{
         position: 'fixed',
         right: 12,
-        bottom: 290,
+        bottom: 292,
         zIndex: 200,
         display: 'flex',
         flexDirection: 'column-reverse',

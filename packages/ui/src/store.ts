@@ -217,6 +217,8 @@ export interface CommandCenterState {
   incrementTieredAchievement: (id: string) => void;
   /** Set the absolute count for a tiered achievement (idempotent — only toasts on tier upgrade). */
   setTieredAchievementCount: (id: string, count: number) => void;
+  /** Recalibrate a tiered achievement to the correct count (allows downward correction, no toast). */
+  recalibrateTieredAchievement: (id: string, count: number) => void;
   /** Remove a toast by instanceId (called when the animation finishes). */
   dismissToast: (instanceId: string) => void;
   toggleConnect: () => void;
@@ -450,6 +452,34 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
       }
       const instanceId = `${id}-t${newTier}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       updates.activeToasts = [...state.activeToasts, { instanceId, achievementId: id }];
+    }
+    set(updates);
+  },
+
+  recalibrateTieredAchievement: (id, count) => {
+    const tiers = TIERED_THRESHOLDS[id];
+    if (!tiers) return;
+    // Compute the correct tier for this count
+    let correctTier = -1;
+    for (let i = 0; i < tiers.length; i++) {
+      if (count >= tiers[i]) correctTier = i;
+      else break;
+    }
+    const state = get();
+    const oldCount = state.achievementCounts[id] ?? 0;
+    const oldTier = state.achievementTiers[id] ?? -1;
+    if (count === oldCount && correctTier === oldTier) return; // already correct
+    const updates: Partial<CommandCenterState> = {
+      achievementCounts: { ...state.achievementCounts, [id]: count },
+      achievementTiers: { ...state.achievementTiers, [id]: correctTier },
+    };
+    // If count dropped below tier 0 threshold, remove from unlocked
+    if (correctTier < 0 && state.unlockedAchievements.includes(id)) {
+      updates.unlockedAchievements = state.unlockedAchievements.filter((a) => a !== id);
+    }
+    // If count reached tier 0+ but wasn't unlocked, add it
+    if (correctTier >= 0 && !state.unlockedAchievements.includes(id)) {
+      updates.unlockedAchievements = [...state.unlockedAchievements, id];
     }
     set(updates);
   },

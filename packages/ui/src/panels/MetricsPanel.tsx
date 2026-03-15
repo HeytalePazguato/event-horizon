@@ -4,7 +4,8 @@
  */
 
 import type { FC } from 'react';
-import { useState, useRef, useCallback } from 'react';
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useCommandCenterStore } from '../store.js';
 import type { LogEntry, SingularityStats } from '../store.js';
 import { ACHIEVEMENTS, getMedal, TIER_LABELS, tierBorderColor } from '../achievements/index.js';
@@ -35,31 +36,62 @@ const LogsView: FC<{ entries: LogEntry[] }> = ({ entries }) => (
   </div>
 );
 
+// ── Medal tooltip (portal, same pattern as CmdTooltip in AgentControls) ──────
+
+const MedalTooltip: FC<{ ach: typeof ACHIEVEMENTS[number]; unlocked: boolean; tier?: number; count?: number }> = ({ ach, unlocked, tier, count }) =>
+  createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 212,
+        right: 12,
+        width: 172,
+        background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+        border: '1px solid #2a5a3c',
+        boxShadow: '0 -4px 16px rgba(0,0,0,0.75)',
+        padding: '7px 9px',
+        fontFamily: 'Consolas, monospace',
+        zIndex: 9999,
+        pointerEvents: 'none',
+        clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em', marginBottom: 4 }}>
+        {ach.name}
+        {unlocked && ach.tiers && tier != null ? ` ${TIER_LABELS[tier]}` : ''}
+        {unlocked && ach.tiers && count != null ? (
+          <span style={{ color: '#4a7a58', fontWeight: 400, fontSize: 9 }}>
+            {' '}({count}{tier != null && tier < ach.tiers.length - 1 ? ` / ${ach.tiers[tier + 1]}` : ''})
+          </span>
+        ) : null}
+      </div>
+      <div style={{ fontSize: 9, color: '#4a7a58', lineHeight: 1.5 }}>
+        {unlocked ? ach.desc : (ach.secret ? 'Figure this one out yourself\u2026' : ach.desc)}
+      </div>
+    </div>,
+    document.body
+  );
+
 const MedalsView: FC = () => {
   const unlockedIds = useCommandCenterStore((s) => s.unlockedAchievements);
   const achievementTiers = useCommandCenterStore((s) => s.achievementTiers);
   const achievementCounts = useCommandCenterStore((s) => s.achievementCounts);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const unlockedSet = new Set(unlockedIds);
   const hovered = hoveredId ? ACHIEVEMENTS.find((a) => a.id === hoveredId) : null;
-  const isHoveredUnlocked = hoveredId ? unlockedSet.has(hoveredId) : false;
-  const hoveredTier = hoveredId ? achievementTiers[hoveredId] : undefined;
-  const hoveredCount = hoveredId ? achievementCounts[hoveredId] : undefined;
-
-  const handleMouseEnter = useCallback((id: string, e: React.MouseEvent) => {
-    setHoveredId(id);
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) {
-      setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-    }
-  }, []);
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, overflowY: 'auto', maxHeight: 90 }}>
+    <>
+      {hovered && (
+        <MedalTooltip
+          ach={hovered}
+          unlocked={unlockedSet.has(hovered.id)}
+          tier={achievementTiers[hovered.id]}
+          count={achievementCounts[hovered.id]}
+        />
+      )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, overflowY: 'auto', maxHeight: 110 }}>
         {ACHIEVEMENTS.map((ach) => {
           const unlocked = unlockedSet.has(ach.id);
           const tier = achievementTiers[ach.id];
@@ -67,7 +99,7 @@ const MedalsView: FC = () => {
           return (
             <div
               key={ach.id}
-              onMouseEnter={(e) => handleMouseEnter(ach.id, e)}
+              onMouseEnter={() => setHoveredId(ach.id)}
               onMouseLeave={() => setHoveredId(null)}
               style={{
                 cursor: 'default',
@@ -81,8 +113,8 @@ const MedalsView: FC = () => {
               {unlocked && ach.tiers && tier != null && (
                 <span style={{
                   position: 'absolute',
-                  bottom: -3,
-                  right: -3,
+                  bottom: 0,
+                  right: 0,
                   fontSize: 8,
                   fontWeight: 700,
                   color: '#fff',
@@ -99,42 +131,7 @@ const MedalsView: FC = () => {
           );
         })}
       </div>
-      {/* Floating tooltip */}
-      {hovered && (
-        <div style={{
-          position: 'absolute',
-          left: Math.min(tooltipPos.x, 160),
-          bottom: '100%',
-          marginBottom: 4,
-          padding: '4px 8px',
-          background: 'rgba(6,12,8,0.95)',
-          border: '1px solid #2a4a3a',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.7)',
-          fontSize: 9,
-          color: '#a0d090',
-          fontWeight: 600,
-          letterSpacing: '0.04em',
-          whiteSpace: 'nowrap',
-          pointerEvents: 'none',
-          zIndex: 10,
-        }}>
-          <div>
-            {hovered.name}
-            {isHoveredUnlocked && hovered.tiers && hoveredTier != null ? ` ${TIER_LABELS[hoveredTier]}` : ''}
-            {isHoveredUnlocked && hovered.tiers && hoveredCount != null ? (
-              <span style={{ color: '#6a8a72', fontWeight: 400 }}>
-                {' '}({hoveredCount}{hoveredTier != null && hoveredTier < hovered.tiers.length - 1 ? ` / ${hovered.tiers[hoveredTier + 1]}` : ''})
-              </span>
-            ) : null}
-          </div>
-          {!isHoveredUnlocked && (
-            <div style={{ color: '#4a6a5a', fontWeight: 400, fontStyle: 'italic', marginTop: 1 }}>
-              {hovered.secret ? 'Figure this one out yourself\u2026' : hovered.desc}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    </>
   );
 };
 
