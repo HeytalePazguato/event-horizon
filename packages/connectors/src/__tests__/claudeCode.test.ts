@@ -176,7 +176,7 @@ describe('mapClaudeHookToEvent', () => {
     expect(p.costUsd).toBe(1.23);
   });
 
-  it('does not extract transcript_path from non-Stop events', () => {
+  it('extracts transcript_path from any hook event (not just Stop)', () => {
     const result = mapClaudeHookToEvent({
       hook_event_name: 'PreToolUse',
       session_id: 's1',
@@ -185,7 +185,7 @@ describe('mapClaudeHookToEvent', () => {
     });
     expect(result).not.toBeNull();
     const p = result!.payload as Record<string, unknown>;
-    expect(p.transcriptPath).toBeUndefined();
+    expect(p.transcriptPath).toBe('/some/path.jsonl');
   });
 
   it('does not set isSkill for non-Skill tools', () => {

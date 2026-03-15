@@ -15,7 +15,7 @@ import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks'
 import { setupCopilotHooks, hasStaleCopilotHooks } from './setupCopilotHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
-import { parseTranscriptUsage } from './transcriptParser';
+import { TranscriptWatcher } from './transcriptWatcher';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 const webviewViewRef: { current: vscode.WebviewView | null } = { current: null };
@@ -95,6 +95,23 @@ export function activate(context: vscode.ExtensionContext): void {
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
 
+  // ── Claude Code transcript watchers (per session) ──────────────────────────
+  // Maps session ID → active TranscriptWatcher. Watchers provide richer events
+  // than hooks alone (waiting ring, token usage, tool details from JSONL).
+  const transcriptWatchers = new Map<string, TranscriptWatcher>();
+
+  /** Events from transcript watcher bypass hooks — route directly to webview. */
+  function onTranscriptEvent(event: AgentEvent): void {
+    // Skip if hooks already emitted this type for this agent recently
+    // (transcript events carry fromTranscript=true in payload)
+    metricsEngine.process(event);
+    agentStateManager.apply(event);
+    if (webviewRef.current) {
+      webviewRef.current.postMessage({ type: 'event', payload: event });
+    }
+    updateBadge(agentStateManager);
+  }
+
   // ── Copilot subagent session tracking ──────────────────────────────────────
   // Copilot SubagentStart/SubagentStop use the subagent's session_id, not the
   // parent's. We remap subagent events to the parent so they appear as moons
@@ -108,6 +125,23 @@ export function activate(context: vscode.ExtensionContext): void {
       const primaryFolder = vscode.workspace.workspaceFolders?.[0];
       if (primaryFolder) {
         event = { ...event, payload: { ...event.payload, cwd: primaryFolder.uri.fsPath } };
+      }
+    }
+
+    // When a transcript watcher is active for this Claude Code agent, skip hook
+    // events that the watcher covers with better accuracy. Hooks still handle:
+    // - agent.spawn / agent.terminate (session lifecycle)
+    // - Events for non-Claude agents (Copilot, OpenCode)
+    // - The initial Stop event that triggers watcher creation
+    if (event.agentType === 'claude-code' && !event.payload?.fromTranscript) {
+      const hasWatcher = transcriptWatchers.has(event.agentId);
+      if (hasWatcher) {
+        const hookOnlyTypes: Set<string> = new Set(['agent.spawn', 'agent.terminate']);
+        // Let transcript_path-carrying events through (they start the watcher)
+        const hasTranscriptPath = !!(event.payload?.transcriptPath);
+        if (!hookOnlyTypes.has(event.type) && !hasTranscriptPath) {
+          return; // Transcript watcher handles this event type
+        }
       }
     }
 
@@ -141,28 +175,32 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewRef.current.postMessage({ type: 'event', payload: event });
     }
 
-    // Parse transcript for token/cost data after Stop events from Claude Code
+    // Start transcript watcher for Claude Code agents when we first see a transcript path.
+    // The watcher provides richer events (waiting ring, per-turn tokens, tool details)
+    // and serves as the primary event source; hooks remain as fallback.
     const transcriptPath = event.payload?.transcriptPath as string | undefined;
-    if (transcriptPath && event.agentType === 'claude-code' && !event.payload?.inputTokens) {
-      parseTranscriptUsage(transcriptPath).then((usage) => {
-        if (!usage || !webviewRef.current) return;
-        // Send a synthetic metrics-update event with token/cost data
-        const tokenEvent: AgentEvent = {
-          id: `ev-tokens-${Date.now()}`,
-          agentId: event.agentId,
-          agentName: event.agentName,
-          agentType: event.agentType,
-          type: 'message.receive',
-          timestamp: Date.now(),
-          payload: {
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            costUsd: usage.costUsd ?? 0,
-          },
-        };
-        metricsEngine.process(tokenEvent);
-        webviewRef.current.postMessage({ type: 'event', payload: tokenEvent });
-      }).catch(() => { /* ignore parse errors */ });
+    if (transcriptPath && event.agentType === 'claude-code') {
+      const sessionId = event.agentId;
+      if (!transcriptWatchers.has(sessionId)) {
+        const watcher = new TranscriptWatcher(
+          transcriptPath,
+          event.agentId,
+          event.agentName,
+          sessionId,
+          { onEvent: onTranscriptEvent },
+        );
+        transcriptWatchers.set(sessionId, watcher);
+        watcher.start().catch(() => { /* fallback to hooks */ });
+      }
+    }
+
+    // Clean up transcript watcher when agent terminates
+    if (event.type === 'agent.terminate') {
+      const watcher = transcriptWatchers.get(event.agentId);
+      if (watcher) {
+        watcher.destroy();
+        transcriptWatchers.delete(event.agentId);
+      }
     }
 
     // Update sidebar badge with active agent count
@@ -331,6 +369,9 @@ export function activate(context: vscode.ExtensionContext): void {
       if (cooperationTimer) clearTimeout(cooperationTimer);
       unsubscribeEventBus();
       stopEventServer();
+      // Clean up all transcript watchers
+      for (const w of transcriptWatchers.values()) w.destroy();
+      transcriptWatchers.clear();
       webviewRef.current = null;
     },
   });

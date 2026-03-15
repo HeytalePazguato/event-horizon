@@ -87,12 +87,14 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     if (nested.cwd) safePayload.cwd = String(nested.cwd).slice(0, 512);
   }
 
-  // Pass transcript_path for Stop events — the extension host will parse
-  // the transcript JSONL to extract token usage and cost data.
+  // Pass transcript_path — the extension host uses it to start a transcript
+  // watcher for richer events (waiting ring, per-turn tokens, tool details).
+  // Available on SessionStart, Stop, and potentially other hooks.
+  const tp = p.transcript_path ?? nested?.transcript_path;
+  if (typeof tp === 'string') safePayload.transcriptPath = tp.slice(0, 1024);
+
+  // Forward any direct cost/usage fields if the hook includes them (forward-compat)
   if (hookEvent === 'Stop') {
-    const tp = p.transcript_path ?? nested?.transcript_path;
-    if (typeof tp === 'string') safePayload.transcriptPath = tp.slice(0, 1024);
-    // Forward any direct cost/usage fields if the hook ever includes them
     if (typeof p.total_cost_usd === 'number') safePayload.costUsd = p.total_cost_usd;
     const usage = (p.usage as Record<string, unknown> | undefined);
     if (usage) {
