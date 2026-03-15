@@ -4,7 +4,7 @@
  */
 
 import type { FC } from 'react';
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 
 export interface SparklineProps {
   /** Raw event timestamps (ms) — will be bucketed into 1-minute bins. */
@@ -40,7 +40,13 @@ export const Sparkline: FC<SparklineProps> = ({
   height = 24,
   color = '#4a8a5a',
 }) => {
-  const bins = useMemo(() => bucketize(timestamps, Date.now()), [timestamps]);
+  // Tick every 10s so buckets stay fresh as time passes
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 10_000);
+    return () => clearInterval(id);
+  }, []);
+  const bins = useMemo(() => bucketize(timestamps, Date.now()), [timestamps, tick]);
   const max = Math.max(...bins, 1);
   const padY = 2;
   const padX = 1;

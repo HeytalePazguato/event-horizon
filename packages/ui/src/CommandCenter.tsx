@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { AgentIdentity } from './panels/AgentIdentity.js';
 import { MetricsPanel } from './panels/MetricsPanel.js';
 import { AgentControls } from './panels/AgentControls.js';
+import { useCommandCenterStore } from './store.js';
 
 const CHAMFER = 28;
 const STEP = 28; // how far the center dips below the side wings (128 − 108)
@@ -126,7 +127,7 @@ const centerPanelStyle: React.CSSProperties = {
   fontFamily: 'Consolas, monospace',
   fontSize: 11,
   color: '#90b088',
-  overflowY: 'auto',
+  overflow: 'hidden',
 };
 
 const rightPanelStyle: React.CSSProperties = {
@@ -158,6 +159,7 @@ export interface CommandCenterProps {
 
 export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
   const [minimized, setMinimized] = useState(false);
+  const toggleSettings = useCommandCenterStore((s) => s.toggleSettings);
   return (
     <div data-command-center style={outerWrapper}>
       <div style={{ ...wrapper, minHeight: minimized ? 38 : undefined }}>
@@ -183,10 +185,31 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
         </div>
         <button
           type="button"
+          onClick={toggleSettings}
+          aria-label="Settings"
+          style={{
+            marginLeft: 'auto',
+            width: 20,
+            height: 16,
+            padding: 0,
+            border: '1px solid #1e4030',
+            background: 'rgba(12,28,20,0.95)',
+            color: '#3a8055',
+            fontSize: 10,
+            cursor: 'pointer',
+            lineHeight: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          &#x2699;
+        </button>
+        <button
+          type="button"
           onClick={() => setMinimized((m) => !m)}
           aria-label={minimized ? 'Expand' : 'Minimize'}
           style={{
-            marginLeft: 'auto',
             width: 20,
             height: 16,
             padding: 0,

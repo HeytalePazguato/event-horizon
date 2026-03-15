@@ -4,15 +4,11 @@
  */
 
 import type { FC } from 'react';
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import type { LogEntry, SingularityStats } from '../store.js';
-import { Sparkline } from '../Sparkline.js';
 import { ACHIEVEMENTS, getMedal, TIER_LABELS, tierBorderColor } from '../achievements/index.js';
 import { SkillsPanel } from './SkillsPanel.js';
-
-/** Stable empty array to avoid new-reference re-renders in Zustand selectors. */
-const EMPTY_TS: number[] = [];
 
 /** Renders a medal by achievement ID. */
 const MedalById: FC<{ id: string; size?: number }> = ({ id, size }) => {
@@ -44,6 +40,8 @@ const MedalsView: FC = () => {
   const achievementTiers = useCommandCenterStore((s) => s.achievementTiers);
   const achievementCounts = useCommandCenterStore((s) => s.achievementCounts);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const unlockedSet = new Set(unlockedIds);
   const hovered = hoveredId ? ACHIEVEMENTS.find((a) => a.id === hoveredId) : null;
@@ -51,9 +49,17 @@ const MedalsView: FC = () => {
   const hoveredTier = hoveredId ? achievementTiers[hoveredId] : undefined;
   const hoveredCount = hoveredId ? achievementCounts[hoveredId] : undefined;
 
+  const handleMouseEnter = useCallback((id: string, e: React.MouseEvent) => {
+    setHoveredId(id);
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    }
+  }, []);
+
   return (
-    <div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+    <div ref={containerRef} style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, overflowY: 'auto', maxHeight: 90 }}>
         {ACHIEVEMENTS.map((ach) => {
           const unlocked = unlockedSet.has(ach.id);
           const tier = achievementTiers[ach.id];
@@ -61,7 +67,7 @@ const MedalsView: FC = () => {
           return (
             <div
               key={ach.id}
-              onMouseEnter={() => setHoveredId(ach.id)}
+              onMouseEnter={(e) => handleMouseEnter(ach.id, e)}
               onMouseLeave={() => setHoveredId(null)}
               style={{
                 cursor: 'default',
@@ -93,26 +99,41 @@ const MedalsView: FC = () => {
           );
         })}
       </div>
-      <div style={{ minHeight: 22, marginTop: 4, fontSize: 9, color: '#a0d090', fontWeight: 600, letterSpacing: '0.04em' }}>
-        {hovered ? (
-          <>
-            <div>
-              {hovered.name}
-              {isHoveredUnlocked && hovered.tiers && hoveredTier != null ? ` ${TIER_LABELS[hoveredTier]}` : ''}
-              {isHoveredUnlocked && hovered.tiers && hoveredCount != null ? (
-                <span style={{ color: '#6a8a72', fontWeight: 400 }}>
-                  {' '}({hoveredCount}{hoveredTier != null && hoveredTier < hovered.tiers.length - 1 ? ` / ${hovered.tiers[hoveredTier + 1]}` : ''})
-                </span>
-              ) : null}
+      {/* Floating tooltip */}
+      {hovered && (
+        <div style={{
+          position: 'absolute',
+          left: Math.min(tooltipPos.x, 160),
+          bottom: '100%',
+          marginBottom: 4,
+          padding: '4px 8px',
+          background: 'rgba(6,12,8,0.95)',
+          border: '1px solid #2a4a3a',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.7)',
+          fontSize: 9,
+          color: '#a0d090',
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+          zIndex: 10,
+        }}>
+          <div>
+            {hovered.name}
+            {isHoveredUnlocked && hovered.tiers && hoveredTier != null ? ` ${TIER_LABELS[hoveredTier]}` : ''}
+            {isHoveredUnlocked && hovered.tiers && hoveredCount != null ? (
+              <span style={{ color: '#6a8a72', fontWeight: 400 }}>
+                {' '}({hoveredCount}{hoveredTier != null && hoveredTier < hovered.tiers.length - 1 ? ` / ${hovered.tiers[hoveredTier + 1]}` : ''})
+              </span>
+            ) : null}
+          </div>
+          {!isHoveredUnlocked && (
+            <div style={{ color: '#4a6a5a', fontWeight: 400, fontStyle: 'italic', marginTop: 1 }}>
+              {hovered.secret ? 'Figure this one out yourself\u2026' : hovered.desc}
             </div>
-            {!isHoveredUnlocked && (
-              <div style={{ color: '#4a6a5a', fontWeight: 400, fontStyle: 'italic', marginTop: 1 }}>
-                {hovered.secret ? 'Figure this one out yourself…' : hovered.desc}
-              </div>
-            )}
-          </>
-        ) : ''}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -235,10 +256,6 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
   const allLogs         = useCommandCenterStore((s) => s.logs);
   const unlockedCount   = useCommandCenterStore((s) => s.unlockedAchievements.length);
   const skillsCount     = useCommandCenterStore((s) => s.skills.length);
-  const sparklineTs     = useCommandCenterStore((s) => {
-    const key = selectedAgentId ?? '__global__';
-    return s.eventTimestamps[key] ?? EMPTY_TS;
-  });
   const [view, setView] = useState<View>('info');
 
   const effectiveView: View = logsOpen ? 'logs' : view;
@@ -252,7 +269,7 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
     : allLogs;
 
   const tabs = (
-    <div style={{ display: 'flex', marginBottom: 4, gap: 4 }}>
+    <div style={{ display: 'flex', marginBottom: 4, gap: 4, flexShrink: 0 }}>
       <button type="button" style={tabStyle(effectiveView === 'info')} onClick={() => setEffectiveView('info')}>Info</button>
       <button type="button" style={tabStyle(effectiveView === 'logs')} onClick={() => setEffectiveView('logs')}>
         Logs{(effectiveView === 'logs' ? agentLogs : allLogs).length > 0 ? ` (${(effectiveView === 'logs' ? agentLogs : allLogs).length})` : ''}
@@ -273,27 +290,14 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
         {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
         {effectiveView === 'medals' && <MedalsView />}
         {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
+
         {effectiveView === 'info' && singularitySelected && (
-          <>
-            <SingularityView stats={singularityStats} />
-            <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ ...labelStyle, marginBottom: 0 }}>Activity</span>
-              <Sparkline timestamps={sparklineTs} color="#d4844a" />
-            </div>
-          </>
+          <SingularityView stats={singularityStats} />
         )}
         {effectiveView === 'info' && !singularitySelected && (
-          <>
-            <div style={{ color: '#4a5a52', fontSize: 11, padding: 8, border: '1px dashed #2a4a3a' }}>
-              Select an agent
-            </div>
-            {sparklineTs.length > 0 && (
-              <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ ...labelStyle, marginBottom: 0 }}>Activity</span>
-                <Sparkline timestamps={sparklineTs} color="#4a8a5a" />
-              </div>
-            )}
-          </>
+          <div style={{ color: '#4a5a52', fontSize: 11, padding: 8, border: '1px dashed #2a4a3a' }}>
+            Select an agent
+          </div>
         )}
       </div>
     );
@@ -315,54 +319,48 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
       {effectiveView === 'medals' && <MedalsView />}
       {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
       {effectiveView === 'info' && (
-        <>
-          <div style={gridStyle}>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Load</div>
-              <div style={valStyle}>{loadPct}%</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Tools</div>
-              <div style={valStyle}>{m.toolCalls}</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Prompts</div>
-              <div style={valStyle}>{m.promptsSubmitted}</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Errors</div>
-              <div style={m.errorCount > 0 ? errStyle : valStyle}>{m.errorCount}</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Success</div>
-              <div style={valStyle}>{successRate}%</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Agents</div>
-              <div style={valStyle}>{m.activeSubagents}/{m.subagentSpawns}</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Tasks</div>
-              <div style={valStyle}>{m.activeTasks}</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Top Tool</div>
-              <div style={{ ...valStyle, fontSize: 8 }}>{top}</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Uptime</div>
-              <div style={valStyle}>{uptime}</div>
-            </div>
-            <div style={cellStyle}>
-              <div style={labelStyle}>Last Act</div>
-              <div style={valStyle}>{lastActive}</div>
-            </div>
+        <div style={gridStyle}>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Load</div>
+            <div style={valStyle}>{loadPct}%</div>
           </div>
-          <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ ...labelStyle, marginBottom: 0 }}>Activity</span>
-            <Sparkline timestamps={sparklineTs} color="#4a8a5a" />
+          <div style={cellStyle}>
+            <div style={labelStyle}>Tools</div>
+            <div style={valStyle}>{m.toolCalls}</div>
           </div>
-        </>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Prompts</div>
+            <div style={valStyle}>{m.promptsSubmitted}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Errors</div>
+            <div style={m.errorCount > 0 ? errStyle : valStyle}>{m.errorCount}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Success</div>
+            <div style={valStyle}>{successRate}%</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Agents</div>
+            <div style={valStyle}>{m.activeSubagents}/{m.subagentSpawns}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Tasks</div>
+            <div style={valStyle}>{m.activeTasks}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Top Tool</div>
+            <div style={{ ...valStyle, fontSize: 8 }}>{top}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Uptime</div>
+            <div style={valStyle}>{uptime}</div>
+          </div>
+          <div style={cellStyle}>
+            <div style={labelStyle}>Last Act</div>
+            <div style={valStyle}>{lastActive}</div>
+          </div>
+        </div>
       )}
     </div>
   );

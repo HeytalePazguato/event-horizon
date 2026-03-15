@@ -53,6 +53,10 @@ export interface UniverseProps {
   height?: number;
   agents?: AgentView[];
   metrics?: Record<string, MetricsView>;
+  /** Per-agent-type visual overrides (colors, sizes) from settings. */
+  visualSettings?: Record<string, { color: string; sizeMult: number }>;
+  /** Animation speed multiplier (0.25 – 3.0). 1.0 = normal. */
+  animationSpeed?: number;
   ships?: ShipSpawn[];
   sparks?: SparkSpawn[];
   agentStates?: Record<string, string>;
@@ -251,6 +255,8 @@ export const Universe: FC<UniverseProps> = ({
   height = INITIAL_H,
   agents = [],
   metrics = {},
+  visualSettings,
+  animationSpeed = 1.0,
   ships = [],
   sparks = [],
   agentStates = {},
@@ -349,6 +355,9 @@ export const Universe: FC<UniverseProps> = ({
   const spiralContainerRef = useRef<Container | null>(null);
   const prevAgentsRef = useRef<AgentView[]>([]);
   const planetMapRef = useRef<Map<string, ExtendedPlanet>>(new Map());
+  const visualSettingsRef = useRef(visualSettings);
+  const settingsRevRef = useRef(0);
+  const animationSpeedRef = useRef(animationSpeed);
   const beltsContainerRef = useRef<Container | null>(null);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
   const skillOrbitsRef = useRef<Map<string, ExtendedSkillOrbit>>(new Map());
@@ -414,6 +423,14 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
   useEffect(() => { agentSkillCountsRef.current = agentSkillCounts; }, [agentSkillCounts]);
   useEffect(() => { activeSkillsRef.current = activeSkills; }, [activeSkills]);
+  useEffect(() => {
+    if (visualSettingsRef.current !== visualSettings) {
+      visualSettingsRef.current = visualSettings;
+      // Bump revision so the ticker recreates planets with new overrides
+      settingsRevRef.current++;
+    }
+  }, [visualSettings]);
+  useEffect(() => { animationSpeedRef.current = animationSpeed; }, [animationSpeed]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
   useEffect(() => { sparksRef.current = sparks; }, [sparks]);
@@ -680,6 +697,16 @@ export const Universe: FC<UniverseProps> = ({
     const currentIds = new Set(agents.map((a) => a.id));
     const planetMap = planetMapRef.current;
 
+    // 0. If visual settings changed, destroy all planets to recreate with new overrides
+    if ((planetsContainer as unknown as { __settingsRev?: number }).__settingsRev !== settingsRevRef.current) {
+      (planetsContainer as unknown as { __settingsRev?: number }).__settingsRev = settingsRevRef.current;
+      for (const [id, planet] of planetMap) {
+        planetsContainer.removeChild(planet);
+        planet.destroy({ children: true });
+        planetMap.delete(id);
+      }
+    }
+
     // 1. Spiral-out removed agents
     for (const [id, planet] of planetMap) {
       if (!currentIds.has(id)) {
@@ -727,7 +754,8 @@ export const Universe: FC<UniverseProps> = ({
 
       let planet = planetMap.get(agent.id);
       if (!planet) {
-        // New planet
+        // New planet — apply visual settings overrides if available
+        const vs = visualSettingsRef.current?.[agent.agentType ?? 'unknown'];
         planet = createPlanet({
           agentId: agent.id,
           x: pos.x,
@@ -735,6 +763,8 @@ export const Universe: FC<UniverseProps> = ({
           size,
           brightness: 0.3 + load * 0.7,
           agentType: agent.agentType,
+          ringColorOverride: vs ? parseInt(vs.color.slice(1), 16) : undefined,
+          sizeMultOverride: vs?.sizeMult,
         });
 
         // Name label beneath planet (+ folder name on second line)
@@ -817,7 +847,7 @@ export const Universe: FC<UniverseProps> = ({
     planetPositionsRef.current = posMap;
     prevAgentsRef.current = agents;
   // metrics intentionally excluded — read via metricsRef to avoid recreating planets on every update
-  }, [agents, selectedAgentId]);
+  }, [agents, selectedAgentId, visualSettings]);
 
   // --- ships ---------------------------------------------------------------
   useEffect(() => {
@@ -1156,7 +1186,7 @@ export const Universe: FC<UniverseProps> = ({
       if (!world || !planetsContainer) return;
       const rawDt = app.ticker.deltaMS / 1000;
       // Cap delta to prevent animation bursts after the panel was hidden
-      const dt = Math.min(rawDt, 0.1);
+      const dt = Math.min(rawDt, 0.1) * animationSpeedRef.current;
 
       // If we were hidden for a long time, flush accumulated shooting stars
       if (rawDt > 1) {

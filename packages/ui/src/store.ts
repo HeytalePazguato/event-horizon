@@ -52,6 +52,25 @@ export interface MarketplaceSkillResult {
   source: string;
 }
 
+export interface AgentVisualConfig {
+  /** Hex color string for thinking ring and UI badges (e.g. '#88aaff'). */
+  color: string;
+  /** Size multiplier (0.4 – 2.0). Applied to base planet radius. */
+  sizeMult: number;
+}
+
+export type VisualAgentType = 'claude-code' | 'copilot' | 'opencode' | 'cursor' | 'unknown';
+
+export type VisualSettings = Record<VisualAgentType, AgentVisualConfig>;
+
+export const DEFAULT_VISUAL_SETTINGS: VisualSettings = {
+  'claude-code': { color: '#88aaff', sizeMult: 1.35 },
+  'copilot':     { color: '#cc88ff', sizeMult: 0.72 },
+  'opencode':    { color: '#88ffaa', sizeMult: 1.0 },
+  'cursor':      { color: '#44ddcc', sizeMult: 0.92 },
+  'unknown':     { color: '#aaccff', sizeMult: 1.12 },
+};
+
 export const DEFAULT_MARKETPLACES: MarketplaceEntry[] = [
   { name: 'SkillHub', url: 'https://www.skillhub.club/', type: 'api' },
   { name: 'SkillsMP', url: 'https://skillsmp.com', type: 'browse' },
@@ -137,10 +156,24 @@ export interface CommandCenterState {
   spawnOpen: boolean;
   /** Non-null when the user requested connecting a specific agent type; cleared after handling. */
   pendingConnectAgent: string | null;
-  /** Per-agent event timestamps for sparkline (pruned to last 5 min). '__global__' key holds all agents. */
-  eventTimestamps: Record<string, number[]>;
-  /** Record an event timestamp for sparkline tracking. */
-  recordEventTimestamp: (agentId: string) => void;
+  /** Per-agent-type visual customization (colors, planet sizes). */
+  visualSettings: VisualSettings;
+  /** Whether the settings modal is open. */
+  settingsOpen: boolean;
+  toggleSettings: () => void;
+  setAgentColor: (agentType: VisualAgentType, color: string) => void;
+  setAgentSizeMult: (agentType: VisualAgentType, sizeMult: number) => void;
+  resetVisualSettings: () => void;
+  setVisualSettings: (settings: VisualSettings) => void;
+  /** Whether achievements and toasts are enabled. */
+  achievementsEnabled: boolean;
+  setAchievementsEnabled: (enabled: boolean) => void;
+  /** Animation speed multiplier (0.25 – 3.0). 1.0 = normal. */
+  animationSpeed: number;
+  setAnimationSpeed: (speed: number) => void;
+  /** Event server port. Changing this requires an extension restart. */
+  eventServerPort: number;
+  setEventServerPort: (port: number) => void;
   /** Installed skills discovered from disk. */
   skills: SkillInfo[];
   setSkills: (skills: SkillInfo[]) => void;
@@ -182,6 +215,8 @@ export interface CommandCenterState {
   unlockAchievement: (id: string) => void;
   /** Increment the count for a tiered achievement and upgrade tier if threshold is met. */
   incrementTieredAchievement: (id: string) => void;
+  /** Set the absolute count for a tiered achievement (idempotent — only toasts on tier upgrade). */
+  setTieredAchievementCount: (id: string, count: number) => void;
   /** Remove a toast by instanceId (called when the animation finishes). */
   dismissToast: (instanceId: string) => void;
   toggleConnect: () => void;
@@ -222,24 +257,28 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   connectOpen: false,
   spawnOpen: false,
   pendingConnectAgent: null,
-  eventTimestamps: {},
-  recordEventTimestamp: (agentId) =>
-    set((s) => {
-      const now = Date.now();
-      const cutoff = now - 5 * 60 * 1000;
-      const prune = (arr: number[] | undefined) => {
-        const filtered = (arr ?? []).filter((t) => t > cutoff);
-        filtered.push(now);
-        return filtered;
-      };
-      return {
-        eventTimestamps: {
-          ...s.eventTimestamps,
-          __global__: prune(s.eventTimestamps.__global__),
-          [agentId]: prune(s.eventTimestamps[agentId]),
-        },
-      };
-    }),
+  visualSettings: { ...DEFAULT_VISUAL_SETTINGS },
+  settingsOpen: false,
+  toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
+  achievementsEnabled: true,
+  setAchievementsEnabled: (enabled) => set({ achievementsEnabled: enabled }),
+  animationSpeed: 1.0,
+  setAnimationSpeed: (speed) => set({ animationSpeed: Math.max(0.25, Math.min(3.0, speed)) }),
+  eventServerPort: 28765,
+  setEventServerPort: (port) => set({ eventServerPort: Math.max(1024, Math.min(65535, port)) }),
+  setAgentColor: (agentType, color) =>
+    set((s) => ({
+      visualSettings: { ...s.visualSettings, [agentType]: { ...s.visualSettings[agentType], color } },
+    })),
+  setAgentSizeMult: (agentType, sizeMult) =>
+    set((s) => ({
+      visualSettings: {
+        ...s.visualSettings,
+        [agentType]: { ...s.visualSettings[agentType], sizeMult: Math.max(0.4, Math.min(2.0, sizeMult)) },
+      },
+    })),
+  resetVisualSettings: () => set({ visualSettings: { ...DEFAULT_VISUAL_SETTINGS } }),
+  setVisualSettings: (settings) => set({ visualSettings: settings }),
   skills: [],
   setSkills: (skills) => set({ skills }),
   createSkillOpen: false,
@@ -342,6 +381,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   setDemoMode: (active) => set({ demoMode: active }),
 
   unlockAchievement: (id) => {
+    // Achievements disabled guard
+    if (!get().achievementsEnabled && id !== 'demo_activated') return;
     // Demo guard: only demo_activated can fire during demo mode
     if (get().demoMode && id !== 'demo_activated') return;
     if (get().unlockedAchievements.includes(id)) return;
@@ -353,6 +394,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   },
 
   incrementTieredAchievement: (id) => {
+    // Achievements disabled guard
+    if (!get().achievementsEnabled) return;
     // Demo guard: no tiered achievements during demo mode
     if (get().demoMode) return;
     const tiers = TIERED_THRESHOLDS[id];
@@ -373,6 +416,35 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
     if (tierUpgraded) {
       updates.achievementTiers = { ...state.achievementTiers, [id]: newTier };
       // Ensure it's in unlockedAchievements (first unlock) or just toast on upgrade
+      if (!state.unlockedAchievements.includes(id)) {
+        updates.unlockedAchievements = [...state.unlockedAchievements, id];
+      }
+      const instanceId = `${id}-t${newTier}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      updates.activeToasts = [...state.activeToasts, { instanceId, achievementId: id }];
+    }
+    set(updates);
+  },
+
+  setTieredAchievementCount: (id, count) => {
+    if (!get().achievementsEnabled) return;
+    if (get().demoMode) return;
+    const tiers = TIERED_THRESHOLDS[id];
+    if (!tiers) return;
+    const state = get();
+    const oldCount = state.achievementCounts[id] ?? 0;
+    if (count <= oldCount) return; // only allow upward movement
+    const currentTier = state.achievementTiers[id] ?? -1;
+    let newTier = currentTier;
+    for (let i = currentTier + 1; i < tiers.length; i++) {
+      if (count >= tiers[i]) newTier = i;
+      else break;
+    }
+    const tierUpgraded = newTier > currentTier;
+    const updates: Partial<CommandCenterState> = {
+      achievementCounts: { ...state.achievementCounts, [id]: count },
+    };
+    if (tierUpgraded) {
+      updates.achievementTiers = { ...state.achievementTiers, [id]: newTier };
       if (!state.unlockedAchievements.includes(id)) {
         updates.unlockedAchievements = [...state.unlockedAchievements, id];
       }

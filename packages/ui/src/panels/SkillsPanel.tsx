@@ -7,6 +7,7 @@ import type { FC } from 'react';
 import { useState, useRef, useEffect } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import type { SkillInfo } from '../store.js';
+import { DEFAULT_VISUAL_SETTINGS } from '../store.js';
 
 const SCOPE_COLORS: Record<string, string> = {
   personal: '#8ac08a',
@@ -22,11 +23,13 @@ const SCOPE_LABELS: Record<string, string> = {
   legacy:   'Legacy',
 };
 
-const AGENT_TYPE_COLORS: Record<string, string> = {
-  'claude-code': '#88aaff',
-  'opencode':    '#88ffaa',
-  'copilot':     '#cc88ff',
-};
+/** Resolve agent type color from store settings with fallback to defaults. */
+function getAgentTypeColor(agentType: string): string {
+  const vs = useCommandCenterStore.getState().visualSettings;
+  return (vs as Record<string, { color: string }>)[agentType]?.color
+    ?? (DEFAULT_VISUAL_SETTINGS as Record<string, { color: string }>)[agentType]?.color
+    ?? '#6a7a72';
+}
 
 const AGENT_TYPE_LABELS: Record<string, string> = {
   'claude-code': 'Claude',
@@ -193,9 +196,9 @@ const SkillCard: FC<{
           <span key={at} style={{
             fontSize: 7,
             padding: '1px 3px',
-            background: `${AGENT_TYPE_COLORS[at] ?? '#6a7a72'}18`,
-            border: `1px solid ${AGENT_TYPE_COLORS[at] ?? '#6a7a72'}44`,
-            color: AGENT_TYPE_COLORS[at] ?? '#6a7a72',
+            background: `${getAgentTypeColor(at)}18`,
+            border: `1px solid ${getAgentTypeColor(at)}44`,
+            color: getAgentTypeColor(at),
             borderRadius: 2,
             letterSpacing: '0.03em',
           }}>
@@ -414,9 +417,16 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
   const skills = useCommandCenterStore((s) => s.skills);
   const selectedAgentType = useCommandCenterStore((s) => s.selectedAgent?.type ?? null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [scopeFilter, setScopeFilter] = useState<string | null>(null);
   const [agentTypeFilter, setAgentTypeFilter] = useState<string | null>(null);
+
+  // Debounce search input by 150ms
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 150);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // When a planet is selected, default to filtering by its agent type
   const effectiveAgentTypeFilter = agentTypeFilter ?? selectedAgentType;
@@ -424,8 +434,8 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
   const filtered = skills.filter((s) => {
     if (scopeFilter && s.scope !== scopeFilter) return false;
     if (effectiveAgentTypeFilter && !s.agentTypes.includes(effectiveAgentTypeFilter as 'claude-code' | 'opencode' | 'copilot')) return false;
-    if (search) {
-      const q = search.toLowerCase();
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
       return s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
     }
     return true;
@@ -549,7 +559,7 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
         <span style={{ fontSize: 7, color: '#5a6a62', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Agent:</span>
         {(['claude-code', 'opencode', 'copilot'] as const).map((at) => {
           const active = effectiveAgentTypeFilter === at;
-          const color = AGENT_TYPE_COLORS[at];
+          const color = getAgentTypeColor(at);
           return (
             <button
               key={at}
