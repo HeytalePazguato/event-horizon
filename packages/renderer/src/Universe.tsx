@@ -117,7 +117,7 @@ const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
 const INITIAL_W = 640;
 const INITIAL_H = 400;
-const GRAVITY_STRENGTH = 0.25;
+const GRAVITY_STRENGTH = 0.8;
 const SINGULARITY_PULL = 1.2;
 const ASTRONAUT_MAX_SPEED = 3;
 const ASTRONAUT_SUCK_RADIUS = 92;   // outer glow of singularity — suck-in starts here
@@ -1806,23 +1806,32 @@ export const Universe: FC<UniverseProps> = ({
         } else {
           ax = (dx / r) * (SINGULARITY_PULL * invMass / r2) * dt * 60;
           ay = (dy / r) * (SINGULARITY_PULL * invMass / r2) * dt * 60;
-          // Visual: scale slightly by mass (heavy = slightly larger sprite)
-          const massScale = 0.8 + a.mass * 0.2;
+          // Visual: scale by mass (heavy = noticeably larger sprite)
+          const massScale = 0.6 + a.mass * 0.4;
           a.c.scale.set(massScale);
           a.c.alpha = 1;
         }
 
-        // Planet gravity (always active, scaled by inverse mass)
+        // Planet gravity — only within 2× planet radius (min 80px).
+        // Gentle enough that astronauts curve and can orbit, not get vacuumed in.
+        // Jetpack can escape the pull.
         let removed = false;
         for (const p of planets) {
           const px = p.x - a.c.x;
           const py = p.y - a.c.y;
           const pr2 = px * px + py * py + 1;
           const pr = Math.sqrt(pr2);
-          // Larger planets pull stronger (scale by planet radius)
-          const planetMass = (p.__radius ?? 15) / 15;
-          ax += (px / pr) * (GRAVITY_STRENGTH * planetMass * invMass / pr2) * dt * 60;
-          ay += (py / pr) * (GRAVITY_STRENGTH * planetMass * invMass / pr2) * dt * 60;
+          const pRadius = p.__radius ?? 15;
+          const influenceRadius = Math.max(80, pRadius * 3);
+          if (pr < influenceRadius) {
+            const planetMass = pRadius / 15;
+            // Exponential falloff: nearly zero at edge, ramps sharply near surface
+            // t=0 at edge, t=1 at surface. t^6 means at halfway (t=0.5) force is ~1.5%
+            const t = 1 - pr / influenceRadius;
+            const falloff = t * t * t * t * t * t; // t^6
+            ax += (px / pr) * (GRAVITY_STRENGTH * planetMass * invMass * falloff) * dt * 60;
+            ay += (py / pr) * (GRAVITY_STRENGTH * planetMass * invMass * falloff) * dt * 60;
+          }
           if (pr < (p.__radius ?? 15) + 8) {
             if (p.__agentId) onAstronautLandedRef.current?.(p.__agentId);
             a.c.destroy({ children: true });
