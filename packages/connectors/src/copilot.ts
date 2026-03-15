@@ -59,6 +59,13 @@ export function mapCopilotHookToEvent(payload: unknown): AgentEvent | null {
     if (p.agent_type) safePayload.subagentType = String(p.agent_type).slice(0, 128);
   }
 
+  // Extract token/cost data from Stop events if present (cumulative session totals)
+  if (hookEvent === 'Stop') {
+    if (typeof p.total_input_tokens === 'number') safePayload.inputTokens = p.total_input_tokens;
+    if (typeof p.total_output_tokens === 'number') safePayload.outputTokens = p.total_output_tokens;
+    if (typeof p.total_cost_usd === 'number') safePayload.costUsd = p.total_cost_usd;
+  }
+
   // Extract file_path from tool_input for file-touching tools (never content)
   const COPILOT_FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file', 'insert_edit_into_file']);
   if (safePayload.toolName && COPILOT_FILE_TOOLS.has(safePayload.toolName as string)) {

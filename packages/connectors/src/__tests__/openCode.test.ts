@@ -158,6 +158,30 @@ describe('mapOpenCodeToEvent', () => {
     expect(result!.payload.skillName).toBeUndefined();
   });
 
+  it('extracts token/cost from session.updated with usage data', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'session.updated',
+      agentId: 'oc-1',
+      payload: { properties: { usage: { input_tokens: 8000, output_tokens: 4000, total_cost_usd: 0.60 } } },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.inputTokens).toBe(8000);
+    expect(result!.payload.outputTokens).toBe(4000);
+    expect(result!.payload.costUsd).toBe(0.60);
+  });
+
+  it('extracts token/cost from top-level payload fields', () => {
+    const result = mapOpenCodeToEvent({
+      event: 'session.idle',
+      agentId: 'oc-1',
+      payload: { input_tokens: 3000, output_tokens: 1500, total_cost_usd: 0.25 },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.inputTokens).toBe(3000);
+    expect(result!.payload.outputTokens).toBe(1500);
+    expect(result!.payload.costUsd).toBe(0.25);
+  });
+
   it('does not set isSkill for non-skill tools', () => {
     const result = mapOpenCodeToEvent({
       event: 'tool.execute.before',

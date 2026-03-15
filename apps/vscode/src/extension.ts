@@ -283,22 +283,19 @@ export function activate(context: vscode.ExtensionContext): void {
       const [pairA, pairB] = pairs[Math.floor(Math.random() * pairs.length)];
       const [from, to] = Math.random() < 0.5 ? [pairA, pairB] : [pairB, pairA];
 
+      // Scale delays by number of pairs to prevent ship blizzard with many agents
+      // (5 agents = 10 pairs, so we slow down proportionally)
+      const pairScale = Math.max(1, pairs.length / 2);
+
       if (anyActive) {
-        // Active burst: 1–3 ships in a staggered convoy
-        const shipCount = 1 + Math.floor(Math.random() * 3); // 1, 2, or 3
+        // Active burst: single ship (convoys removed — the pair cap keeps it clean)
         emitCoopShip(from, to);
-        for (let i = 1; i < shipCount; i++) {
-          // Stagger convoy ships by 300–800ms
-          setTimeout(() => {
-            if (webviewRef.current) emitCoopShip(from, to);
-          }, i * (300 + Math.random() * 500));
-        }
-        // Next check in 2–5 seconds
-        cooperationTimer = setTimeout(scheduleCoopShip, 2_000 + Math.random() * 3_000);
+        // Next check in (2–5s) × pairScale
+        cooperationTimer = setTimeout(scheduleCoopShip, (2_000 + Math.random() * 3_000) * pairScale);
       } else {
-        // Idle heartbeat: single ship, next check in 15–25 seconds
+        // Idle heartbeat: single ship, next check in (15–25s) × pairScale
         emitCoopShip(from, to);
-        cooperationTimer = setTimeout(scheduleCoopShip, 15_000 + Math.random() * 10_000);
+        cooperationTimer = setTimeout(scheduleCoopShip, (15_000 + Math.random() * 10_000) * pairScale);
       }
     }, 1_000); // initial 1s tick to be responsive
   }

@@ -159,6 +159,34 @@ describe('mapCopilotHookToEvent', () => {
     expect(result!.payload.skillName).toBeUndefined();
   });
 
+  it('extracts token/cost data from Stop event when present', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'Stop',
+      session_id: 'sess-123',
+      total_input_tokens: 10000,
+      total_output_tokens: 5000,
+      total_cost_usd: 0.75,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.idle');
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.inputTokens).toBe(10000);
+    expect(p.outputTokens).toBe(5000);
+    expect(p.costUsd).toBe(0.75);
+  });
+
+  it('does not extract token/cost from Stop when fields are absent', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'Stop',
+      session_id: 'sess-123',
+    });
+    expect(result).not.toBeNull();
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.inputTokens).toBeUndefined();
+    expect(p.outputTokens).toBeUndefined();
+    expect(p.costUsd).toBeUndefined();
+  });
+
   it('does not set isSkill for non-skill tools', () => {
     const result = mapCopilotHookToEvent({
       hook_event_name: 'PreToolUse',

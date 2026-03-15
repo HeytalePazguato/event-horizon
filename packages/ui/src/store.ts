@@ -101,6 +101,10 @@ export interface SingularityStats {
   eventsWitnessed: number;
   /** Total errors witnessed across all agents. */
   errorsWitnessed: number;
+  /** Total tokens (input + output) across all agents. */
+  totalTokens: number;
+  /** Total estimated cost (USD) across all agents. */
+  totalCostUsd: number;
   /** Timestamp of first ever event. */
   firstEventAt: number;
 }
@@ -114,6 +118,8 @@ export const EMPTY_SINGULARITY_STATS: SingularityStats = {
   agentsSeen: 0,
   eventsWitnessed: 0,
   errorsWitnessed: 0,
+  totalTokens: 0,
+  totalCostUsd: 0,
   firstEventAt: 0,
 };
 

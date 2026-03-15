@@ -2,7 +2,19 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [0.0.7] — Unreleased
+## [0.0.8] — Unreleased
+
+### Added
+- **Astronaut mass variation**: astronauts now spawn with random mass (0.5–2.0). Light astronauts drift faster, curve dramatically near planets, and get flung around by gravity. Heavy astronauts move slowly, resist gravitational pull, and maintain straighter paths. Heavier astronauts appear slightly larger
+
+### Improved
+- **Planet gravity**: larger planets now pull stronger than smaller ones (proportional to radius). Astronauts visibly curve when passing near planets instead of drifting through
+
+### Fixed
+- **Planet click-to-select broken after drag feature**: clicking a planet no longer triggers the Command Center — drag handler was intercepting all clicks. Fixed by tracking whether the pointer actually moved before suppressing the click event
+- **Cooperation ship spam with many agents**: when 5+ agents share a workspace, overlapping ship arcs would obscure the planets. Capped visible ships to 2 per directed pair, removed burst convoys, scaled spawn intervals by pair count so large groups don't flood the universe, and increased ship travel speed for faster visual turnover
+
+## [0.0.7] — 2026-03-15
 
 ### Added
 - **Sidebar badge**: VS Code activity bar icon now shows a numeric badge with the count of active agents. Updates in real time as agents connect and disconnect

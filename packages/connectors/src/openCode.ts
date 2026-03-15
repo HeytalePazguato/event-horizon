@@ -102,6 +102,19 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     return null;
   }
 
+  // Extract token/cost data from session or message events if present
+  const props = (payload.properties as Record<string, unknown>) ?? {};
+  const usage = (payload.usage as Record<string, unknown>) ?? (props.usage as Record<string, unknown>) ?? {};
+  const tokenInput = (usage.input_tokens as number) ?? (usage.inputTokens as number)
+    ?? (payload.input_tokens as number) ?? (payload.inputTokens as number);
+  const tokenOutput = (usage.output_tokens as number) ?? (usage.outputTokens as number)
+    ?? (payload.output_tokens as number) ?? (payload.outputTokens as number);
+  const costUsd = (usage.total_cost_usd as number) ?? (usage.costUsd as number)
+    ?? (payload.total_cost_usd as number) ?? (payload.costUsd as number);
+  if (typeof tokenInput === 'number') payload.inputTokens = tokenInput;
+  if (typeof tokenOutput === 'number') payload.outputTokens = tokenOutput;
+  if (typeof costUsd === 'number') payload.costUsd = costUsd;
+
   const type = OPENCODE_TO_EVENT[eventName] ?? (eventName.startsWith('tool.') ? 'tool.call' : null);
   if (!type) return null;
 

@@ -20,6 +20,9 @@ const vscodeApi = ((): { postMessage: (msg: unknown) => void } | null => {
   return null;
 })();
 
+/** Max visible ships between a given ordered (from→to) pair at once. */
+const MAX_SHIPS_PER_PAIR = 2;
+
 function usePanelSize() {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 640, height: 400 });
@@ -311,7 +314,12 @@ function App() {
         if (toAgentId) {
           const shipId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const payloadSize = (raw.payload?.payloadSize as number | undefined) ?? 1;
-          setShips((prev) => [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }]);
+          setShips((prev) => {
+            // Cap visible ships per directed pair
+            const pairCount = prev.filter((s) => s.fromAgentId === agentId && s.toAgentId === toAgentId).length;
+            if (pairCount >= MAX_SHIPS_PER_PAIR) return prev;
+            return [...prev, { id: shipId, fromAgentId: agentId, toAgentId, payloadSize, fromAgentType: agentType }];
+          });
           store.incrementSingularityStat('shipsObserved');
           const timerId = setTimeout(() => {
             setShips((prev) => prev.filter((s) => s.id !== shipId));
@@ -391,6 +399,10 @@ function App() {
             : (m?.activeSubagents ?? 0);
         const tb = { ...(m?.toolBreakdown ?? {}) };
         if (type === 'tool.call' && toolName) tb[toolName] = (tb[toolName] ?? 0) + 1;
+        // Token/cost — session totals (replace, not accumulate)
+        const inputTokens = typeof raw.payload?.inputTokens === 'number' ? raw.payload.inputTokens as number : (m?.inputTokens ?? 0);
+        const outputTokens = typeof raw.payload?.outputTokens === 'number' ? raw.payload.outputTokens as number : (m?.outputTokens ?? 0);
+        const estimatedCostUsd = typeof raw.payload?.costUsd === 'number' ? raw.payload.costUsd as number : (m?.estimatedCostUsd ?? 0);
         return {
           ...prev,
           [agentId]: {
@@ -405,10 +417,29 @@ function App() {
             errorCount: type === 'agent.error' ? (m?.errorCount ?? 0) + 1 : (m?.errorCount ?? 0),
             sessionStartedAt: m?.sessionStartedAt ?? (type === 'agent.spawn' ? Date.now() : Date.now()),
             toolBreakdown: tb,
+            inputTokens,
+            outputTokens,
+            estimatedCostUsd,
             lastUpdated: Date.now(),
           },
         };
       });
+
+      // ── Update singularity token/cost totals when token data arrives ──
+      if (typeof raw.payload?.inputTokens === 'number' || typeof raw.payload?.outputTokens === 'number' || typeof raw.payload?.costUsd === 'number') {
+        // Recompute totals from all agents' latest metrics
+        setMetricsMap((current) => {
+          let totalTokens = 0;
+          let totalCost = 0;
+          for (const am of Object.values(current)) {
+            totalTokens += (am.inputTokens ?? 0) + (am.outputTokens ?? 0);
+            totalCost += am.estimatedCostUsd ?? 0;
+          }
+          const s = useCommandCenterStore.getState();
+          s.setSingularityStats({ ...s.singularityStats, totalTokens, totalCostUsd: totalCost });
+          return current; // no mutation
+        });
+      }
 
       // ── Active skill tracking ──
       if (raw.payload?.isSkill) {
@@ -838,6 +869,9 @@ function App() {
           errorCount: 0,
           sessionStartedAt: Date.now() - Math.floor(Math.random() * 300000),
           toolBreakdown: { Read: 5, Write: 3, Bash: 2, Edit: 4 },
+          inputTokens: 0,
+          outputTokens: 0,
+          estimatedCostUsd: 0,
           lastUpdated: Date.now(),
         },
       }));
@@ -884,10 +918,12 @@ function App() {
           let toIdx = Math.floor(Math.random() * (group.length - 1));
           if (toIdx >= fromIdx) toIdx++;
           const shipId = `demo-ship-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-          setShips((prev) => [
-            ...prev,
-            { id: shipId, fromAgentId: group[fromIdx], toAgentId: group[toIdx], payloadSize: Math.floor(Math.random() * 10) + 1, fromAgentType: demoAgentTypeMap[group[fromIdx]] },
-          ]);
+          const demoFrom = group[fromIdx], demoTo = group[toIdx];
+          setShips((prev) => {
+            const pairCount = prev.filter((s) => s.fromAgentId === demoFrom && s.toAgentId === demoTo).length;
+            if (pairCount >= MAX_SHIPS_PER_PAIR) return prev;
+            return [...prev, { id: shipId, fromAgentId: demoFrom, toAgentId: demoTo, payloadSize: Math.floor(Math.random() * 10) + 1, fromAgentType: demoAgentTypeMap[demoFrom] }];
+          });
           const timerId = setTimeout(() => {
             setShips((prev) => prev.filter((s) => s.id !== shipId));
             shipTimerIdsRef.current.delete(timerId);

@@ -87,6 +87,19 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     if (nested.cwd) safePayload.cwd = String(nested.cwd).slice(0, 512);
   }
 
+  // Extract token/cost data from Stop events (cumulative session totals)
+  if (hookEvent === 'Stop') {
+    if (typeof p.total_input_tokens === 'number') safePayload.inputTokens = p.total_input_tokens;
+    if (typeof p.total_output_tokens === 'number') safePayload.outputTokens = p.total_output_tokens;
+    if (typeof p.total_cost_usd === 'number') safePayload.costUsd = p.total_cost_usd;
+    // Also check nested payload
+    if (nested) {
+      if (typeof nested.total_input_tokens === 'number') safePayload.inputTokens = nested.total_input_tokens;
+      if (typeof nested.total_output_tokens === 'number') safePayload.outputTokens = nested.total_output_tokens;
+      if (typeof nested.total_cost_usd === 'number') safePayload.costUsd = nested.total_cost_usd;
+    }
+  }
+
   // Extract file_path from tool_input for file-touching tools (never content/strings)
   const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'ReadFile', 'WriteFile']);
   const toolNameStr = safePayload.toolName as string | undefined;
