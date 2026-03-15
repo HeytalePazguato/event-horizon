@@ -827,110 +827,185 @@ function App() {
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const runDemoSimulation = useCallback(() => {
-    // Demo agents: 2 in workspace A, 3 in workspace B, 3 independent (no cwd)
     const DEMO_CWD_A = '/home/user/projects/event-horizon';
     const DEMO_CWD_B = '/home/user/projects/backend-api';
     const demoAgents = [
-      // Workspace A — cluster of 2
       { id: 'demo-claude',   name: 'Claude',   agentType: 'claude-code', cwd: DEMO_CWD_A },
       { id: 'demo-opencode', name: 'OpenCode', agentType: 'opencode',    cwd: DEMO_CWD_A },
-      // Workspace B — cluster of 3
       { id: 'demo-copilot',  name: 'Copilot',  agentType: 'copilot',     cwd: DEMO_CWD_B },
       { id: 'demo-cursor',   name: 'Cursor',   agentType: 'cursor',      cwd: DEMO_CWD_B },
       { id: 'demo-gemini',   name: 'Gemini',   agentType: 'unknown',     cwd: DEMO_CWD_B },
-      // 3 solo agents — no workspace grouping
       { id: 'demo-solo-1',   name: 'Windsurf', agentType: 'unknown' },
       { id: 'demo-solo-2',   name: 'Aider',    agentType: 'unknown' },
       { id: 'demo-solo-3',   name: 'Devin',    agentType: 'unknown' },
     ];
-    // Groups that share a workspace — ships & collision sparks only between these
     const DEMO_WS_GROUPS: string[][] = [
       ['demo-claude', 'demo-opencode'],
       ['demo-copilot', 'demo-cursor', 'demo-gemini'],
     ];
-    const DEMO_FILES = ['src/index.ts', 'src/utils.ts', 'package.json', 'README.md', 'src/app.tsx'];
-    setAgents((prev) => {
-      const existing = new Set(prev.map((a) => a.id));
-      const toAdd = demoAgents.filter((a) => !existing.has(a.id))
-        .map((a) => ({ id: a.id, name: a.name, agentType: a.agentType, cwd: a.cwd }));
-      return toAdd.length ? [...prev, ...toAdd] : prev;
-    });
+    const DEMO_FILES = ['src/index.ts', 'src/utils.ts', 'package.json', 'README.md', 'src/app.tsx', 'src/components/App.tsx', 'tsconfig.json'];
+    const DEMO_SKILLS = ['code-review', 'run-tests', 'update-docs', 'refactor'];
     const demoAgentTypeMap = Object.fromEntries(demoAgents.map((a) => [a.id, a.agentType]));
+
+    // Per-agent state: each agent has its own next-transition time and work cycle
+    const agentTimers: Record<string, { nextTransition: number; phase: 'idle' | 'thinking' | 'tool_use' | 'completing' }> = {};
     demoAgents.forEach((a) => {
-      setAgentMap((m) => ({
-        ...m,
-        [a.id]: {
-          id: a.id,
-          name: a.name,
-          type: a.agentType,
-          state: 'idle',
-          currentTaskId: null,
-          cwd: a.cwd,
-        },
-      }));
-      setMetricsMap((m) => ({
-        ...m,
-        [a.id]: {
-          agentId: a.id,
-          load: 0.3 + Math.random() * 0.5,
-          toolCalls: Math.floor(Math.random() * 20),
-          toolFailures: 0,
-          promptsSubmitted: Math.floor(Math.random() * 5),
-          subagentSpawns: Math.floor(Math.random() * 3),
-          activeSubagents: Math.random() < 0.3 ? 1 : 0,
-          activeTasks: 0,
-          errorCount: 0,
-          sessionStartedAt: Date.now() - Math.floor(Math.random() * 300000),
-          toolBreakdown: { Read: 5, Write: 3, Bash: 2, Edit: 4 },
-          inputTokens: 0,
-          outputTokens: 0,
-          estimatedCostUsd: 0,
-          lastUpdated: Date.now(),
-        },
-      }));
+      agentTimers[a.id] = {
+        nextTransition: Date.now() + 2000 + Math.random() * 8000, // 2–10s initial delay
+        phase: 'idle',
+      };
     });
+
+    // Staggered spawns — add agents one by one over 3–5 seconds
+    const shuffled = [...demoAgents].sort(() => Math.random() - 0.5);
+    shuffled.forEach((a, i) => {
+      const delay = (i / shuffled.length) * (3000 + Math.random() * 2000);
+      const timerId = setTimeout(() => {
+        setAgents((prev) => {
+          if (prev.some((p) => p.id === a.id)) return prev;
+          return [...prev, { id: a.id, name: a.name, agentType: a.agentType, cwd: a.cwd }];
+        });
+        setAgentMap((m) => ({
+          ...m,
+          [a.id]: { id: a.id, name: a.name, type: a.agentType, state: 'idle', currentTaskId: null, cwd: a.cwd },
+        }));
+        setMetricsMap((m) => ({
+          ...m,
+          [a.id]: {
+            agentId: a.id,
+            load: 0.2 + Math.random() * 0.3,
+            toolCalls: 0, toolFailures: 0, promptsSubmitted: 0, subagentSpawns: 0,
+            activeSubagents: 0, activeTasks: 0, errorCount: 0,
+            sessionStartedAt: Date.now(), toolBreakdown: {},
+            inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0,
+            lastUpdated: Date.now(),
+          },
+        }));
+        shipTimerIdsRef.current.delete(timerId);
+      }, delay);
+      shipTimerIdsRef.current.add(timerId);
+    });
+
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
     demoIntervalRef.current = setInterval(() => {
+      const now = Date.now();
+
+      // Per-agent independent state transitions
       setAgentMap((prev) => {
         const next = { ...prev };
-        demoAgents.forEach((a) => {
+        for (const a of demoAgents) {
           const s = next[a.id];
-          if (!s) return;
-          next[a.id] = {
-            ...s,
-            state: Math.random() > 0.6 ? (s.state === 'thinking' ? 'idle' : 'thinking') : s.state,
-            currentTaskId: s.state === 'thinking' ? 'task-' + Date.now() : null,
-          };
-        });
+          if (!s) continue;
+          const timer = agentTimers[a.id];
+          if (!timer || now < timer.nextTransition) continue;
+
+          // State machine: idle → thinking → tool_use → thinking → idle (or error rarely)
+          let newState = s.state;
+          let newTaskId = s.currentTaskId;
+          switch (timer.phase) {
+            case 'idle':
+              newState = 'thinking';
+              newTaskId = `task-${now}-${a.id}`;
+              timer.phase = 'thinking';
+              timer.nextTransition = now + 1500 + Math.random() * 3000; // think for 1.5–4.5s
+              break;
+            case 'thinking':
+              // 70% → tool_use, 10% → error, 20% → complete
+              { const roll = Math.random();
+              if (roll < 0.7) {
+                newState = 'tool_use';
+                timer.phase = 'tool_use';
+                timer.nextTransition = now + 800 + Math.random() * 2000; // tool runs 0.8–2.8s
+              } else if (roll < 0.8) {
+                newState = 'error';
+                timer.phase = 'completing';
+                timer.nextTransition = now + 2000 + Math.random() * 3000; // error visible 2–5s
+              } else {
+                newState = 'idle';
+                newTaskId = null;
+                timer.phase = 'idle';
+                timer.nextTransition = now + 3000 + Math.random() * 8000; // rest 3–11s
+              } }
+              break;
+            case 'tool_use':
+              // Back to thinking (multi-tool cycle) or complete
+              if (Math.random() < 0.6) {
+                newState = 'thinking';
+                timer.phase = 'thinking';
+                timer.nextTransition = now + 1000 + Math.random() * 2500;
+              } else {
+                newState = 'idle';
+                newTaskId = null;
+                timer.phase = 'idle';
+                timer.nextTransition = now + 2000 + Math.random() * 6000; // rest 2–8s
+              }
+              break;
+            case 'completing':
+              newState = 'idle';
+              newTaskId = null;
+              timer.phase = 'idle';
+              timer.nextTransition = now + 3000 + Math.random() * 5000;
+              break;
+          }
+          next[a.id] = { ...s, state: newState, currentTaskId: newTaskId };
+        }
         return next;
       });
+
+      // Metrics update — only for spawned agents, with realistic increments
       setMetricsMap((prev) => {
         const next = { ...prev };
-        demoAgents.forEach((a) => {
+        for (const a of demoAgents) {
           const m = prev[a.id];
-          const load = (m?.load ?? 0.3) * 0.9 + 0.1 * Math.random();
-          // Occasionally toggle subagents for demo moons
-          let activeSubagents = m?.activeSubagents ?? 0;
-          if (Math.random() < 0.15) activeSubagents = Math.min(4, activeSubagents + 1);
-          if (Math.random() < 0.1 && activeSubagents > 0) activeSubagents -= 1;
+          if (!m) continue;
+          const timer = agentTimers[a.id];
+          const isWorking = timer && (timer.phase === 'thinking' || timer.phase === 'tool_use');
+          const loadTarget = isWorking ? 0.6 + Math.random() * 0.3 : 0.15 + Math.random() * 0.15;
+          const load = m.load * 0.85 + loadTarget * 0.15;
+          let { activeSubagents } = m;
+          // Moon spawns: ~8% chance to spawn, ~5% to despawn
+          if (isWorking && Math.random() < 0.08) activeSubagents = Math.min(3, activeSubagents + 1);
+          if (activeSubagents > 0 && Math.random() < 0.05) activeSubagents -= 1;
+          const toolInc = (timer?.phase === 'tool_use') ? 1 : 0;
+          const tools = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
+          const tb = { ...m.toolBreakdown };
+          if (toolInc) { const t = tools[Math.floor(Math.random() * tools.length)]; tb[t] = (tb[t] ?? 0) + 1; }
           next[a.id] = {
-            ...m!,
+            ...m,
             load,
-            toolCalls: (m?.toolCalls ?? 0) + (Math.random() < 0.3 ? 1 : 0),
+            toolCalls: m.toolCalls + toolInc,
+            promptsSubmitted: m.promptsSubmitted + (timer?.phase === 'thinking' && Math.random() < 0.1 ? 1 : 0),
             activeSubagents,
-            lastUpdated: Date.now(),
+            toolBreakdown: tb,
+            lastUpdated: now,
           };
-        });
+        }
         return next;
       });
-      // Ships only between agents sharing a workspace
-      if (Math.random() < 0.35 && DEMO_WS_GROUPS.length > 0) {
+
+      // Skill activation — occasionally show a skill being invoked
+      if (Math.random() < 0.06) {
+        const thinkingAgents = demoAgents.filter((a) => agentTimers[a.id]?.phase === 'tool_use');
+        if (thinkingAgents.length > 0) {
+          const agent = thinkingAgents[Math.floor(Math.random() * thinkingAgents.length)];
+          const skillName = DEMO_SKILLS[Math.floor(Math.random() * DEMO_SKILLS.length)];
+          setActiveSkillsView((prev) => ({ ...prev, [agent.id]: { name: skillName, index: Math.floor(Math.random() * 4) } }));
+          const timerId = setTimeout(() => {
+            setActiveSkillsView((prev) => { const n = { ...prev }; delete n[agent.id]; return n; });
+            shipTimerIdsRef.current.delete(timerId);
+          }, 2000 + Math.random() * 4000);
+          shipTimerIdsRef.current.add(timerId);
+        }
+      }
+
+      // Ships between workspace-sharing agents
+      if (Math.random() < 0.25 && DEMO_WS_GROUPS.length > 0) {
         const group = DEMO_WS_GROUPS[Math.floor(Math.random() * DEMO_WS_GROUPS.length)];
         if (group.length >= 2) {
           const fromIdx = Math.floor(Math.random() * group.length);
           let toIdx = Math.floor(Math.random() * (group.length - 1));
           if (toIdx >= fromIdx) toIdx++;
-          const shipId = `demo-ship-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const shipId = `demo-ship-${now}-${Math.random().toString(36).slice(2, 6)}`;
           const demoFrom = group[fromIdx], demoTo = group[toIdx];
           setShips((prev) => {
             const pairCount = prev.filter((s) => s.fromAgentId === demoFrom && s.toAgentId === demoTo).length;
@@ -944,8 +1019,9 @@ function App() {
           shipTimerIdsRef.current.add(timerId);
         }
       }
-      // File collision lightning — toggle on/off for a random pair in a workspace
-      if (Math.random() < 0.12 && DEMO_WS_GROUPS.length > 0) {
+
+      // File collision lightning — more frequent, random files
+      if (Math.random() < 0.18 && DEMO_WS_GROUPS.length > 0) {
         const group = DEMO_WS_GROUPS[Math.floor(Math.random() * DEMO_WS_GROUPS.length)];
         if (group.length >= 2) {
           const fromIdx = Math.floor(Math.random() * group.length);
@@ -955,12 +1031,10 @@ function App() {
           const file = DEMO_FILES[Math.floor(Math.random() * DEMO_FILES.length)];
           const sparkId = `demo-spark-${pairKey}`;
           setSparks((prev) => {
-            // If already active for this pair, skip (will be removed by its timer)
             if (prev.some((s) => s.id === sparkId)) return prev;
             return [...prev, { id: sparkId, agentIds: [group[fromIdx], group[toIdx]], filePath: file }];
           });
-          // Persist for 4–8 seconds (simulates agents working on same file)
-          const duration = 4000 + Math.random() * 4000;
+          const duration = 3000 + Math.random() * 5000;
           const timerId = setTimeout(() => {
             setSparks((prev) => prev.filter((s) => s.id !== sparkId));
             shipTimerIdsRef.current.delete(timerId);
@@ -968,7 +1042,7 @@ function App() {
           shipTimerIdsRef.current.add(timerId);
         }
       }
-    }, 1400);
+    }, 800); // faster tick for smoother per-agent transitions
     setDemoSimRunning(true);
   }, []);
 
@@ -981,7 +1055,11 @@ function App() {
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
     setShips((prev) => prev.filter((s) => !s.id.startsWith('demo-ship-')));
     setSparks((prev) => prev.filter((s) => !s.id.startsWith('demo-spark-')));
-    // Clean up demo agent entries from lastSeen tracking
+    setActiveSkillsView((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) { if (k.startsWith('demo-')) delete next[k]; }
+      return next;
+    });
     for (const id of Object.keys(agentLastSeenRef.current)) {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
     }
