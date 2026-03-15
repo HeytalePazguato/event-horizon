@@ -211,7 +211,7 @@ const CmdTooltip: FC<{ label: string; desc: string }> = ({ label, desc }) =>
         position: 'fixed',
         bottom: 212,
         right: 12,
-        width: 172,
+        width: 190,
         background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
         border: '1px solid #2a5a3c',
         boxShadow: '0 -4px 16px rgba(0,0,0,0.75)',

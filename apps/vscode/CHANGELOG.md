@@ -14,6 +14,13 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Improved
 - **Skill search debounce**: search input in the Skills tab now debounces by 150ms to prevent jank with large skill collections
 - **Skill agent filters**: agent type buttons are now multi-select toggles (all ON by default). Toggle off to hide skills for that agent. Renamed "OC" to "OpenCode"
+- **Medal tooltip**: hovering a medal now shows a portal-based tooltip (same style and position as the command grid tooltip) with name, tier, progress count, and description
+- **Header button tooltips**: Settings (gear) and Minimize/Expand buttons in the Command Center header now show tooltips on hover, matching the command grid tooltip style
+- **Wider tooltips**: all portal tooltips (commands, medals, header buttons) widened from 172px to 190px to align with the right panel crest
+
+### Fixed
+- **Plugin Collector achievement**: fixed double-counting on webview reload — now uses absolute count recalibration (`recalibrateTieredAchievement`) that corrects inflated persisted tiers downward
+- **Medal layout overflow**: medals now display without a scrollbar for 3 rows; scrollbar only appears if more rows are needed. Command Center panels increased by 1px (133→134) with tooltip/toast positions adjusted accordingly
 
 ## [0.0.6] — 2026-03-14
 
