@@ -7,6 +7,7 @@ import type { FC } from 'react';
 import { useState } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import type { LogEntry, SingularityStats } from '../store.js';
+import { Sparkline } from '../Sparkline.js';
 import { ACHIEVEMENTS, getMedal, TIER_LABELS, tierBorderColor } from '../achievements/index.js';
 import { SkillsPanel } from './SkillsPanel.js';
 
@@ -231,6 +232,9 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
   const allLogs         = useCommandCenterStore((s) => s.logs);
   const unlockedCount   = useCommandCenterStore((s) => s.unlockedAchievements.length);
   const skillsCount     = useCommandCenterStore((s) => s.skills.length);
+  const sparklineTs     = useCommandCenterStore((s) =>
+    selectedAgentId ? (s.eventTimestamps[selectedAgentId] ?? []) : (s.eventTimestamps.__global__ ?? []),
+  );
   const [view, setView] = useState<View>('info');
 
   const effectiveView: View = logsOpen ? 'logs' : view;

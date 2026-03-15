@@ -2,6 +2,11 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.0.7] — Unreleased
+
+### Added
+- **Sidebar badge**: VS Code activity bar icon now shows a numeric badge with the count of active agents. Updates in real time as agents connect and disconnect
+
 ## [0.0.6] — 2026-03-14
 
 ### Added

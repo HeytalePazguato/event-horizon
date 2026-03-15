@@ -137,6 +137,10 @@ export interface CommandCenterState {
   spawnOpen: boolean;
   /** Non-null when the user requested connecting a specific agent type; cleared after handling. */
   pendingConnectAgent: string | null;
+  /** Per-agent event timestamps for sparkline (pruned to last 5 min). '__global__' key holds all agents. */
+  eventTimestamps: Record<string, number[]>;
+  /** Record an event timestamp for sparkline tracking. */
+  recordEventTimestamp: (agentId: string) => void;
   /** Installed skills discovered from disk. */
   skills: SkillInfo[];
   setSkills: (skills: SkillInfo[]) => void;
@@ -218,6 +222,24 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   connectOpen: false,
   spawnOpen: false,
   pendingConnectAgent: null,
+  eventTimestamps: {},
+  recordEventTimestamp: (agentId) =>
+    set((s) => {
+      const now = Date.now();
+      const cutoff = now - 5 * 60 * 1000;
+      const prune = (arr: number[] | undefined) => {
+        const filtered = (arr ?? []).filter((t) => t > cutoff);
+        filtered.push(now);
+        return filtered;
+      };
+      return {
+        eventTimestamps: {
+          ...s.eventTimestamps,
+          __global__: prune(s.eventTimestamps.__global__),
+          [agentId]: prune(s.eventTimestamps[agentId]),
+        },
+      };
+    }),
   skills: [],
   setSkills: (skills) => set({ skills }),
   createSkillOpen: false,

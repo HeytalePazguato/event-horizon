@@ -15,7 +15,19 @@ import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
+const webviewViewRef: { current: vscode.WebviewView | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
+
+// ── Sidebar badge ────────────────────────────────────────────────────────────
+
+function updateBadge(asm: AgentStateManager): void {
+  const view = webviewViewRef.current;
+  if (!view) return;
+  const count = asm.getAllAgents().length;
+  view.badge = count > 0
+    ? { value: count, tooltip: `${count} active agent${count === 1 ? '' : 's'}` }
+    : undefined;
+}
 
 // ── Workspace-aware cooperation detection ────────────────────────────────────
 
@@ -102,6 +114,9 @@ export function activate(context: vscode.ExtensionContext): void {
     if (webviewRef.current) {
       webviewRef.current.postMessage({ type: 'event', payload: event });
     }
+
+    // Update sidebar badge with active agent count
+    updateBadge(agentStateManager);
   }
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
@@ -142,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
     cachedSkills = skills;
     return skills;
   };
-  const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills);
+  const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills, webviewViewRef);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('eventHorizon.universe', provider, {
       webviewOptions: { retainContextWhenHidden: true }, // 2.2 — keep WebGL context alive when panel is hidden

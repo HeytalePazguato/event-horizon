@@ -206,6 +206,7 @@ export function createWebviewProvider(
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
+  webviewViewRef?: { current: vscode.WebviewView | null },
 ): vscode.WebviewViewProvider {
   const version = (context.extension.packageJSON as { version: string }).version;
 
@@ -216,8 +217,10 @@ export function createWebviewProvider(
       _token: vscode.CancellationToken
     ): void {
       webviewRef.current = webviewView.webview;
+      if (webviewViewRef) webviewViewRef.current = webviewView;
       webviewView.onDidDispose(() => {
         webviewRef.current = null;
+        if (webviewViewRef) webviewViewRef.current = null;
       });
 
       webviewView.webview.options = {
