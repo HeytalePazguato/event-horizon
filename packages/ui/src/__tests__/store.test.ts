@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useCommandCenterStore, clearAllBoostTimers, EMPTY_SINGULARITY_STATS } from '../store.js';
+import { useCommandCenterStore, clearAllBoostTimers, EMPTY_SINGULARITY_STATS, DEFAULT_VISUAL_SETTINGS } from '../store.js';
 
 // Reset store state before each test
 beforeEach(() => {
@@ -273,5 +273,49 @@ describe('toggles', () => {
     const before = Date.now();
     useCommandCenterStore.getState().requestCenter();
     expect(useCommandCenterStore.getState().centerRequestedAt).toBeGreaterThanOrEqual(before);
+  });
+});
+
+// ── Visual settings ─────────────────────────────────────────────────────────
+
+describe('visual settings', () => {
+  it('initializes to DEFAULT_VISUAL_SETTINGS', () => {
+    const s = useCommandCenterStore.getState();
+    expect(s.visualSettings).toEqual(DEFAULT_VISUAL_SETTINGS);
+  });
+
+  it('setAgentColor updates only the target agent color', () => {
+    const { setAgentColor } = useCommandCenterStore.getState();
+    setAgentColor('claude-code', '#ff0000');
+    const s = useCommandCenterStore.getState();
+    expect(s.visualSettings['claude-code'].color).toBe('#ff0000');
+    expect(s.visualSettings['claude-code'].sizeMult).toBe(DEFAULT_VISUAL_SETTINGS['claude-code'].sizeMult);
+    expect(s.visualSettings['copilot']).toEqual(DEFAULT_VISUAL_SETTINGS['copilot']);
+  });
+
+  it('setAgentSizeMult clamps to 0.4–2.0 range', () => {
+    const { setAgentSizeMult } = useCommandCenterStore.getState();
+    setAgentSizeMult('opencode', 0.1);
+    expect(useCommandCenterStore.getState().visualSettings['opencode'].sizeMult).toBe(0.4);
+    setAgentSizeMult('opencode', 3.0);
+    expect(useCommandCenterStore.getState().visualSettings['opencode'].sizeMult).toBe(2.0);
+    setAgentSizeMult('opencode', 1.5);
+    expect(useCommandCenterStore.getState().visualSettings['opencode'].sizeMult).toBe(1.5);
+  });
+
+  it('resetVisualSettings restores defaults', () => {
+    const { setAgentColor, resetVisualSettings } = useCommandCenterStore.getState();
+    setAgentColor('copilot', '#000000');
+    resetVisualSettings();
+    expect(useCommandCenterStore.getState().visualSettings).toEqual(DEFAULT_VISUAL_SETTINGS);
+  });
+
+  it('setVisualSettings replaces entire object (hydration)', () => {
+    const custom = {
+      ...DEFAULT_VISUAL_SETTINGS,
+      'claude-code': { color: '#112233', sizeMult: 1.8 },
+    };
+    useCommandCenterStore.getState().setVisualSettings(custom);
+    expect(useCommandCenterStore.getState().visualSettings).toEqual(custom);
   });
 });

@@ -27,6 +27,10 @@ export interface PlanetProps {
   brightness: number;
   variant?: PlanetVariant;
   agentType?: string;
+  /** Override the thinking ring color (hex number, e.g. 0x88aaff). */
+  ringColorOverride?: number;
+  /** Override the size multiplier instead of using SIZE_MULT. */
+  sizeMultOverride?: number;
 }
 
 /** Per-variant size multipliers — encodes agent operating profile. */
@@ -68,17 +72,28 @@ export type ExtendedPlanet = Container & {
   __thinkingRing?: Container;
   __errorGlow?: Graphics;
   __waitingRing?: Graphics;
+  __aura?: Graphics;
 };
 
+/** Resolve the effective size multiplier (exported for testing). */
+export function resolveSizeMult(variant: PlanetVariant, override?: number): number {
+  return override ?? SIZE_MULT[variant];
+}
+
+/** Resolve the effective ring color (exported for testing). */
+export function resolveRingColor(agentType?: string, override?: number): number {
+  return override ?? (agentType ? THINKING_RING_COLORS[agentType] : undefined) ?? DEFAULT_RING_COLOR;
+}
+
 export function createPlanet(props: PlanetProps): ExtendedPlanet {
-  const { x, y, size, brightness, agentId, agentType } = props;
+  const { x, y, size, brightness, agentId, agentType, ringColorOverride, sizeMultOverride } = props;
 
   const variant: PlanetVariant =
     props.variant ??
     (agentType ? AGENT_TYPE_VARIANT[agentType] : undefined) ??
     (['rocky', 'gas', 'icy', 'volcanic'] as const)[hash(agentId) % 4];
 
-  const r = size * SIZE_MULT[variant]; // actual rendered radius
+  const r = size * resolveSizeMult(variant, sizeMultOverride); // actual rendered radius
 
   const container = new Container() as ExtendedPlanet;
   container.x = x;
@@ -104,6 +119,14 @@ export function createPlanet(props: PlanetProps): ExtendedPlanet {
     case 'ocean':    drawOceanPlanet(container, r, brightness, agentId);   break;
   }
 
+  // ── Colored aura (always visible — makes user color overrides obvious) ──
+  const auraColor = resolveRingColor(agentType, ringColorOverride);
+  const aura = new Graphics();
+  aura.circle(0, 0, r * 1.35).fill({ color: auraColor, alpha: 0.12 });
+  aura.circle(0, 0, r * 1.15).stroke({ width: 1.5, color: auraColor, alpha: 0.25 });
+  container.addChild(aura);
+  container.__aura = aura;
+
   // ── Waiting ring (amber pulsing ring, hidden by default) ────────────────
   const waitingRing = new Graphics();
   waitingRing.circle(0, 0, r * 1.8).stroke({ width: 2.5, color: 0xffaa33, alpha: 0.8 });
@@ -113,7 +136,7 @@ export function createPlanet(props: PlanetProps): ExtendedPlanet {
   container.__waitingRing = waitingRing;
 
   // ── Thinking ring (orbiting dots, hidden by default) ────────────────────
-  const ringColor = (agentType ? THINKING_RING_COLORS[agentType] : undefined) ?? DEFAULT_RING_COLOR;
+  const ringColor = resolveRingColor(agentType, ringColorOverride);
   const ringContainer = new Container();
   const ringRadius = r * 2.0;
   const numDots = 8;

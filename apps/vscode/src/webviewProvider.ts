@@ -206,6 +206,7 @@ export function createWebviewProvider(
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
+  webviewViewRef?: { current: vscode.WebviewView | null },
 ): vscode.WebviewViewProvider {
   const version = (context.extension.packageJSON as { version: string }).version;
 
@@ -216,8 +217,10 @@ export function createWebviewProvider(
       _token: vscode.CancellationToken
     ): void {
       webviewRef.current = webviewView.webview;
+      if (webviewViewRef) webviewViewRef.current = webviewView;
       webviewView.onDidDispose(() => {
         webviewRef.current = null;
+        if (webviewViewRef) webviewViewRef.current = null;
       });
 
       webviewView.webview.options = {
@@ -263,6 +266,17 @@ export function createWebviewProvider(
           void webviewView.webview.postMessage({ type: 'init-medals', ...savedMedals });
         }
 
+        // Hydrate persisted settings (visual + general)
+        const savedSettings = context.globalState.get<Record<string, unknown>>('visualSettings');
+        const savedGeneral = context.globalState.get<Record<string, unknown>>('generalSettings');
+        if (savedSettings || savedGeneral) {
+          void webviewView.webview.postMessage({
+            type: 'init-settings',
+            settings: savedSettings ?? undefined,
+            ...(savedGeneral ?? {}),
+          });
+        }
+
         // Hydrate persisted singularity stats from globalState
         const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
         if (savedSingularity) {
@@ -302,6 +316,16 @@ export function createWebviewProvider(
         // Persist singularity stats to globalState
         if (msg?.type === 'persist-singularity') {
           void context.globalState.update('singularityStats', msg.stats);
+          return;
+        }
+        // Persist visual + general settings to globalState
+        if (msg?.type === 'persist-settings') {
+          void context.globalState.update('visualSettings', msg.settings);
+          void context.globalState.update('generalSettings', {
+            achievementsEnabled: msg.achievementsEnabled,
+            animationSpeed: msg.animationSpeed,
+            eventServerPort: msg.eventServerPort,
+          });
           return;
         }
         if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {

@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
+import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { SkillInfo, CreateSkillRequest, MarketplaceSkillResult } from '@event-horizon/ui';
 import type { AgentState, AgentRuntimeState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
@@ -143,6 +143,8 @@ function App() {
   const pausedAgentIds       = useCommandCenterStore((s) => s.pausedAgentIds);
   const isolatedAgentId      = useCommandCenterStore((s) => s.isolatedAgentId);
   const boostedAgentIds      = useCommandCenterStore((s) => s.boostedAgentIds);
+  const visualSettings       = useCommandCenterStore((s) => s.visualSettings);
+  const animationSpeed       = useCommandCenterStore((s) => s.animationSpeed);
   const demoRequested        = useCommandCenterStore((s) => s.demoRequested);
   const infoOpen             = useCommandCenterStore((s) => s.infoOpen);
   const toggleInfo           = useCommandCenterStore((s) => s.toggleInfo);
@@ -150,6 +152,7 @@ function App() {
   const incrementTiered      = useCommandCenterStore((s) => s.incrementTieredAchievement);
   const selectedAgentId      = useCommandCenterStore((s) => s.selectedAgentId);
   const centerRequestedAt    = useCommandCenterStore((s) => s.centerRequestedAt);
+  const resetLayoutRequestedAt = useCommandCenterStore((s) => s.resetLayoutRequestedAt);
   const connectOpen          = useCommandCenterStore((s) => s.connectOpen);
   const toggleConnect        = useCommandCenterStore((s) => s.toggleConnect);
   const spawnOpen            = useCommandCenterStore((s) => s.spawnOpen);
@@ -181,7 +184,6 @@ function App() {
   /** Unique skill names invoked (for skill_master achievement). */
   const invokedSkillNamesRef = useRef<Set<string>>(new Set());
   /** Skill file paths already counted for plugin_collector achievement. */
-  const discoveredSkillPathsRef = useRef<Set<string>>(new Set());
 
   // Single merged message handler — 2.6: eliminates duplicate event processing
   useEffect(() => {
@@ -226,18 +228,29 @@ function App() {
         return;
       }
 
+      // init-settings: hydrate persisted visual settings + general settings
+      if (msg?.type === 'init-settings') {
+        const data = msg as unknown as {
+          settings?: import('@event-horizon/ui').VisualSettings;
+          achievementsEnabled?: boolean;
+          animationSpeed?: number;
+          eventServerPort?: number;
+        };
+        const store = useCommandCenterStore.getState();
+        if (data.settings) store.setVisualSettings(data.settings);
+        if (data.achievementsEnabled !== undefined) store.setAchievementsEnabled(data.achievementsEnabled);
+        if (data.animationSpeed !== undefined) store.setAnimationSpeed(data.animationSpeed);
+        if (data.eventServerPort !== undefined) store.setEventServerPort(data.eventServerPort);
+        return;
+      }
+
       // skills-update: hydrate installed skills from extension host
       if (msg?.type === 'skills-update') {
         const data = msg as unknown as { skills: SkillInfo[] };
         const newSkills = data.skills ?? [];
         useCommandCenterStore.getState().setSkills(newSkills);
-        // Track newly discovered skills for plugin_collector achievement
-        for (const sk of newSkills) {
-          if (!discoveredSkillPathsRef.current.has(sk.filePath)) {
-            discoveredSkillPathsRef.current.add(sk.filePath);
-            useCommandCenterStore.getState().incrementTieredAchievement('plugin_collector');
-          }
-        }
+        // Recalibrate plugin_collector to actual skill count (corrects inflated persisted values)
+        useCommandCenterStore.getState().recalibrateTieredAchievement('plugin_collector', newSkills.length);
         return;
       }
 
@@ -504,6 +517,24 @@ function App() {
     if (!singularityStats.firstEventAt) return;
     vscodeApi?.postMessage({ type: 'persist-singularity', stats: singularityStats });
   }, [singularityStats]);
+
+  // ── Persist all settings to extension host globalState (debounced) ──
+  const achievementsEnabled  = useCommandCenterStore((s) => s.achievementsEnabled);
+  const eventServerPort      = useCommandCenterStore((s) => s.eventServerPort);
+  const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    settingsTimerRef.current = setTimeout(() => {
+      vscodeApi?.postMessage({
+        type: 'persist-settings',
+        settings: visualSettings,
+        achievementsEnabled,
+        animationSpeed,
+        eventServerPort,
+      });
+    }, 500);
+    return () => { if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current); };
+  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort]);
 
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
   // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).
@@ -1036,6 +1067,8 @@ function App() {
           height={panelSize.height}
           agents={agents}
           metrics={metricsView}
+          visualSettings={visualSettings}
+          animationSpeed={animationSpeed}
           activeSubagents={activeSubagentsView}
           agentSkillCounts={agentSkillCounts}
           activeSkills={activeSkillsView}
@@ -1047,6 +1080,7 @@ function App() {
           boostedAgentIds={boostedAgentIds}
           selectedAgentId={selectedAgentId}
           centerRequestedAt={centerRequestedAt}
+          resetLayoutRequestedAt={resetLayoutRequestedAt}
           onPlanetHover={handlePlanetHover}
           onPlanetClick={handlePlanetClick}
           onAstronautConsumed={handleAstronautConsumed}
@@ -1329,6 +1363,7 @@ function App() {
           </div>
         </div>
       )}
+      <SettingsModal />
       {hoveredAgentId && hoveredAgent && (
         <div
           style={{

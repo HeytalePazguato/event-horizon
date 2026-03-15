@@ -3,6 +3,8 @@
  */
 
 import * as vscode from 'vscode';
+import * as os from 'os';
+import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { createWebviewProvider } from './webviewProvider';
@@ -15,7 +17,42 @@ import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
+const webviewViewRef: { current: vscode.WebviewView | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
+
+// ── Nudge running agents to announce themselves ─────────────────────────────
+
+import * as fsp from 'fs/promises';
+
+/**
+ * Touch agent config files (read + write identical content) so any
+ * already-running agent detects the change and fires a ConfigChange hook.
+ * Each running session sends its real session ID, name, and cwd — no
+ * fake placeholder planets needed.
+ */
+async function nudgeRunningAgents(): Promise<void> {
+  const home = os.homedir();
+  const filesToTouch: string[] = [
+    path.join(home, '.claude', 'settings.json'),
+  ];
+  for (const filePath of filesToTouch) {
+    try {
+      const content = await fsp.readFile(filePath, 'utf8');
+      await fsp.writeFile(filePath, content, 'utf8');
+    } catch { /* file doesn't exist or not writable — skip */ }
+  }
+}
+
+// ── Sidebar badge ────────────────────────────────────────────────────────────
+
+function updateBadge(asm: AgentStateManager): void {
+  const view = webviewViewRef.current;
+  if (!view) return;
+  const count = asm.getAllAgents().length;
+  view.badge = count > 0
+    ? { value: count, tooltip: `${count} active agent${count === 1 ? '' : 's'}` }
+    : undefined;
+}
 
 // ── Workspace-aware cooperation detection ────────────────────────────────────
 
@@ -102,13 +139,16 @@ export function activate(context: vscode.ExtensionContext): void {
     if (webviewRef.current) {
       webviewRef.current.postMessage({ type: 'event', payload: event });
     }
+
+    // Update sidebar badge with active agent count
+    updateBadge(agentStateManager);
   }
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
   startEventServer({ onEvent: (event) => eventBus.emit(event) })
     .then(async () => {
-      // Auto-refresh hooks with new session token if they exist from a previous session
+      // Refresh hooks only if the token changed (stale from a previous session)
       const [staleClaude, staleOpenCode, staleCopilot] = await Promise.all([
         hasStaleClaudeCodeHooks(),
         hasStaleOpenCodeHooks(),
@@ -117,6 +157,11 @@ export function activate(context: vscode.ExtensionContext): void {
       if (staleClaude) await setupClaudeCodeHooks();
       if (staleOpenCode) await setupOpenCodeHooks();
       if (staleCopilot) await setupCopilotHooks();
+
+      // Nudge running agents to announce themselves by touching their config
+      // files. This triggers ConfigChange hooks so each running session sends
+      // its real session ID, cwd, and name to our HTTP server.
+      void nudgeRunningAgents();
     })
     .catch(() => {
       // Error already shown to user via showErrorMessage in eventServer
@@ -142,7 +187,7 @@ export function activate(context: vscode.ExtensionContext): void {
     cachedSkills = skills;
     return skills;
   };
-  const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills);
+  const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills, webviewViewRef);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('eventHorizon.universe', provider, {
       webviewOptions: { retainContextWhenHidden: true }, // 2.2 — keep WebGL context alive when panel is hidden

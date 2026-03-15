@@ -9,9 +9,11 @@
 
 import type { FC } from 'react';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AgentIdentity } from './panels/AgentIdentity.js';
 import { MetricsPanel } from './panels/MetricsPanel.js';
 import { AgentControls } from './panels/AgentControls.js';
+import { useCommandCenterStore } from './store.js';
 
 const CHAMFER = 28;
 const STEP = 28; // how far the center dips below the side wings (128 − 108)
@@ -96,7 +98,7 @@ const leftPanelStyle: React.CSSProperties = {
   flex: '0 0 114px',
   width: 114,
   minWidth: 114,
-  height: 133,
+  height: 134,
   background: 'linear-gradient(155deg, #0c1318 0%, #070a0e 100%)',
   border: '2px solid #1c3028',
   boxShadow: [
@@ -115,7 +117,7 @@ const leftPanelStyle: React.CSSProperties = {
 const centerPanelStyle: React.CSSProperties = {
   flex: '1 1 auto',
   minWidth: 0,
-  height: 133,
+  height: 134,
   background: 'linear-gradient(180deg, #050709 0%, #030507 100%)',
   border: '2px solid #162420',
   boxShadow: [
@@ -126,13 +128,13 @@ const centerPanelStyle: React.CSSProperties = {
   fontFamily: 'Consolas, monospace',
   fontSize: 11,
   color: '#90b088',
-  overflowY: 'auto',
+  overflow: 'hidden',
 };
 
 const rightPanelStyle: React.CSSProperties = {
   flex: '0 0 180px',
   minWidth: 180,
-  height: 133,
+  height: 134,
   background: 'linear-gradient(155deg, #0c1318 0%, #070a0e 100%)',
   border: '2px solid #1c3028',
   boxShadow: [
@@ -158,9 +160,37 @@ export interface CommandCenterProps {
 
 export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
   const [minimized, setMinimized] = useState(false);
+  const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+  const toggleSettings = useCommandCenterStore((s) => s.toggleSettings);
   return (
     <div data-command-center style={outerWrapper}>
       <div style={{ ...wrapper, minHeight: minimized ? 38 : undefined }}>
+      {hoveredBtn && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 212,
+            right: 12,
+            width: 190,
+            background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+            border: '1px solid #2a5a3c',
+            boxShadow: '0 -4px 16px rgba(0,0,0,0.75)',
+            padding: '7px 9px',
+            fontFamily: 'Consolas, monospace',
+            zIndex: 9999,
+            pointerEvents: 'none',
+            clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em', marginBottom: 4 }}>
+            {hoveredBtn === 'settings' ? 'Settings' : (minimized ? 'Expand' : 'Minimize')}
+          </div>
+          <div style={{ fontSize: 9, color: '#4a7a58', lineHeight: 1.5 }}>
+            {hoveredBtn === 'settings' ? 'Customize agent colors, sizes, and preferences.' : (minimized ? 'Expand the Command Center.' : 'Collapse the Command Center.')}
+          </div>
+        </div>,
+        document.body
+      )}
       <div style={headerBar}>
         {/* Status LED */}
         <div
@@ -183,12 +213,37 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
         </div>
         <button
           type="button"
-          onClick={() => setMinimized((m) => !m)}
-          aria-label={minimized ? 'Expand' : 'Minimize'}
+          onClick={toggleSettings}
+          onMouseEnter={() => setHoveredBtn('settings')}
+          onMouseLeave={() => setHoveredBtn(null)}
+          aria-label="Settings"
           style={{
             marginLeft: 'auto',
             width: 20,
-            height: 16,
+            height: 20,
+            padding: 0,
+            border: '1px solid #1e4030',
+            background: 'rgba(12,28,20,0.95)',
+            color: '#3a8055',
+            fontSize: 10,
+            cursor: 'pointer',
+            lineHeight: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          &#x2699;
+        </button>
+        <button
+          type="button"
+          onClick={() => setMinimized((m) => !m)}
+          onMouseEnter={() => setHoveredBtn('minimize')}
+          onMouseLeave={() => setHoveredBtn(null)}
+          aria-label={minimized ? 'Expand' : 'Minimize'}
+          style={{
+            width: 20,
+            height: 20,
             padding: 0,
             border: '1px solid #1e4030',
             background: 'rgba(12,28,20,0.95)',

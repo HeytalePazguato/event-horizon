@@ -265,6 +265,7 @@ pnpm build
 
 ## Documentation
 
+- [Changelog](apps/vscode/CHANGELOG.md) — What's new in each version
 - [Architecture](docs/ARCHITECTURE.md) — System design, data flow, and package structure
 - [Contributing](docs/CONTRIBUTING.md) — Development setup and PR guidelines
 - [Code of Conduct](docs/CODE_OF_CONDUCT.md) — Community standards

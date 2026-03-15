@@ -7,3 +7,5 @@ export { CreateSkillWizard } from './CreateSkillWizard.js';
 export type { CreateSkillRequest } from './CreateSkillWizard.js';
 export { MarketplacePanel } from './MarketplacePanel.js';
 export type { MarketplacePanelProps } from './MarketplacePanel.js';
+export { SettingsPanel } from './SettingsPanel.js';
+export { SettingsModal } from './SettingsModal.js';

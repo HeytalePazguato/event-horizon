@@ -2,6 +2,29 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.0.7] — Unreleased
+
+### Added
+- **Sidebar badge**: VS Code activity bar icon now shows a numeric badge with the count of active agents. Updates in real time as agents connect and disconnect
+- **Welcome walkthrough**: VS Code native Getting Started guide with 5 steps — open the universe, connect an agent, explore the visualization, use the Command Center, and manage skills
+- **Settings modal**: gear button (&#x2699;) in the CommandCenter header opens a full settings modal with live planet previews. Customize agent colors and planet size multipliers per agent type with color pickers and size sliders (0.4–2.0×). Each agent row shows a mini SVG planet that updates in real time as you adjust settings. Colored aura ring around planets makes color changes immediately visible in the universe. Additional settings: animation speed (0.25–3×), achievements on/off toggle, event server port configuration. Includes "Reset to Defaults" button. All settings persist across VS Code restarts via `globalState`. 10 new tests (5 store, 5 renderer)
+- **Auto-detect running agents** (best-effort): on activation, Event Horizon nudges agent config files so already-running sessions announce themselves. Planets appear immediately for detected sessions; any remaining sessions appear as soon as you interact with them
+- **Drag to rearrange planets**: click and drag any planet to reposition it independently. Planets can't overlap each other (enforces minimum distance) or be placed on the singularity. Drag the asteroid belt to move the entire workspace group together. Asteroid belts redraw in real time to match new positions. New planets joining a moved group spawn near the group's current location. Moons, ships, and lightning arcs follow. Reset Layout button reverts everything to auto-layout. Custom positions persist for the session
+
+### Improved
+- **Skill search debounce**: search input in the Skills tab now debounces by 150ms to prevent jank with large skill collections
+- **Skill agent filters**: agent type buttons are now multi-select toggles (all ON by default). Toggle off to hide skills for that agent. Renamed "OC" to "OpenCode"
+- **Medal tooltip**: hovering a medal now shows a portal-based tooltip (same style and position as the command grid tooltip) with name, tier, progress count, and description
+- **Header button tooltips**: Settings (gear) and Minimize/Expand buttons in the Command Center header now show tooltips on hover, matching the command grid tooltip style
+- **Wider tooltips**: all portal tooltips (commands, medals, header buttons) widened from 172px to 190px to align with the right panel crest
+
+### Security
+- **flatted DoS vulnerability**: upgraded transitive dependency `flatted` from 3.3.4 to 3.4.1 via pnpm override to fix unbounded recursion DoS in `parse()` ([dependabot #9](https://github.com/nicolo-ribaudo/flatted/issues/88))
+
+### Fixed
+- **Plugin Collector achievement**: fixed double-counting on webview reload — now uses absolute count recalibration (`recalibrateTieredAchievement`) that corrects inflated persisted tiers downward
+- **Medal layout overflow**: medals now display without a scrollbar for 3 rows; scrollbar only appears if more rows are needed. Command Center panels increased by 1px (133→134) with tooltip/toast positions adjusted accordingly
+
 ## [0.0.6] — 2026-03-14
 
 ### Added
