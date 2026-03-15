@@ -4,7 +4,7 @@
  */
 
 import type { FC } from 'react';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useCommandCenterStore } from '../store.js';
 import type { SkillInfo } from '../store.js';
 import { DEFAULT_VISUAL_SETTINGS } from '../store.js';
@@ -38,107 +38,6 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
 };
 
 /** Inline category combobox for move UI. */
-const MoveCombobox: FC<{
-  value: string;
-  onChange: (val: string) => void;
-  options: string[];
-}> = ({ value, onChange, options }) => {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const filtered = options.filter((o) =>
-    !value || o.toLowerCase().includes(value.toLowerCase()),
-  );
-
-  return (
-    <div ref={wrapperRef} style={{ position: 'relative', flex: 1 }}>
-      <div style={{ display: 'flex', gap: 0 }}>
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-          onFocus={() => setOpen(true)}
-          onClick={(e) => e.stopPropagation()}
-          placeholder="none (root)"
-          style={{
-            flex: 1,
-            padding: '2px 6px',
-            fontSize: 8,
-            background: 'rgba(0,0,0,0.4)',
-            border: '1px solid #2a4a3a',
-            borderRight: 'none',
-            color: '#a0c090',
-            outline: 'none',
-            fontFamily: 'Consolas, monospace',
-            boxSizing: 'border-box',
-          }}
-        />
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-          style={{
-            padding: '0 4px',
-            fontSize: 8,
-            background: 'rgba(0,0,0,0.4)',
-            border: '1px solid #2a4a3a',
-            color: '#6a8a7a',
-            cursor: 'pointer',
-            lineHeight: '16px',
-          }}
-        >
-          {open ? '\u25B2' : '\u25BC'}
-        </button>
-      </div>
-      {open && (
-        <div style={{
-          position: 'absolute',
-          top: '100%',
-          left: 0,
-          right: 0,
-          zIndex: 10,
-          background: '#0b1a12',
-          border: '1px solid #2a4a3a',
-          borderTop: 'none',
-          maxHeight: 80,
-          overflowY: 'auto',
-        }}>
-          <div
-            onClick={(e) => { e.stopPropagation(); onChange(''); setOpen(false); }}
-            style={{
-              padding: '2px 6px', fontSize: 8, color: '#5a7a62', cursor: 'pointer', fontStyle: 'italic',
-            }}
-            onMouseEnter={(e) => { (e.target as HTMLDivElement).style.background = 'rgba(50,90,60,0.3)'; }}
-            onMouseLeave={(e) => { (e.target as HTMLDivElement).style.background = 'transparent'; }}
-          >
-            (none — root level)
-          </div>
-          {filtered.map((opt) => (
-            <div
-              key={opt}
-              onClick={(e) => { e.stopPropagation(); onChange(opt); setOpen(false); }}
-              style={{
-                padding: '2px 6px', fontSize: 8, color: '#a0c090', cursor: 'pointer',
-              }}
-              onMouseEnter={(e) => { (e.target as HTMLDivElement).style.background = 'rgba(50,90,60,0.3)'; }}
-              onMouseLeave={(e) => { (e.target as HTMLDivElement).style.background = 'transparent'; }}
-            >
-              {opt}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
 
 const SkillCard: FC<{
   skill: SkillInfo;
@@ -147,16 +46,14 @@ const SkillCard: FC<{
   onOpen?: (filePath: string) => void;
   onMove?: (filePath: string, newCategory: string) => void;
   onDuplicate?: (filePath: string, newName: string) => void;
-  existingCategories: string[];
-}> = ({ skill, expanded, onToggle, onOpen, onMove, onDuplicate, existingCategories }) => {
+}> = ({ skill, expanded, onToggle, onOpen, onMove, onDuplicate }) => {
   const scopeColor = SCOPE_COLORS[skill.scope] ?? '#6a7a72';
-  const [moving, setMoving] = useState(false);
-  const [moveTarget, setMoveTarget] = useState(skill.category ?? '');
   const [duplicating, setDuplicating] = useState(false);
   const [dupName, setDupName] = useState('');
 
   const canMove = skill.scope !== 'legacy' && skill.scope !== 'plugin';
-  const moveChanged = moveTarget !== (skill.category ?? '');
+  /** Skill is in a category subfolder that breaks agent discovery. */
+  const isInSubfolder = !!skill.category;
 
   return (
     <div
@@ -211,6 +108,32 @@ const SkillCard: FC<{
         {skill.context === 'fork' && (
           <span title="Fork context" style={{ fontSize: 9, color: '#6ab0d4' }}>&#x2442;</span>
         )}
+        {/* Metadata category badge */}
+        {skill.metadataCategory && (
+          <span style={{
+            fontSize: 7,
+            padding: '1px 3px',
+            background: 'rgba(180,140,60,0.15)',
+            border: '1px solid rgba(180,140,60,0.35)',
+            color: '#c8a848',
+            borderRadius: 2,
+          }}>
+            {skill.metadataCategory}
+          </span>
+        )}
+        {/* Tags */}
+        {skill.tags?.map((tag) => (
+          <span key={tag} style={{
+            fontSize: 7,
+            padding: '1px 3px',
+            background: 'rgba(120,160,200,0.12)',
+            border: '1px solid rgba(120,160,200,0.3)',
+            color: '#80a8c8',
+            borderRadius: 2,
+          }}>
+            {tag}
+          </span>
+        ))}
       </div>
       {/* Description */}
       <div style={{
@@ -263,26 +186,27 @@ const SkillCard: FC<{
                 Open in Editor
               </button>
             )}
-            {canMove && onMove && (
+            {canMove && isInSubfolder && onMove && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); setMoving(!moving); setMoveTarget(skill.category ?? ''); setDuplicating(false); }}
+                title="Skill is in a category subfolder — agents can't discover it. Move to root."
+                onClick={(e) => { e.stopPropagation(); onMove(skill.filePath, ''); setDuplicating(false); }}
                 style={{
                   padding: '2px 8px',
                   fontSize: 8,
-                  border: `1px solid ${moving ? '#b8a060' : '#4a4a3a'}`,
-                  background: moving ? 'rgba(180,160,96,0.15)' : 'transparent',
-                  color: moving ? '#b8a060' : '#7a7a62',
+                  border: '1px solid #b86040',
+                  background: 'rgba(180,96,64,0.15)',
+                  color: '#d88860',
                   cursor: 'pointer',
                 }}
               >
-                {moving ? 'Cancel' : 'Move'}
+                Move to Root
               </button>
             )}
             {canMove && onDuplicate && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); setDuplicating(!duplicating); setDupName(''); setMoving(false); }}
+                onClick={(e) => { e.stopPropagation(); setDuplicating(!duplicating); setDupName(''); }}
                 style={{
                   padding: '2px 8px',
                   fontSize: 8,
@@ -296,40 +220,10 @@ const SkillCard: FC<{
               </button>
             )}
           </div>
-          {/* Move UI */}
-          {moving && onMove && (
-            <div
-              style={{ marginTop: 4, display: 'flex', gap: 4, alignItems: 'center' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span style={{ fontSize: 7, color: '#6a8a7a', textTransform: 'uppercase', letterSpacing: '0.04em', flexShrink: 0 }}>
-                Category:
-              </span>
-              <MoveCombobox
-                value={moveTarget}
-                onChange={setMoveTarget}
-                options={existingCategories}
-              />
-              <button
-                type="button"
-                disabled={!moveChanged}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMove(skill.filePath, moveTarget);
-                  setMoving(false);
-                }}
-                style={{
-                  padding: '2px 8px',
-                  fontSize: 8,
-                  border: `1px solid ${moveChanged ? '#50aa70' : '#2a4a3a'}`,
-                  background: moveChanged ? 'rgba(50,120,70,0.3)' : 'transparent',
-                  color: moveChanged ? '#b0f0c0' : '#4a5a52',
-                  cursor: moveChanged ? 'pointer' : 'default',
-                  flexShrink: 0,
-                }}
-              >
-                Move
-              </button>
+          {/* Move to Root warning for skills in subfolders */}
+          {isInSubfolder && (
+            <div style={{ marginTop: 4, fontSize: 7, color: '#d88860', lineHeight: 1.4 }}>
+              &#x26A0; In subfolder <span style={{ color: '#c8a848' }}>/{skill.category}</span> — agents can&apos;t discover this skill. Use <span style={{ color: '#80a8c8' }}>metadata.category</span> in SKILL.md instead.
             </div>
           )}
           {/* Duplicate UI */}
@@ -473,10 +367,6 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
   }
 
   const scopes = Array.from(new Set(skills.map((s) => s.scope)));
-  const existingCategories = Array.from(
-    new Set(skills.map((s) => s.category).filter((c): c is string => !!c)),
-  ).sort();
-
   return (
     <div>
       {/* Search + scope filters + create */}
@@ -583,7 +473,6 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
             onOpen={onOpenSkill}
             onMove={onMoveSkill}
             onDuplicate={onDuplicateSkill}
-            existingCategories={existingCategories}
           />
         ))}
       </div>

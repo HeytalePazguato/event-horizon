@@ -27,6 +27,10 @@ export interface SkillInfo {
   category: string | null;
   /** Which agent types can use this skill — derived from the directory it was found in. */
   agentTypes: AgentTypeName[];
+  /** Category from SKILL.md metadata.category (does not affect file location). */
+  metadataCategory: string | null;
+  /** Tags from SKILL.md metadata.tags (does not affect file location). */
+  tags: string[];
 }
 
 // --- Frontmatter parser -------------------------------------------------------
@@ -40,7 +44,26 @@ export function parseFrontmatter(content: string): Partial<SkillInfo> {
   if (!match) return {};
 
   const result: Partial<SkillInfo> = {};
+  let inMetadata = false;
   for (const line of match[1].split(/\r?\n/)) {
+    // Detect metadata block (indented lines under `metadata:`)
+    if (inMetadata) {
+      if (/^\s+/.test(line)) {
+        const sep = line.indexOf(':');
+        if (sep < 1) continue;
+        const mKey = line.slice(0, sep).trim();
+        const mVal = line.slice(sep + 1).trim().replace(/^["']|["']$/g, '');
+        if (mKey === 'category') result.metadataCategory = mVal || null;
+        if (mKey === 'tags') {
+          // Parse YAML inline array: [tag1, tag2] or comma-separated
+          const inner = mVal.replace(/^\[|]$/g, '');
+          result.tags = inner.split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+        }
+        continue;
+      }
+      inMetadata = false; // non-indented line ends metadata block
+    }
+
     const sep = line.indexOf(':');
     if (sep < 1) continue;
     const key = line.slice(0, sep).trim();
@@ -60,6 +83,7 @@ export function parseFrontmatter(content: string): Partial<SkillInfo> {
       case 'context': result.context = unquoted === 'fork' ? 'fork' : 'inline'; break;
       case 'agent': result.agent = unquoted || null; break;
       case 'argument-hint': result.argumentHint = unquoted || null; break;
+      case 'metadata': inMetadata = true; break;
     }
   }
   return result;
@@ -86,6 +110,8 @@ function makeSkillInfo(
     pluginName: defaults.pluginName ?? null,
     category: defaults.category ?? null,
     agentTypes: defaults.agentTypes,
+    metadataCategory: partial.metadataCategory ?? null,
+    tags: partial.tags ?? [],
   };
 }
 

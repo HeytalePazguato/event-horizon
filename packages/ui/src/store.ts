@@ -35,6 +35,10 @@ export interface SkillInfo {
   category: string | null;
   /** Which agent types can use this skill. */
   agentTypes: Array<'claude-code' | 'opencode' | 'copilot'>;
+  /** Category from SKILL.md metadata.category (does not affect file location). */
+  metadataCategory: string | null;
+  /** Tags from SKILL.md metadata.tags (does not affect file location). */
+  tags: string[];
 }
 
 export interface MarketplaceEntry {

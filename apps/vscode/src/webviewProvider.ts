@@ -109,17 +109,12 @@ async function handleCreateSkill(msg: Record<string, unknown>): Promise<void> {
 }
 
 /**
- * Move a skill's folder to a new category (or root).
- * e.g. skills/my-skill/ → skills/documentation/my-skill/
- *      skills/old-cat/my-skill/ → skills/new-cat/my-skill/
- *      skills/old-cat/my-skill/ → skills/my-skill/ (move to root)
+ * Move a skill to the root of its skills directory (removing any category subfolder).
+ * Category subfolders break agent discovery (Claude Code, OpenCode, Copilot only scan
+ * one level deep: skills/<name>/SKILL.md). Use metadata.category in SKILL.md frontmatter
+ * for categorization instead.
  */
-async function handleMoveSkill(filePath: string, newCategory: string): Promise<void> {
-  if (newCategory && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newCategory)) {
-    void vscode.window.showErrorMessage('Invalid category name — use kebab-case.');
-    return;
-  }
-
+async function handleMoveSkill(filePath: string, _newCategory: string): Promise<void> {
   const skillDir = path.dirname(filePath);
   const skillName = path.basename(skillDir);
 
@@ -131,18 +126,18 @@ async function handleMoveSkill(filePath: string, newCategory: string): Promise<v
     void vscode.window.showErrorMessage('Cannot determine skills root directory.');
     return;
   }
-  // Reconstruct with native separators
   const skillsRoot = parts.slice(0, skillsIdx + 1).join(path.sep);
   const parentDir = path.dirname(skillDir);
 
-  const newDir = newCategory
-    ? path.join(skillsRoot, newCategory, skillName)
-    : path.join(skillsRoot, skillName);
+  // Only allow moving to the root — never into subfolders
+  const newDir = path.join(skillsRoot, skillName);
 
-  if (path.resolve(newDir) === path.resolve(skillDir)) return;
+  if (path.resolve(newDir) === path.resolve(skillDir)) {
+    void vscode.window.showInformationMessage(`Skill "${skillName}" is already at the root.`);
+    return;
+  }
 
   try {
-    await fsp.mkdir(path.dirname(newDir), { recursive: true });
     await fsp.rename(skillDir, newDir);
 
     // Clean up empty old category folder
@@ -154,7 +149,7 @@ async function handleMoveSkill(filePath: string, newCategory: string): Promise<v
     } catch { /* ignore */ }
 
     void vscode.window.showInformationMessage(
-      `Skill "${skillName}" moved to ${newCategory || 'root'}.`,
+      `Skill "${skillName}" moved to root. Use metadata.category in SKILL.md for categorization.`,
     );
   } catch (err) {
     void vscode.window.showErrorMessage(`Failed to move skill: ${err}`);

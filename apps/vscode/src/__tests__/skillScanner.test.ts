@@ -116,6 +116,45 @@ name: ${longName}
     expect(result.name?.length).toBe(64);
   });
 
+  it('parses metadata.category and metadata.tags', () => {
+    const content = `---
+name: my-skill
+description: A skill with metadata
+metadata:
+  category: documentation
+  tags: [planning, architecture]
+---
+
+Instructions.
+`;
+    const result = parseFrontmatter(content);
+    expect(result.name).toBe('my-skill');
+    expect(result.metadataCategory).toBe('documentation');
+    expect(result.tags).toEqual(['planning', 'architecture']);
+  });
+
+  it('handles metadata.tags without brackets', () => {
+    const content = `---
+name: tagged
+metadata:
+  tags: foo, bar, baz
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.tags).toEqual(['foo', 'bar', 'baz']);
+  });
+
+  it('ignores metadata block when not present', () => {
+    const content = `---
+name: no-meta
+description: plain skill
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.metadataCategory).toBeUndefined();
+    expect(result.tags).toBeUndefined();
+  });
+
   it('truncates long description to 512 chars', () => {
     const longDesc = 'b'.repeat(600);
     const content = `---
@@ -166,6 +205,8 @@ function makeStubSkill(overrides: Partial<SkillInfo> & { name: string; scope: Sk
     pluginName: null,
     category: null,
     agentTypes: ['claude-code'],
+    metadataCategory: null,
+    tags: [],
     ...overrides,
   };
 }
