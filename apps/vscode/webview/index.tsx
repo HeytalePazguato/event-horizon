@@ -278,6 +278,7 @@ function App() {
       const store = useCommandCenterStore.getState();
       if (!store.singularityStats.firstEventAt) store.incrementSingularityStat('firstEventAt');
       store.incrementSingularityStat('eventsWitnessed');
+      store.recordEventTimestamp(agentId);
       if (type === 'agent.error') store.incrementSingularityStat('errorsWitnessed');
       // agentsSeen is now tracked at upsert time (below) to catch all agent types
 

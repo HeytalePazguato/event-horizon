@@ -6,6 +6,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ### Added
 - **Sidebar badge**: VS Code activity bar icon now shows a numeric badge with the count of active agents. Updates in real time as agents connect and disconnect
+- **Agent activity sparkline**: tiny inline SVG chart in the CommandCenter Info tab showing events/minute over the last 5 minutes. Displays per-agent activity when a planet is selected, global activity when viewing the singularity or no selection. Includes area fill, current-value dot, and `/m` label
+- **Welcome walkthrough**: VS Code native Getting Started guide with 5 steps — open the universe, connect an agent, explore the visualization, use the Command Center, and manage skills
 
 ## [0.0.6] — 2026-03-14
 

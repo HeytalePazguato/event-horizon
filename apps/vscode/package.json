@@ -63,7 +63,62 @@
           "name": "Universe"
         }
       ]
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "eventHorizon.gettingStarted",
+        "title": "Get Started with Event Horizon",
+        "description": "Set up your AI coding agent universe in 5 steps.",
+        "steps": [
+          {
+            "id": "openUniverse",
+            "title": "Open the Universe",
+            "description": "Open the Event Horizon panel from the activity bar.\n\n[Open Universe](command:eventHorizon.open)",
+            "media": {
+              "markdown": "assets/walkthrough/open-universe.md"
+            },
+            "completionEvents": [
+              "onView:eventHorizon.universe"
+            ]
+          },
+          {
+            "id": "connectAgent",
+            "title": "Connect an Agent",
+            "description": "Install hooks for Claude Code, OpenCode, or GitHub Copilot.\n\n[Connect Claude Code](command:eventHorizon.setupClaudeCode)",
+            "media": {
+              "markdown": "assets/walkthrough/connect-agent.md"
+            },
+            "completionEvents": [
+              "onCommand:eventHorizon.setupClaudeCode"
+            ]
+          },
+          {
+            "id": "exploreUniverse",
+            "title": "Explore the Universe",
+            "description": "Planets, ships, lightning arcs, astronauts — discover the cosmic visualization.",
+            "media": {
+              "markdown": "assets/walkthrough/explore-universe.md"
+            }
+          },
+          {
+            "id": "commandCenter",
+            "title": "Use the Command Center",
+            "description": "Select planets, view metrics, control agents, and earn achievements.",
+            "media": {
+              "markdown": "assets/walkthrough/command-center.md"
+            }
+          },
+          {
+            "id": "skills",
+            "title": "Manage Agent Skills",
+            "description": "Discover, create, organize, and browse skills from the marketplace.",
+            "media": {
+              "markdown": "assets/walkthrough/skills.md"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "build": "tsc && pnpm run build:webview",

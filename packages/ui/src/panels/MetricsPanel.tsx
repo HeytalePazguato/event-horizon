@@ -11,6 +11,9 @@ import { Sparkline } from '../Sparkline.js';
 import { ACHIEVEMENTS, getMedal, TIER_LABELS, tierBorderColor } from '../achievements/index.js';
 import { SkillsPanel } from './SkillsPanel.js';
 
+/** Stable empty array to avoid new-reference re-renders in Zustand selectors. */
+const EMPTY_TS: number[] = [];
+
 /** Renders a medal by achievement ID. */
 const MedalById: FC<{ id: string; size?: number }> = ({ id, size }) => {
   const Medal = getMedal(id);
@@ -232,9 +235,10 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
   const allLogs         = useCommandCenterStore((s) => s.logs);
   const unlockedCount   = useCommandCenterStore((s) => s.unlockedAchievements.length);
   const skillsCount     = useCommandCenterStore((s) => s.skills.length);
-  const sparklineTs     = useCommandCenterStore((s) =>
-    selectedAgentId ? (s.eventTimestamps[selectedAgentId] ?? []) : (s.eventTimestamps.__global__ ?? []),
-  );
+  const sparklineTs     = useCommandCenterStore((s) => {
+    const key = selectedAgentId ?? '__global__';
+    return s.eventTimestamps[key] ?? EMPTY_TS;
+  });
   const [view, setView] = useState<View>('info');
 
   const effectiveView: View = logsOpen ? 'logs' : view;
@@ -269,11 +273,27 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
         {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
         {effectiveView === 'medals' && <MedalsView />}
         {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
-        {effectiveView === 'info' && singularitySelected && <SingularityView stats={singularityStats} />}
+        {effectiveView === 'info' && singularitySelected && (
+          <>
+            <SingularityView stats={singularityStats} />
+            <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ ...labelStyle, marginBottom: 0 }}>Activity</span>
+              <Sparkline timestamps={sparklineTs} color="#d4844a" />
+            </div>
+          </>
+        )}
         {effectiveView === 'info' && !singularitySelected && (
-          <div style={{ color: '#4a5a52', fontSize: 11, padding: 8, border: '1px dashed #2a4a3a' }}>
-            Select an agent
-          </div>
+          <>
+            <div style={{ color: '#4a5a52', fontSize: 11, padding: 8, border: '1px dashed #2a4a3a' }}>
+              Select an agent
+            </div>
+            {sparklineTs.length > 0 && (
+              <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ ...labelStyle, marginBottom: 0 }}>Activity</span>
+                <Sparkline timestamps={sparklineTs} color="#4a8a5a" />
+              </div>
+            )}
+          </>
         )}
       </div>
     );
@@ -295,48 +315,54 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
       {effectiveView === 'medals' && <MedalsView />}
       {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
       {effectiveView === 'info' && (
-        <div style={gridStyle}>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Load</div>
-            <div style={valStyle}>{loadPct}%</div>
+        <>
+          <div style={gridStyle}>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Load</div>
+              <div style={valStyle}>{loadPct}%</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Tools</div>
+              <div style={valStyle}>{m.toolCalls}</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Prompts</div>
+              <div style={valStyle}>{m.promptsSubmitted}</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Errors</div>
+              <div style={m.errorCount > 0 ? errStyle : valStyle}>{m.errorCount}</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Success</div>
+              <div style={valStyle}>{successRate}%</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Agents</div>
+              <div style={valStyle}>{m.activeSubagents}/{m.subagentSpawns}</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Tasks</div>
+              <div style={valStyle}>{m.activeTasks}</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Top Tool</div>
+              <div style={{ ...valStyle, fontSize: 8 }}>{top}</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Uptime</div>
+              <div style={valStyle}>{uptime}</div>
+            </div>
+            <div style={cellStyle}>
+              <div style={labelStyle}>Last Act</div>
+              <div style={valStyle}>{lastActive}</div>
+            </div>
           </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Tools</div>
-            <div style={valStyle}>{m.toolCalls}</div>
+          <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ ...labelStyle, marginBottom: 0 }}>Activity</span>
+            <Sparkline timestamps={sparklineTs} color="#4a8a5a" />
           </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Prompts</div>
-            <div style={valStyle}>{m.promptsSubmitted}</div>
-          </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Errors</div>
-            <div style={m.errorCount > 0 ? errStyle : valStyle}>{m.errorCount}</div>
-          </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Success</div>
-            <div style={valStyle}>{successRate}%</div>
-          </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Agents</div>
-            <div style={valStyle}>{m.activeSubagents}/{m.subagentSpawns}</div>
-          </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Tasks</div>
-            <div style={valStyle}>{m.activeTasks}</div>
-          </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Top Tool</div>
-            <div style={{ ...valStyle, fontSize: 8 }}>{top}</div>
-          </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Uptime</div>
-            <div style={valStyle}>{uptime}</div>
-          </div>
-          <div style={cellStyle}>
-            <div style={labelStyle}>Last Act</div>
-            <div style={valStyle}>{lastActive}</div>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
