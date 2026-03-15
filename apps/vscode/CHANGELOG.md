@@ -18,6 +18,9 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Header button tooltips**: Settings (gear) and Minimize/Expand buttons in the Command Center header now show tooltips on hover, matching the command grid tooltip style
 - **Wider tooltips**: all portal tooltips (commands, medals, header buttons) widened from 172px to 190px to align with the right panel crest
 
+### Security
+- **flatted DoS vulnerability**: upgraded transitive dependency `flatted` from 3.3.4 to 3.4.1 via pnpm override to fix unbounded recursion DoS in `parse()` ([dependabot #9](https://github.com/nicolo-ribaudo/flatted/issues/88))
+
 ### Fixed
 - **Plugin Collector achievement**: fixed double-counting on webview reload — now uses absolute count recalibration (`recalibrateTieredAchievement`) that corrects inflated persisted tiers downward
 - **Medal layout overflow**: medals now display without a scrollbar for 3 rows; scrollbar only appears if more rows are needed. Command Center panels increased by 1px (133→134) with tooltip/toast positions adjusted accordingly

@@ -30,7 +30,8 @@
   },
   "pnpm": {
     "overrides": {
-      "undici": ">=7.24.0"
+      "undici": ">=7.24.0",
+      "flatted": ">=3.4.0"
     }
   },
   "packageManager": "pnpm@9.14.2",
