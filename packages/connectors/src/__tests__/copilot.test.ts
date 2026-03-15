@@ -159,32 +159,30 @@ describe('mapCopilotHookToEvent', () => {
     expect(result!.payload.skillName).toBeUndefined();
   });
 
-  it('extracts token/cost data from Stop event when present', () => {
+  it('extracts transcript_path from Stop event', () => {
     const result = mapCopilotHookToEvent({
       hook_event_name: 'Stop',
       session_id: 'sess-123',
-      total_input_tokens: 10000,
-      total_output_tokens: 5000,
-      total_cost_usd: 0.75,
+      transcript_path: '/home/user/.copilot/transcript.jsonl',
     });
     expect(result).not.toBeNull();
     expect(result!.type).toBe('agent.idle');
     const p = result!.payload as Record<string, unknown>;
-    expect(p.inputTokens).toBe(10000);
-    expect(p.outputTokens).toBe(5000);
-    expect(p.costUsd).toBe(0.75);
+    expect(p.transcriptPath).toBe('/home/user/.copilot/transcript.jsonl');
   });
 
-  it('does not extract token/cost from Stop when fields are absent', () => {
+  it('forwards usage data from Stop if present (forward-compat)', () => {
     const result = mapCopilotHookToEvent({
       hook_event_name: 'Stop',
       session_id: 'sess-123',
+      total_cost_usd: 0.75,
+      usage: { input_tokens: 10000, output_tokens: 5000 },
     });
     expect(result).not.toBeNull();
     const p = result!.payload as Record<string, unknown>;
-    expect(p.inputTokens).toBeUndefined();
-    expect(p.outputTokens).toBeUndefined();
-    expect(p.costUsd).toBeUndefined();
+    expect(p.inputTokens).toBe(10000);
+    expect(p.outputTokens).toBe(5000);
+    expect(p.costUsd).toBe(0.75);
   });
 
   it('does not set isSkill for non-skill tools', () => {

@@ -59,11 +59,16 @@ export function mapCopilotHookToEvent(payload: unknown): AgentEvent | null {
     if (p.agent_type) safePayload.subagentType = String(p.agent_type).slice(0, 128);
   }
 
-  // Extract token/cost data from Stop events if present (cumulative session totals)
+  // Pass transcript_path for Stop events (same as Claude Code — parse in extension host)
   if (hookEvent === 'Stop') {
-    if (typeof p.total_input_tokens === 'number') safePayload.inputTokens = p.total_input_tokens;
-    if (typeof p.total_output_tokens === 'number') safePayload.outputTokens = p.total_output_tokens;
+    if (typeof p.transcript_path === 'string') safePayload.transcriptPath = String(p.transcript_path).slice(0, 1024);
+    // Forward any direct cost/usage fields if present (forward-compat)
     if (typeof p.total_cost_usd === 'number') safePayload.costUsd = p.total_cost_usd;
+    const usage = (p.usage as Record<string, unknown> | undefined);
+    if (usage) {
+      if (typeof usage.input_tokens === 'number') safePayload.inputTokens = usage.input_tokens;
+      if (typeof usage.output_tokens === 'number') safePayload.outputTokens = usage.output_tokens;
+    }
   }
 
   // Extract file_path from tool_input for file-touching tools (never content)

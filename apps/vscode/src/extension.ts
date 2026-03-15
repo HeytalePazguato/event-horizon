@@ -15,6 +15,7 @@ import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks'
 import { setupCopilotHooks, hasStaleCopilotHooks } from './setupCopilotHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
+import { parseTranscriptUsage } from './transcriptParser';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 const webviewViewRef: { current: vscode.WebviewView | null } = { current: null };
@@ -138,6 +139,30 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     if (webviewRef.current) {
       webviewRef.current.postMessage({ type: 'event', payload: event });
+    }
+
+    // Parse transcript for token/cost data after Stop events from Claude Code
+    const transcriptPath = event.payload?.transcriptPath as string | undefined;
+    if (transcriptPath && event.agentType === 'claude-code' && !event.payload?.inputTokens) {
+      parseTranscriptUsage(transcriptPath).then((usage) => {
+        if (!usage || !webviewRef.current) return;
+        // Send a synthetic metrics-update event with token/cost data
+        const tokenEvent: AgentEvent = {
+          id: `ev-tokens-${Date.now()}`,
+          agentId: event.agentId,
+          agentName: event.agentName,
+          agentType: event.agentType,
+          type: 'message.receive',
+          timestamp: Date.now(),
+          payload: {
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            costUsd: usage.costUsd ?? 0,
+          },
+        };
+        metricsEngine.process(tokenEvent);
+        webviewRef.current.postMessage({ type: 'event', payload: tokenEvent });
+      }).catch(() => { /* ignore parse errors */ });
     }
 
     // Update sidebar badge with active agent count

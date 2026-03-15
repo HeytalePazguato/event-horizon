@@ -176,6 +176,8 @@ function App() {
   const agentLastSeenRef = useRef<Record<string, number>>({});
   const agentMapRef = useRef(agentMap);
   agentMapRef.current = agentMap;
+  const metricsMapRef = useRef(metricsMap);
+  metricsMapRef.current = metricsMap;
   // Track last tool event timestamp per agent — used to suppress stale permission_prompt notifications
   const shipTimerIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   /** Active files per normalized path — tracks which agents touched a file recently. */
@@ -222,11 +224,12 @@ function App() {
         return;
       }
 
-      // init-singularity: hydrate persisted singularity stats
+      // init-singularity: hydrate persisted singularity stats (merge with defaults for forward-compat)
       if (msg?.type === 'init-singularity') {
-        const data = msg as unknown as { stats: import('@event-horizon/ui').SingularityStats };
+        const data = msg as unknown as { stats: Record<string, unknown> };
         if (data.stats) {
-          useCommandCenterStore.getState().setSingularityStats(data.stats);
+          const current = useCommandCenterStore.getState().singularityStats;
+          useCommandCenterStore.getState().setSingularityStats({ ...current, ...data.stats } as typeof current);
         }
         return;
       }
@@ -426,18 +429,18 @@ function App() {
       });
 
       // ── Update singularity token/cost totals when token data arrives ──
+      // (deferred to avoid side-effects inside React state updaters)
       if (typeof raw.payload?.inputTokens === 'number' || typeof raw.payload?.outputTokens === 'number' || typeof raw.payload?.costUsd === 'number') {
-        // Recompute totals from all agents' latest metrics
-        setMetricsMap((current) => {
+        queueMicrotask(() => {
+          const currentMetrics = Object.values(metricsMapRef.current);
           let totalTokens = 0;
           let totalCost = 0;
-          for (const am of Object.values(current)) {
+          for (const am of currentMetrics) {
             totalTokens += (am.inputTokens ?? 0) + (am.outputTokens ?? 0);
             totalCost += am.estimatedCostUsd ?? 0;
           }
           const s = useCommandCenterStore.getState();
           s.setSingularityStats({ ...s.singularityStats, totalTokens, totalCostUsd: totalCost });
-          return current; // no mutation
         });
       }
 

@@ -150,45 +150,42 @@ describe('mapClaudeHookToEvent', () => {
     expect(p.skillName).toBeUndefined();
   });
 
-  it('extracts token/cost data from Stop event', () => {
+  it('extracts transcript_path from Stop event', () => {
     const result = mapClaudeHookToEvent({
       hook_event_name: 'Stop',
       session_id: 's1',
-      total_input_tokens: 15000,
-      total_output_tokens: 8500,
-      total_cost_usd: 1.23,
+      transcript_path: '/home/user/.claude/projects/abc123.jsonl',
     });
     expect(result).not.toBeNull();
     expect(result!.type).toBe('task.complete');
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.transcriptPath).toBe('/home/user/.claude/projects/abc123.jsonl');
+  });
+
+  it('extracts token/cost from Stop if usage is present (forward-compat)', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      total_cost_usd: 1.23,
+      usage: { input_tokens: 15000, output_tokens: 8500 },
+    });
+    expect(result).not.toBeNull();
     const p = result!.payload as Record<string, unknown>;
     expect(p.inputTokens).toBe(15000);
     expect(p.outputTokens).toBe(8500);
     expect(p.costUsd).toBe(1.23);
   });
 
-  it('extracts token/cost from nested payload in Stop event', () => {
-    const result = mapClaudeHookToEvent({
-      hook_event_name: 'Stop',
-      session_id: 's1',
-      payload: { total_input_tokens: 5000, total_output_tokens: 2000, total_cost_usd: 0.50 },
-    });
-    expect(result).not.toBeNull();
-    const p = result!.payload as Record<string, unknown>;
-    expect(p.inputTokens).toBe(5000);
-    expect(p.outputTokens).toBe(2000);
-    expect(p.costUsd).toBe(0.50);
-  });
-
-  it('does not extract token/cost from non-Stop events', () => {
+  it('does not extract transcript_path from non-Stop events', () => {
     const result = mapClaudeHookToEvent({
       hook_event_name: 'PreToolUse',
       session_id: 's1',
       tool_name: 'Read',
-      total_input_tokens: 9999,
+      transcript_path: '/some/path.jsonl',
     });
     expect(result).not.toBeNull();
     const p = result!.payload as Record<string, unknown>;
-    expect(p.inputTokens).toBeUndefined();
+    expect(p.transcriptPath).toBeUndefined();
   });
 
   it('does not set isSkill for non-Skill tools', () => {

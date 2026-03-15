@@ -87,16 +87,17 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     if (nested.cwd) safePayload.cwd = String(nested.cwd).slice(0, 512);
   }
 
-  // Extract token/cost data from Stop events (cumulative session totals)
+  // Pass transcript_path for Stop events — the extension host will parse
+  // the transcript JSONL to extract token usage and cost data.
   if (hookEvent === 'Stop') {
-    if (typeof p.total_input_tokens === 'number') safePayload.inputTokens = p.total_input_tokens;
-    if (typeof p.total_output_tokens === 'number') safePayload.outputTokens = p.total_output_tokens;
+    const tp = p.transcript_path ?? nested?.transcript_path;
+    if (typeof tp === 'string') safePayload.transcriptPath = tp.slice(0, 1024);
+    // Forward any direct cost/usage fields if the hook ever includes them
     if (typeof p.total_cost_usd === 'number') safePayload.costUsd = p.total_cost_usd;
-    // Also check nested payload
-    if (nested) {
-      if (typeof nested.total_input_tokens === 'number') safePayload.inputTokens = nested.total_input_tokens;
-      if (typeof nested.total_output_tokens === 'number') safePayload.outputTokens = nested.total_output_tokens;
-      if (typeof nested.total_cost_usd === 'number') safePayload.costUsd = nested.total_cost_usd;
+    const usage = (p.usage as Record<string, unknown> | undefined);
+    if (usage) {
+      if (typeof usage.input_tokens === 'number') safePayload.inputTokens = usage.input_tokens;
+      if (typeof usage.output_tokens === 'number') safePayload.outputTokens = usage.output_tokens;
     }
   }
 
