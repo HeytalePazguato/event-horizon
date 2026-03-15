@@ -91,7 +91,7 @@ const MedalsView: FC = () => {
           count={achievementCounts[hovered.id]}
         />
       )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, overflowY: 'auto', maxHeight: 110 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {ACHIEVEMENTS.map((ach) => {
           const unlocked = unlockedSet.has(ach.id);
           const tier = achievementTiers[ach.id];

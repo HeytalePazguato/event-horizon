@@ -65,6 +65,8 @@ export interface UniverseProps {
   boostedAgentIds?: Record<string, boolean>;
   selectedAgentId?: string | null;
   centerRequestedAt?: number;
+  /** Timestamp trigger — clears custom planet positions and reverts to auto-layout. */
+  resetLayoutRequestedAt?: number;
   /** Number of active subagents per agent — rendered as orbiting moons. */
   activeSubagents?: Record<string, number>;
   /** Number of installed skills per agent. */
@@ -265,6 +267,7 @@ export const Universe: FC<UniverseProps> = ({
   boostedAgentIds = {},
   selectedAgentId = null,
   centerRequestedAt = 0,
+  resetLayoutRequestedAt = 0,
   activeSubagents = {},
   agentSkillCounts = {},
   activeSkills = {},
@@ -308,6 +311,10 @@ export const Universe: FC<UniverseProps> = ({
   /** Active lightning arcs — one Graphics per collision, redrawn each frame. */
   const lightningArcsRef = useRef<Map<string, Graphics>>(new Map());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  /** User-dragged positions override auto-layout. Cleared on reset. */
+  const customPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  /** Set to true while a planet is being dragged — suppresses canvas pan. */
+  const planetDragRef = useRef<{ agentId: string; startX: number; startY: number } | null>(null);
   const agentStatesRef    = useRef<Record<string, string>>(agentStates);
   const metricsRef        = useRef<Record<string, MetricsView>>(metrics);
   const pausedRef         = useRef<Record<string, boolean>>(pausedAgentIds);
@@ -688,6 +695,28 @@ export const Universe: FC<UniverseProps> = ({
     panContainer.y = sz.height / 2 + posRef.current.y;
   }, [centerRequestedAt]);
 
+  // --- reset layout (clear custom positions) ---------------------------------
+  useEffect(() => {
+    if (resetLayoutRequestedAt <= 0) return;
+    customPositionsRef.current.clear();
+    // Recompute positions and move planets back
+    const planetsContainer = planetsContainerRef.current;
+    if (!planetsContainer) return;
+    const { positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED);
+    workspaceGroupsRef.current = workspaceGroups;
+    for (const child of planetsContainer.children) {
+      const p = child as ExtendedPlanet;
+      if (p.__agentId) {
+        const pos = posMap.get(p.__agentId);
+        if (pos) {
+          p.x = pos.x;
+          p.y = pos.y;
+        }
+      }
+    }
+    planetPositionsRef.current = posMap;
+  }, [resetLayoutRequestedAt, agents]);
+
   // --- planets (diff-based: reuse existing, add new, spiral removed) -------
   useEffect(() => {
     const planetsContainer = planetsContainerRef.current;
@@ -730,6 +759,12 @@ export const Universe: FC<UniverseProps> = ({
 
     // 2. Compute positions + workspace groups
     const { positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED);
+    // Apply user-dragged custom positions (overrides auto-layout)
+    for (const [agentId, customPos] of customPositionsRef.current) {
+      if (posMap.has(agentId)) {
+        posMap.set(agentId, customPos);
+      }
+    }
     workspaceGroupsRef.current = workspaceGroups;
 
     // 2b. Draw workspace asteroid belts
@@ -783,14 +818,36 @@ export const Universe: FC<UniverseProps> = ({
 
         planet.on('pointerover', () => onPlanetHoverRef.current?.(agent.id));
         planet.on('pointerout', () => onPlanetHoverRef.current?.(null));
-        planet.on('pointertap', () => onPlanetClickRef.current?.(agent.id));
+        planet.on('pointertap', () => {
+          // Only fire click if we didn't just finish dragging
+          if (!planetDragRef.current) onPlanetClickRef.current?.(agent.id);
+        });
+
+        // Drag-to-rearrange handlers
+        const thisPlanet = planet;
+        thisPlanet.on('pointerdown', (e: { stopPropagation: () => void; global: { x: number; y: number } }) => {
+          e.stopPropagation();
+          const scale = scaleRef.current;
+          const panPos = posRef.current;
+          const sz = sizeRef.current;
+          const worldX = (e.global.x - sz.width / 2 - panPos.x) / scale;
+          const worldY = (e.global.y - sz.height / 2 - panPos.y) / scale;
+          planetDragRef.current = { agentId: agent.id, startX: worldX - thisPlanet.x, startY: worldY - thisPlanet.y };
+          thisPlanet.cursor = 'grabbing';
+        });
 
         planetsContainer.addChild(planet);
         planetMap.set(agent.id, planet);
       } else {
-        // Update existing planet position
-        planet.x = pos.x;
-        planet.y = pos.y;
+        // Update existing planet position — respect custom drag positions
+        const customPos = customPositionsRef.current.get(agent.id);
+        if (customPos) {
+          planet.x = customPos.x;
+          planet.y = customPos.y;
+        } else {
+          planet.x = pos.x;
+          planet.y = pos.y;
+        }
       }
 
       // Update alpha for selection
@@ -944,12 +1001,62 @@ export const Universe: FC<UniverseProps> = ({
   }, []);
 
   const onPointerDown = useCallback((e: PointerEvent) => {
+    // Don't start canvas pan if a planet drag is active
+    if (planetDragRef.current) return;
     if (e.button === 0) {
       dragRef.current = { x: e.clientX - posRef.current.x, y: e.clientY - posRef.current.y };
     }
   }, []);
 
   const onPointerMove = useCallback((e: PointerEvent) => {
+    // Planet drag — move the planet in world coordinates
+    if (planetDragRef.current) {
+      const scale = scaleRef.current;
+      const panPos = posRef.current;
+      const sz = sizeRef.current;
+      const worldX = (e.clientX - sz.width / 2 - panPos.x) / scale;
+      const worldY = (e.clientY - sz.height / 2 - panPos.y) / scale;
+      const drag = planetDragRef.current;
+      const newX = worldX - drag.startX;
+      const newY = worldY - drag.startY;
+
+      // Find the planet container and move it
+      const planetsContainer = planetsContainerRef.current;
+      if (planetsContainer) {
+        for (const child of planetsContainer.children) {
+          const p = child as ExtendedPlanet;
+          if (p.__agentId === drag.agentId) {
+            // Check if this planet is in a workspace group — move the group together
+            const groups = workspaceGroupsRef.current;
+            const group = groups.find((g) => g.agentIds.includes(drag.agentId));
+            if (group && group.agentIds.length > 1) {
+              const dx = newX - p.x;
+              const dy = newY - p.y;
+              for (const memberId of group.agentIds) {
+                const memberPlanet = planetsContainer.children.find(
+                  (c) => (c as ExtendedPlanet).__agentId === memberId,
+                ) as ExtendedPlanet | undefined;
+                if (memberPlanet) {
+                  memberPlanet.x += dx;
+                  memberPlanet.y += dy;
+                  customPositionsRef.current.set(memberId, { x: memberPlanet.x, y: memberPlanet.y });
+                  planetPositionsRef.current.set(memberId, { x: memberPlanet.x, y: memberPlanet.y });
+                }
+              }
+            } else {
+              p.x = newX;
+              p.y = newY;
+              customPositionsRef.current.set(drag.agentId, { x: newX, y: newY });
+              planetPositionsRef.current.set(drag.agentId, { x: newX, y: newY });
+            }
+            break;
+          }
+        }
+      }
+      return; // Don't pan while dragging a planet
+    }
+
+    // Canvas pan
     if (!dragRef.current) return;
     posRef.current = { x: e.clientX - dragRef.current.x, y: e.clientY - dragRef.current.y };
     const panContainer = panContainerRef.current;
@@ -968,6 +1075,22 @@ export const Universe: FC<UniverseProps> = ({
   }, []);
 
   const onPointerUp = useCallback(() => {
+    if (planetDragRef.current) {
+      // Reset cursor on the dragged planet
+      const planetsContainer = planetsContainerRef.current;
+      if (planetsContainer) {
+        for (const child of planetsContainer.children) {
+          const p = child as ExtendedPlanet;
+          if (p.__agentId === planetDragRef.current.agentId) {
+            p.cursor = 'pointer';
+            break;
+          }
+        }
+      }
+      // Small delay before clearing so pointertap doesn't fire
+      setTimeout(() => { planetDragRef.current = null; }, 50);
+      return;
+    }
     dragRef.current = null;
   }, []);
 

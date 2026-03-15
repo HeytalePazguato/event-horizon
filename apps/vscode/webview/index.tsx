@@ -152,6 +152,7 @@ function App() {
   const incrementTiered      = useCommandCenterStore((s) => s.incrementTieredAchievement);
   const selectedAgentId      = useCommandCenterStore((s) => s.selectedAgentId);
   const centerRequestedAt    = useCommandCenterStore((s) => s.centerRequestedAt);
+  const resetLayoutRequestedAt = useCommandCenterStore((s) => s.resetLayoutRequestedAt);
   const connectOpen          = useCommandCenterStore((s) => s.connectOpen);
   const toggleConnect        = useCommandCenterStore((s) => s.toggleConnect);
   const spawnOpen            = useCommandCenterStore((s) => s.spawnOpen);
@@ -1079,6 +1080,7 @@ function App() {
           boostedAgentIds={boostedAgentIds}
           selectedAgentId={selectedAgentId}
           centerRequestedAt={centerRequestedAt}
+          resetLayoutRequestedAt={resetLayoutRequestedAt}
           onPlanetHover={handlePlanetHover}
           onPlanetClick={handlePlanetClick}
           onAstronautConsumed={handleAstronautConsumed}

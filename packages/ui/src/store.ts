@@ -201,6 +201,9 @@ export interface CommandCenterState {
   /** Timestamp-based signal to trigger screenshot from webview. */
   screenshotRequestedAt: number;
   requestScreenshot: () => void;
+  /** Timestamp-based signal to reset planet layout to auto-computed positions. */
+  resetLayoutRequestedAt: number;
+  requestResetLayout: () => void;
   togglePause: (id: string) => void;
   toggleIsolate: (id: string) => void;
   triggerBoost: (id: string) => void;
@@ -338,6 +341,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
 
   setSingularityStats: (stats) => set({ singularityStats: stats }),
 
+  resetLayoutRequestedAt: 0,
+  requestResetLayout: () => set({ resetLayoutRequestedAt: Date.now() }),
   requestCenter: () => set({ centerRequestedAt: Date.now() }),
   requestExport: () => set({ exportRequestedAt: Date.now() }),
   requestScreenshot: () => set({ screenshotRequestedAt: Date.now() }),

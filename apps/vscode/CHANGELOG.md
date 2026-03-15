@@ -9,9 +9,11 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Welcome walkthrough**: VS Code native Getting Started guide with 5 steps — open the universe, connect an agent, explore the visualization, use the Command Center, and manage skills
 - **Settings modal**: gear button (&#x2699;) in the CommandCenter header opens a full settings modal with live planet previews. Customize agent colors and planet size multipliers per agent type with color pickers and size sliders (0.4–2.0×). Each agent row shows a mini SVG planet that updates in real time as you adjust settings. Colored aura ring around planets makes color changes immediately visible in the universe. Additional settings: animation speed (0.25–3×), achievements on/off toggle, event server port configuration. Includes "Reset to Defaults" button. All settings persist across VS Code restarts via `globalState`. 10 new tests (5 store, 5 renderer)
 - **Auto-detect running agents** (best-effort): on activation, Event Horizon nudges agent config files so already-running sessions announce themselves. Planets appear immediately for detected sessions; any remaining sessions appear as soon as you interact with them
+- **Drag to rearrange planets**: click and drag any planet to reposition it. Dragging a planet in a workspace group moves the entire group together. Moons, ships, and lightning arcs follow the new position in real time. Reset Layout button in the command grid reverts to auto-layout. Custom positions persist for the session
 
 ### Improved
 - **Skill search debounce**: search input in the Skills tab now debounces by 150ms to prevent jank with large skill collections
+- **Skill agent filters**: agent type buttons are now multi-select toggles (all ON by default). Toggle off to hide skills for that agent. Renamed "OC" to "OpenCode"
 
 ## [0.0.6] — 2026-03-14
 
