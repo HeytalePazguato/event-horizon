@@ -5,12 +5,15 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ## [0.0.8] — Unreleased
 
 ### Added
+- **Per-agent token & cost tracking**: displays cumulative token usage (input + output + cache) and estimated USD cost per agent in the Command Center Info tab. Totals shown in the singularity view. Cost estimated using Claude's per-token rates
+- **Transcript watcher (Claude Code)**: tails the Claude Code JSONL transcript file in real time for richer, more accurate events than hooks alone. Provides precise waiting ring timing from `AskUserQuestion` tool use, per-turn token accumulation, and full tool metadata. Hooks remain as fallback if the transcript file is inaccessible
 - **Astronaut mass variation**: astronauts now spawn with random mass (0.5–2.0). Light astronauts drift faster, curve dramatically near planets, and get flung around by gravity. Heavy astronauts move slowly, resist gravitational pull, and maintain straighter paths. Heavier astronauts appear slightly larger
 
 ### Improved
 - **Planet gravity**: planets now have a localized gravity field (3× radius). Astronauts passing nearby curve their trajectory; only those very close get captured into orbit. Exponential falloff (t⁶) keeps the edge gentle and the core strong. Larger planets pull stronger (proportional to rendered radius, including settings size override). Jetpack can escape the pull
 
 ### Fixed
+- **Ghost skill indicator**: the active skill dot no longer appears for built-in CLI commands (e.g. `/commit`) that are not actual installed skills
 - **Planet click-to-select broken after drag feature**: clicking a planet no longer triggers the Command Center — drag handler was intercepting all clicks. Fixed by tracking whether the pointer actually moved before suppressing the click event
 - **Cooperation ship spam with many agents**: when 5+ agents share a workspace, overlapping ship arcs would obscure the planets. Capped visible ships to 2 per directed pair, removed burst convoys, scaled spawn intervals by pair count so large groups don't flood the universe, and increased ship travel speed for faster visual turnover
 - **Marketplace search timeout**: API searches now have an 8-second timeout. Shows "Search timed out." or "Search failed." with a Retry button instead of spinning forever

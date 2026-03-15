@@ -231,6 +231,8 @@ export class TranscriptWatcher {
   private destroyed = false;
   /** Tracks pending waiting tool_use IDs to match with tool_results. */
   private pendingWaitingToolIds = new Set<string>();
+  /** Tracks pending Skill tool_use IDs so we can mark tool_results as isSkill. */
+  private pendingSkillToolIds = new Set<string>();
   /** Cumulative token usage for this session. */
   private cumulativeInputTokens = 0;
   private cumulativeOutputTokens = 0;
@@ -346,27 +348,36 @@ export class TranscriptWatcher {
           delete parsed.payload.cacheCreationTokensDelta;
         }
 
-        // Track waiting tool IDs
-        if (parsed.isWaiting) {
+        // Track waiting and skill tool_use IDs from assistant tool_use entries
+        if (parsed.eventType === 'tool.call') {
           const content = (entry.message as Record<string, unknown>)?.content;
           if (Array.isArray(content)) {
             for (const c of content as Array<Record<string, unknown>>) {
-              if (c.type === 'tool_use' && WAITING_TOOLS.has(c.name as string)) {
-                this.pendingWaitingToolIds.add(c.id as string);
-              }
+              if (c.type !== 'tool_use') continue;
+              const name = c.name as string | undefined;
+              const id = c.id as string | undefined;
+              if (!id) continue;
+              if (name && WAITING_TOOLS.has(name)) this.pendingWaitingToolIds.add(id);
+              if (name === 'Skill') this.pendingSkillToolIds.add(id);
             }
           }
         }
 
-        // Check if this tool_result clears a specific waiting tool
-        if (parsed.clearsWaiting && parsed.eventType === 'tool.result') {
+        // Check if this tool_result clears waiting or skill state
+        if (parsed.eventType === 'tool.result') {
           const content = (entry.message as Record<string, unknown>)?.content;
           if (Array.isArray(content)) {
             for (const c of content as Array<Record<string, unknown>>) {
-              if (c.type === 'tool_result' && this.pendingWaitingToolIds.has(c.tool_use_id as string)) {
-                this.pendingWaitingToolIds.delete(c.tool_use_id as string);
-                // Emit a specific "waiting cleared" event
+              if (c.type !== 'tool_result') continue;
+              const toolUseId = c.tool_use_id as string | undefined;
+              if (!toolUseId) continue;
+              if (this.pendingWaitingToolIds.has(toolUseId)) {
+                this.pendingWaitingToolIds.delete(toolUseId);
                 parsed.payload.waitingCleared = true;
+              }
+              if (this.pendingSkillToolIds.has(toolUseId)) {
+                this.pendingSkillToolIds.delete(toolUseId);
+                parsed.payload.isSkill = true;
               }
             }
           }
