@@ -24,6 +24,7 @@ import {
   computePlanetPositions,
   computeBeltContour,
   PLANET_MIN_RADIUS,
+  MIN_PIXEL_DIST,
 } from './math.js';
 import type { AgentView, WorkspaceGroup } from './math.js';
 export type { AgentView, WorkspaceGroup } from './math.js';
@@ -168,8 +169,15 @@ const ROCK_GLOW_COLORS = [0xddccaa, 0xccddee, 0xeeddbb];
  * Draw an asteroid belt around a workspace group using the member positions.
  * Creates an irregular contour and scatters bright rocks along it.
  */
-function drawAsteroidBelt(memberPositions: Array<{ x: number; y: number }>): Container {
-  const container = new Container();
+type BeltContainer = Container & { __groupAgentIds?: string[] };
+
+function drawAsteroidBelt(memberPositions: Array<{ x: number; y: number }>, groupAgentIds?: string[]): BeltContainer {
+  const container = new Container() as BeltContainer;
+  if (groupAgentIds) {
+    container.__groupAgentIds = groupAgentIds;
+    container.eventMode = 'static';
+    container.cursor = 'grab';
+  }
   const g = new Graphics();
   const contour = computeBeltContour(memberPositions);
   const n = contour.length;
@@ -227,6 +235,20 @@ function drawAsteroidBelt(memberPositions: Array<{ x: number; y: number }>): Con
   }
 
   container.addChild(g);
+
+  // Invisible wide hit area along the contour for drag interaction
+  if (groupAgentIds) {
+    const hitG = new Graphics();
+    for (let i = 0; i < n; i++) {
+      const p0 = contour[i];
+      const p1 = contour[(i + 1) % n];
+      hitG.moveTo(p0.x, p0.y);
+      hitG.lineTo(p1.x, p1.y);
+    }
+    hitG.stroke({ width: 30, color: 0x000000, alpha: 0.001 });
+    container.addChild(hitG);
+  }
+
   return container;
 }
 
@@ -313,8 +335,10 @@ export const Universe: FC<UniverseProps> = ({
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   /** User-dragged positions override auto-layout. Cleared on reset. */
   const customPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  /** Set to true while a planet is being dragged — suppresses canvas pan. */
+  /** Active while a planet is being dragged — suppresses canvas pan. */
   const planetDragRef = useRef<{ agentId: string; startX: number; startY: number } | null>(null);
+  /** Active while an asteroid belt (group) is being dragged. */
+  const beltDragRef = useRef<{ agentIds: string[]; startX: number; startY: number } | null>(null);
   const agentStatesRef    = useRef<Record<string, string>>(agentStates);
   const metricsRef        = useRef<Record<string, MetricsView>>(metrics);
   const pausedRef         = useRef<Record<string, boolean>>(pausedAgentIds);
@@ -699,7 +723,6 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => {
     if (resetLayoutRequestedAt <= 0) return;
     customPositionsRef.current.clear();
-    // Recompute positions and move planets back
     const planetsContainer = planetsContainerRef.current;
     if (!planetsContainer) return;
     const { positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED);
@@ -708,13 +731,32 @@ export const Universe: FC<UniverseProps> = ({
       const p = child as ExtendedPlanet;
       if (p.__agentId) {
         const pos = posMap.get(p.__agentId);
-        if (pos) {
-          p.x = pos.x;
-          p.y = pos.y;
-        }
+        if (pos) { p.x = pos.x; p.y = pos.y; }
       }
     }
     planetPositionsRef.current = posMap;
+    // Redraw asteroid belts at auto-layout positions
+    const beltsContainer = beltsContainerRef.current;
+    if (beltsContainer) {
+      while (beltsContainer.children.length > 0) {
+        beltsContainer.children[0].destroy({ children: true });
+      }
+      for (const group of workspaceGroups) {
+        if (group.agentIds.length > 1) {
+          const belt = drawAsteroidBelt(group.memberPositions, group.agentIds);
+          belt.on('pointerdown', (e: { stopPropagation: () => void; global: { x: number; y: number } }) => {
+            e.stopPropagation();
+            const scale = scaleRef.current;
+            const panPos = posRef.current;
+            const sz = sizeRef.current;
+            const wx = (e.global.x - sz.width / 2 - panPos.x) / scale;
+            const wy = (e.global.y - sz.height / 2 - panPos.y) / scale;
+            beltDragRef.current = { agentIds: [...group.agentIds], startX: wx, startY: wy };
+          });
+          beltsContainer.addChild(belt);
+        }
+      }
+    }
   }, [resetLayoutRequestedAt, agents]);
 
   // --- planets (diff-based: reuse existing, add new, spiral removed) -------
@@ -759,24 +801,69 @@ export const Universe: FC<UniverseProps> = ({
 
     // 2. Compute positions + workspace groups
     const { positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED);
-    // Apply user-dragged custom positions (overrides auto-layout)
+    // Apply user-dragged custom positions (overrides auto-layout).
+    // For workspace groups: if some members were dragged, shift new (non-dragged)
+    // members by the same delta so they appear near the dragged ones.
+    for (const group of workspaceGroups) {
+      const customMembers: Array<{ id: string; autoPos: { x: number; y: number }; customPos: { x: number; y: number } }> = [];
+      for (const id of group.agentIds) {
+        const cp = customPositionsRef.current.get(id);
+        const ap = posMap.get(id);
+        if (cp && ap) customMembers.push({ id, autoPos: ap, customPos: cp });
+      }
+      if (customMembers.length > 0) {
+        // Compute average delta from auto to custom positions
+        let dx = 0, dy = 0;
+        for (const m of customMembers) {
+          dx += m.customPos.x - m.autoPos.x;
+          dy += m.customPos.y - m.autoPos.y;
+        }
+        dx /= customMembers.length;
+        dy /= customMembers.length;
+        // Apply custom positions to dragged members, shift non-dragged by group delta
+        for (const id of group.agentIds) {
+          const cp = customPositionsRef.current.get(id);
+          if (cp) {
+            posMap.set(id, cp);
+          } else {
+            const ap = posMap.get(id);
+            if (ap) posMap.set(id, { x: ap.x + dx, y: ap.y + dy });
+          }
+        }
+      }
+    }
+    // Also apply custom positions for solo (non-grouped) agents
     for (const [agentId, customPos] of customPositionsRef.current) {
       if (posMap.has(agentId)) {
         posMap.set(agentId, customPos);
       }
+    }
+    // Update workspace group memberPositions to reflect final positions
+    for (const group of workspaceGroups) {
+      group.memberPositions = group.agentIds.map((id) => posMap.get(id) ?? { x: 0, y: 0 });
     }
     workspaceGroupsRef.current = workspaceGroups;
 
     // 2b. Draw workspace asteroid belts
     const beltsContainer = beltsContainerRef.current;
     if (beltsContainer) {
-      // Remove old belt graphics
       while (beltsContainer.children.length > 0) {
         beltsContainer.children[0].destroy({ children: true });
       }
       for (const group of workspaceGroups) {
-        const belt = drawAsteroidBelt(group.memberPositions);
-        beltsContainer.addChild(belt);
+        if (group.agentIds.length > 1) {
+          const belt = drawAsteroidBelt(group.memberPositions, group.agentIds);
+          belt.on('pointerdown', (e: { stopPropagation: () => void; global: { x: number; y: number } }) => {
+            e.stopPropagation();
+            const scale = scaleRef.current;
+            const panPos = posRef.current;
+            const sz = sizeRef.current;
+            const worldX = (e.global.x - sz.width / 2 - panPos.x) / scale;
+            const worldY = (e.global.y - sz.height / 2 - panPos.y) / scale;
+            beltDragRef.current = { agentIds: [...group.agentIds], startX: worldX, startY: worldY };
+          });
+          beltsContainer.addChild(belt);
+        }
       }
     }
 
@@ -1001,15 +1088,15 @@ export const Universe: FC<UniverseProps> = ({
   }, []);
 
   const onPointerDown = useCallback((e: PointerEvent) => {
-    // Don't start canvas pan if a planet drag is active
-    if (planetDragRef.current) return;
+    // Don't start canvas pan if a planet or belt drag is active
+    if (planetDragRef.current || beltDragRef.current) return;
     if (e.button === 0) {
       dragRef.current = { x: e.clientX - posRef.current.x, y: e.clientY - posRef.current.y };
     }
   }, []);
 
   const onPointerMove = useCallback((e: PointerEvent) => {
-    // Planet drag — move the planet in world coordinates
+    // Planet drag — move individual planet in world coordinates
     if (planetDragRef.current) {
       const scale = scaleRef.current;
       const panPos = posRef.current;
@@ -1017,43 +1104,131 @@ export const Universe: FC<UniverseProps> = ({
       const worldX = (e.clientX - sz.width / 2 - panPos.x) / scale;
       const worldY = (e.clientY - sz.height / 2 - panPos.y) / scale;
       const drag = planetDragRef.current;
-      const newX = worldX - drag.startX;
-      const newY = worldY - drag.startY;
+      let newX = worldX - drag.startX;
+      let newY = worldY - drag.startY;
 
-      // Find the planet container and move it
+      // Enforce minimum distance from singularity (center)
+      const dist = Math.sqrt(newX * newX + newY * newY);
+      if (dist < PLANET_MIN_RADIUS) {
+        const angle = Math.atan2(newY, newX);
+        newX = Math.cos(angle) * PLANET_MIN_RADIUS;
+        newY = Math.sin(angle) * PLANET_MIN_RADIUS;
+      }
+
+      // Enforce minimum distance from all other planets
       const planetsContainer = planetsContainerRef.current;
       if (planetsContainer) {
         for (const child of planetsContainer.children) {
+          const other = child as ExtendedPlanet;
+          if (!other.__agentId || other.__agentId === drag.agentId) continue;
+          const dx = newX - other.x;
+          const dy = newY - other.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < MIN_PIXEL_DIST && d > 0) {
+            const pushAngle = Math.atan2(dy, dx);
+            newX = other.x + Math.cos(pushAngle) * MIN_PIXEL_DIST;
+            newY = other.y + Math.sin(pushAngle) * MIN_PIXEL_DIST;
+          }
+        }
+
+        for (const child of planetsContainer.children) {
           const p = child as ExtendedPlanet;
           if (p.__agentId === drag.agentId) {
-            // Check if this planet is in a workspace group — move the group together
-            const groups = workspaceGroupsRef.current;
-            const group = groups.find((g) => g.agentIds.includes(drag.agentId));
-            if (group && group.agentIds.length > 1) {
-              const dx = newX - p.x;
-              const dy = newY - p.y;
-              for (const memberId of group.agentIds) {
-                const memberPlanet = planetsContainer.children.find(
-                  (c) => (c as ExtendedPlanet).__agentId === memberId,
-                ) as ExtendedPlanet | undefined;
-                if (memberPlanet) {
-                  memberPlanet.x += dx;
-                  memberPlanet.y += dy;
-                  customPositionsRef.current.set(memberId, { x: memberPlanet.x, y: memberPlanet.y });
-                  planetPositionsRef.current.set(memberId, { x: memberPlanet.x, y: memberPlanet.y });
+            p.x = newX;
+            p.y = newY;
+            customPositionsRef.current.set(drag.agentId, { x: newX, y: newY });
+            planetPositionsRef.current.set(drag.agentId, { x: newX, y: newY });
+
+            // Redraw asteroid belts to match new planet positions
+            const beltsContainer = beltsContainerRef.current;
+            if (beltsContainer) {
+              // Update workspace group member positions from current planet positions
+              for (const group of workspaceGroupsRef.current) {
+                group.memberPositions = group.agentIds.map((id) => {
+                  const pos = planetPositionsRef.current.get(id);
+                  return pos ?? { x: 0, y: 0 };
+                });
+              }
+              while (beltsContainer.children.length > 0) {
+                beltsContainer.children[0].destroy({ children: true });
+              }
+              for (const group of workspaceGroupsRef.current) {
+                if (group.agentIds.length > 1) {
+                  const newBelt = drawAsteroidBelt(group.memberPositions, group.agentIds);
+                  newBelt.on('pointerdown', (ev: { stopPropagation: () => void; global: { x: number; y: number } }) => {
+                    ev.stopPropagation();
+                    const s = scaleRef.current;
+                    const pp = posRef.current;
+                    const ssz = sizeRef.current;
+                    const wx = (ev.global.x - ssz.width / 2 - pp.x) / s;
+                    const wy = (ev.global.y - ssz.height / 2 - pp.y) / s;
+                    beltDragRef.current = { agentIds: [...group.agentIds], startX: wx, startY: wy };
+                  });
+                  beltsContainer.addChild(newBelt);
                 }
               }
-            } else {
-              p.x = newX;
-              p.y = newY;
-              customPositionsRef.current.set(drag.agentId, { x: newX, y: newY });
-              planetPositionsRef.current.set(drag.agentId, { x: newX, y: newY });
             }
             break;
           }
         }
       }
       return; // Don't pan while dragging a planet
+    }
+
+    // Belt (group) drag — move all planets in the group together
+    if (beltDragRef.current) {
+      const scale = scaleRef.current;
+      const panPos = posRef.current;
+      const sz = sizeRef.current;
+      const worldX = (e.clientX - sz.width / 2 - panPos.x) / scale;
+      const worldY = (e.clientY - sz.height / 2 - panPos.y) / scale;
+      const belt = beltDragRef.current;
+      const dx = worldX - belt.startX;
+      const dy = worldY - belt.startY;
+      belt.startX = worldX;
+      belt.startY = worldY;
+
+      const planetsContainer = planetsContainerRef.current;
+      if (planetsContainer) {
+        for (const memberId of belt.agentIds) {
+          for (const child of planetsContainer.children) {
+            const p = child as ExtendedPlanet;
+            if (p.__agentId === memberId) {
+              p.x += dx;
+              p.y += dy;
+              customPositionsRef.current.set(memberId, { x: p.x, y: p.y });
+              planetPositionsRef.current.set(memberId, { x: p.x, y: p.y });
+              break;
+            }
+          }
+        }
+        // Redraw belts
+        const beltsContainer = beltsContainerRef.current;
+        if (beltsContainer) {
+          for (const group of workspaceGroupsRef.current) {
+            group.memberPositions = group.agentIds.map((id) => planetPositionsRef.current.get(id) ?? { x: 0, y: 0 });
+          }
+          while (beltsContainer.children.length > 0) {
+            beltsContainer.children[0].destroy({ children: true });
+          }
+          for (const group of workspaceGroupsRef.current) {
+            if (group.agentIds.length > 1) {
+              const newBelt = drawAsteroidBelt(group.memberPositions, group.agentIds);
+              newBelt.on('pointerdown', (ev: { stopPropagation: () => void; global: { x: number; y: number } }) => {
+                ev.stopPropagation();
+                const s = scaleRef.current;
+                const pp = posRef.current;
+                const ssz = sizeRef.current;
+                const wx = (ev.global.x - ssz.width / 2 - pp.x) / s;
+                const wy = (ev.global.y - ssz.height / 2 - pp.y) / s;
+                beltDragRef.current = { agentIds: [...group.agentIds], startX: wx, startY: wy };
+              });
+              beltsContainer.addChild(newBelt);
+            }
+          }
+        }
+      }
+      return;
     }
 
     // Canvas pan
@@ -1075,6 +1250,10 @@ export const Universe: FC<UniverseProps> = ({
   }, []);
 
   const onPointerUp = useCallback(() => {
+    if (beltDragRef.current) {
+      beltDragRef.current = null;
+      return;
+    }
     if (planetDragRef.current) {
       // Reset cursor on the dragged planet
       const planetsContainer = planetsContainerRef.current;
