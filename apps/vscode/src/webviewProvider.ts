@@ -17,11 +17,12 @@ async function handleMarketplaceSearch(
   marketplaceUrl: string,
   query: string,
 ): Promise<void> {
+  const SEARCH_TIMEOUT_MS = 8000;
   try {
     // SkillHub API — the only marketplace with a known API
     if (marketplaceUrl.includes('skillhub.club')) {
       const searchUrl = `https://www.skillhub.club/api/skills/search?q=${encodeURIComponent(query)}&limit=20`;
-      const response = await fetch(searchUrl);
+      const response = await fetch(searchUrl, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json() as { skills?: Array<{ name?: string; description?: string; author?: string; slug?: string }> };
       const results = (data.skills ?? []).map((s: { name?: string; description?: string; author?: string; slug?: string }) => ({
@@ -35,7 +36,7 @@ async function handleMarketplaceSearch(
     } else {
       // Unknown API marketplace — try a generic JSON endpoint
       const searchUrl = `${marketplaceUrl.replace(/\/$/, '')}/api/search?q=${encodeURIComponent(query)}`;
-      const response = await fetch(searchUrl);
+      const response = await fetch(searchUrl, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json() as { results?: Array<{ name?: string; description?: string; author?: string; url?: string }> };
       const results = (data.results ?? []).map((s: { name?: string; description?: string; author?: string; url?: string }) => ({
@@ -47,9 +48,9 @@ async function handleMarketplaceSearch(
       }));
       void webview.postMessage({ type: 'marketplace-search-results', results, source: marketplaceUrl });
     }
-  } catch {
-    void webview.postMessage({ type: 'marketplace-search-error', source: marketplaceUrl });
-    void vscode.window.showWarningMessage('Marketplace search failed. The API may be unavailable.');
+  } catch (err) {
+    const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
+    void webview.postMessage({ type: 'marketplace-search-error', source: marketplaceUrl, reason: isTimeout ? 'timeout' : 'error' });
   }
 }
 

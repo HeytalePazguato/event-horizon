@@ -269,10 +269,13 @@ function App() {
         return;
       }
 
-      // marketplace-search-error: search failed
+      // marketplace-search-error: search failed or timed out
       if (msg?.type === 'marketplace-search-error') {
+        const data = msg as unknown as { reason?: string; source?: string };
         setMarketplaceSearchResults([]);
         setMarketplaceSearchLoading(false);
+        setMarketplaceSearchError((data.reason === 'timeout' ? 'timeout' : 'error') as 'timeout' | 'error');
+        setMarketplaceSearchSource(data.source ?? '');
         return;
       }
 
@@ -448,17 +451,21 @@ function App() {
       if (raw.payload?.isSkill) {
         const skillName = raw.payload.skillName as string | undefined;
         if (type === 'tool.call' && skillName) {
+          const currentSkills = useCommandCenterStore.getState().skills;
+          const idx = currentSkills.findIndex((s) => s.name === skillName);
+          // Only show skill indicator if the skill actually exists in installed skills
+          if (idx < 0) {
+            // Unknown skill (e.g. built-in CLI command misidentified as skill) — skip
+          } else {
           activeSkillsRef.current.set(agentId, skillName);
           if (!invokedSkillNamesRef.current.has(skillName)) {
             invokedSkillNamesRef.current.add(skillName);
             incrementTiered('skill_master');
           }
-          const currentSkills = useCommandCenterStore.getState().skills;
-          const idx = currentSkills.findIndex((s) => s.name === skillName);
-          setActiveSkillsView((prev) => ({ ...prev, [agentId]: { name: skillName, index: idx >= 0 ? idx : 0 } }));
+          setActiveSkillsView((prev) => ({ ...prev, [agentId]: { name: skillName, index: idx } }));
 
           // Spawn a skill fork probe ship if this is a fork-context skill
-          const matchedSkill = idx >= 0 ? currentSkills[idx] : null;
+          const matchedSkill = currentSkills[idx];
           if (matchedSkill?.context === 'fork' || raw.payload?.isSubagent) {
             const probeId = `skill-probe-${agentId}-${Date.now()}`;
             setShips((prev) => [...prev, { id: probeId, fromAgentId: agentId, toAgentId: agentId, payloadSize: 1, isSkillProbe: true }]);
@@ -468,6 +475,7 @@ function App() {
             }, 15000);
             shipTimerIdsRef.current.add(probeTimerId);
           }
+          } // end: skill exists
         } else if (type === 'tool.result') {
           activeSkillsRef.current.delete(agentId);
           setActiveSkillsView((prev) => { const next = { ...prev }; delete next[agentId]; return next; });
@@ -736,6 +744,7 @@ function App() {
   const [marketplaceSearchResults, setMarketplaceSearchResults] = useState<MarketplaceSkillResult[]>([]);
   const [marketplaceSearchLoading, setMarketplaceSearchLoading] = useState(false);
   const [marketplaceSearchSource, setMarketplaceSearchSource] = useState<string>('');
+  const [marketplaceSearchError, setMarketplaceSearchError] = useState<'timeout' | 'error' | null>(null);
 
   const handleMarketplaceBrowse = useCallback((url: string) => {
     vscodeApi?.postMessage({ type: 'open-marketplace-url', url });
@@ -745,6 +754,7 @@ function App() {
     setMarketplaceSearchLoading(true);
     setMarketplaceSearchSource(marketplaceUrl);
     setMarketplaceSearchResults([]);
+    setMarketplaceSearchError(null);
     vscodeApi?.postMessage({ type: 'marketplace-search', marketplaceUrl, query });
   }, []);
 
@@ -1398,6 +1408,7 @@ function App() {
               searchResults={marketplaceSearchResults}
               searchLoading={marketplaceSearchLoading}
               searchSource={marketplaceSearchSource}
+              searchError={marketplaceSearchError}
             />
           </div>
         </div>

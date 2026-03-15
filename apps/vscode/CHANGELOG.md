@@ -13,6 +13,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Fixed
 - **Planet click-to-select broken after drag feature**: clicking a planet no longer triggers the Command Center — drag handler was intercepting all clicks. Fixed by tracking whether the pointer actually moved before suppressing the click event
 - **Cooperation ship spam with many agents**: when 5+ agents share a workspace, overlapping ship arcs would obscure the planets. Capped visible ships to 2 per directed pair, removed burst convoys, scaled spawn intervals by pair count so large groups don't flood the universe, and increased ship travel speed for faster visual turnover
+- **Marketplace search timeout**: API searches now have an 8-second timeout. Shows "Search timed out." or "Search failed." with a Retry button instead of spinning forever
 
 ## [0.0.7] — 2026-03-15
 
