@@ -386,6 +386,11 @@ function App() {
       const loadTarget = isHighLoad ? 0.7 : 0.3;
       const isSubagent = !!(raw.payload?.isSubagent);
       const isToolFailure = !!(raw.payload?.isToolFailure);
+      
+      // Debug logging for subagent events
+      if (type === 'task.start' || type === 'task.complete') {
+        console.log('[EH] Task event:', { type, agentId, isSubagent, payload: raw.payload });
+      }
       const toolName = (raw.payload?.toolName as string) ?? undefined;
       // Track last event time for stale-agent detection
       agentLastSeenRef.current[agentId] = Date.now();

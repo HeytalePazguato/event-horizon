@@ -176,8 +176,8 @@ The table below shows which lifecycle events each agent supports and how they ma
 | **UserPromptSubmit** | `UserPromptSubmit` ✅ | `UserPromptSubmit` ✅ | `message.updated` (role=user) ✅ | `task.start` | Thinking ring + moon spawns |
 | **PreToolUse** | `PreToolUse` ✅ | `PreToolUse` ✅ | `tool.execute.before` ✅ | `tool.call` | Blue tool-use glow |
 | **PostToolUse** | `PostToolUse` ✅ | `PostToolUse` ✅ | `tool.execute.after` ✅ | `tool.result` | Returns to thinking ring |
-| **SubagentStart** | `SubagentStart` ✅ | `SubagentStart` ✅ ⚠️ | — | `task.start` | Moon spawns on parent planet |
-| **SubagentStop** | `SubagentStop` ✅ | `SubagentStop` ✅ | — | `task.complete` | Moon lands |
+| **SubagentStart** | `SubagentStart` ✅ | `SubagentStart` ✅ ⚠️ | `message.part.updated` (subtask) via SSE ✅ | `task.start` | Moon spawns on parent planet |
+| **SubagentStop** | `SubagentStop` ✅ | `SubagentStop` ✅ | `session.status` (idle) via SSE ✅ | `task.complete` | Moon lands |
 | **Notification** | `Notification` ✅ | — | — | `message.receive` | — |
 | **PermissionRequest** | `PermissionRequest` ✅ | — | `permission.asked` ✅ | `agent.waiting` | Amber pulsing ring |
 | **PermissionReply** | — | — | `permission.replied` ✅ | `message.receive` | Clears waiting ring |
@@ -198,7 +198,9 @@ The table below shows which lifecycle events each agent supports and how they ma
 | **TeammateIdle** | `TeammateIdle` ✅ | — | — | `agent.idle` | Planet slows, green glow |
 | **Error** | `PostToolUseFailure` ✅ | — | `session.error` ✅ | `agent.error` | Red error glow |
 
-**OpenCode events not mapped** (infrastructure/TUI-only, no visualization value): `installation.updated`, `lsp.updated`, `shell.env`, `server.connected`, `session.diff`, `message.removed`, `message.part.updated`, `message.part.removed`, `tui.prompt.append`, `tui.command.execute`, `tui.toast.show`.
+**OpenCode events not mapped** (infrastructure/TUI-only, no visualization value): `installation.updated`, `lsp.updated`, `shell.env`, `server.connected`, `session.diff`, `message.removed`, `message.part.removed`, `tui.prompt.append`, `tui.command.execute`, `tui.toast.show`.
+
+**OpenCode SSE events used** (for subagent tracking): `message.part.updated` (with `type: "subtask"`), `question.asked`, `question.replied`, `session.status`.
 
 ### Known Limitations
 
@@ -208,7 +210,7 @@ The table below shows which lifecycle events each agent supports and how they ma
 
 #### OpenCode
 
-- **No subagent hooks** ([issue #16627](https://github.com/anomalyco/opencode/issues/16627)) — OpenCode does not provide `SubagentStart` or `SubagentStop` events. There is no way to detect when a subagent is spawned or finishes, so subagent moons cannot be rendered for OpenCode planets.
+- **Subagent detection via SSE** — OpenCode's plugin hooks do not provide `SubagentStart` or `SubagentStop` events ([issue #16627](https://github.com/anomalyco/opencode/issues/16627)). Event Horizon works around this by connecting to OpenCode's internal SSE event stream at `/event`, which emits `message.part.updated` events with `type: "subtask"` when subagents spawn. This requires OpenCode to be running its internal server (default port 4096). If SSE connection fails, hooks serve as fallback but without subagent moons.
 
 #### GitHub Copilot
 

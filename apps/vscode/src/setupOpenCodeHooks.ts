@@ -60,12 +60,14 @@ function sendExit(eventName, extra) {
   } catch {}
 }
 
-export default async function EventHorizon({ project, directory, worktree }) {
+export default async function EventHorizon({ project, directory, worktree, serverUrl }) {
   const sessionId = String(project?.id ?? "opencode-1");
   const agentName = "OpenCode";
   const cwd = worktree || directory || undefined;
+  // OpenCode's internal server URL — used by Event Horizon for SSE subagent tracking
+  const opencodeServerUrl = typeof serverUrl === "object" && serverUrl?.href ? serverUrl.href : undefined;
 
-  send("session.created", { sessionId, agentName, cwd, payload: {} });
+  send("session.created", { sessionId, agentName, cwd, payload: {}, serverUrl: opencodeServerUrl });
 
   // Send session.deleted when OpenCode exits (Ctrl+C, exit command, etc.)
   const onExit = () => sendExit("session.deleted", { sessionId, agentName, cwd, payload: {} });
