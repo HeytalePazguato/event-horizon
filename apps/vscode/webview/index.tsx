@@ -169,7 +169,6 @@ function App() {
   const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
   const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
   const screenshotRequestedAt = useCommandCenterStore((s) => s.screenshotRequestedAt);
-
   // Achievement tracking state
   const abyssTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track last event time per agent for stale-agent timeout

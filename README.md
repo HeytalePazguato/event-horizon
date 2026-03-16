@@ -207,15 +207,17 @@ The table below shows which agent lifecycle events are supported and their visua
 
 Install **Event Horizon** from the VS Code Marketplace (or from a `.vsix` file), then:
 
-1. **Open the view:** Click the **globe icon** in the sidebar, or **Ctrl+Shift+P** then **Event Horizon: Open Universe**.
+1. **Open the universe:** Click the **rocket icon** (🚀) in the **editor title bar** (top-right, next to the split editor button), or press **Ctrl+Shift+P** → **Event Horizon: Open Universe**. The universe opens as a full editor tab.
 
 2. **Connect an agent:** Click **Connect** in the Command Center, choose your agent, click **Install**.
    - **Claude Code** — Adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet appears automatically.
    - **OpenCode** — Installs a plugin to `~/.config/opencode/plugins/`. Restart OpenCode after connecting.
 
-3. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI.
+4. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI.
 
-4. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
+5. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
+
+> **Customizing the title bar icon:** The icon uses VS Code's built-in [Codicon](https://microsoft.github.io/vscode-codicons/dist/codicon.html) set. To change it, edit `"icon"` in the `eventHorizon.open` command entry in `apps/vscode/package.json` (e.g. `$(globe)`, `$(telescope)`, `$(star-full)`).
 
 ---
 

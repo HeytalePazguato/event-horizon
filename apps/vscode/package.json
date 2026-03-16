@@ -39,31 +39,29 @@
     "commands": [
       {
         "command": "eventHorizon.open",
-        "title": "Event Horizon: Open Universe"
+        "title": "Event Horizon: Open Universe",
+        "icon": "$(rocket)"
       },
       {
         "command": "eventHorizon.setupClaudeCode",
         "title": "Event Horizon: Connect Claude Code"
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
+    "menus": {
+      "editor/title": [
         {
-          "id": "event-horizon",
-          "title": "Event Horizon",
-          "icon": "$(globe)"
+          "command": "eventHorizon.open",
+          "group": "navigation"
         }
       ]
     },
-    "views": {
-      "event-horizon": [
-        {
-          "type": "webview",
-          "id": "eventHorizon.universe",
-          "name": "Universe"
-        }
-      ]
-    },
+    "keybindings": [
+      {
+        "command": "eventHorizon.open",
+        "key": "ctrl+shift+e h",
+        "mac": "cmd+shift+e h"
+      }
+    ],
     "walkthroughs": [
       {
         "id": "eventHorizon.gettingStarted",

@@ -7,7 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
-import { createWebviewProvider } from './webviewProvider';
+import { openUniversePanel } from './webviewProvider';
 import { startEventServer, stopEventServer } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks } from './setupHooks';
@@ -19,8 +19,12 @@ import { TranscriptWatcher } from './transcriptWatcher';
 import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
-const webviewViewRef: { current: vscode.WebviewView | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
+
+/** Forward an event to the main webview. */
+function broadcastEvent(event: AgentEvent): void {
+  webviewRef.current?.postMessage({ type: 'event', payload: event });
+}
 
 
 
@@ -51,17 +55,6 @@ async function nudgeRunningAgents(): Promise<void> {
 }
 
 
-
-// ── Sidebar badge ────────────────────────────────────────────────────────────
-
-function updateBadge(asm: AgentStateManager): void {
-  const view = webviewViewRef.current;
-  if (!view) return;
-  const count = asm.getAllAgents().length;
-  view.badge = count > 0
-    ? { value: count, tooltip: `${count} active agent${count === 1 ? '' : 's'}` }
-    : undefined;
-}
 
 // ── Workspace-aware cooperation detection ────────────────────────────────────
 
@@ -103,6 +96,57 @@ export function activate(context: vscode.ExtensionContext): void {
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
 
+  // ── Status bar — live agent count ──────────────────────────────────────────
+  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  statusBarItem.command = 'eventHorizon.open';
+  statusBarItem.tooltip = 'Event Horizon — Open Universe';
+  statusBarItem.text = '$(rocket) 0 agents';
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+
+  let statusBarBlinkTimer: ReturnType<typeof setInterval> | null = null;
+
+  function updateStatusBar(): void {
+    const agents = agentStateManager.getAllAgents();
+    const count = agents.length;
+    const waitingAgents = agents.filter((a) => a.state === 'waiting');
+
+    if (waitingAgents.length > 0) {
+      // Waiting state — blink amber background on/off every 500ms
+      const name = waitingAgents[0].name ?? waitingAgents[0].id;
+      const label = waitingAgents.length === 1
+        ? `${name} needs input`
+        : `${waitingAgents.length} agents need input`;
+      statusBarItem.text = `$(bell) ${label}`;
+      statusBarItem.tooltip = `Event Horizon — ${label}`;
+      // Start blinking background if not already
+      if (!statusBarBlinkTimer) {
+        const warningBg = new vscode.ThemeColor('statusBarItem.warningBackground');
+        let on = true;
+        statusBarItem.backgroundColor = warningBg;
+        statusBarBlinkTimer = setInterval(() => {
+          on = !on;
+          statusBarItem.backgroundColor = on ? warningBg : undefined;
+        }, 500);
+      }
+    } else {
+      // Normal state — clear warning
+      statusBarItem.backgroundColor = undefined;
+      if (statusBarBlinkTimer) {
+        clearInterval(statusBarBlinkTimer);
+        statusBarBlinkTimer = null;
+      }
+      if (count === 0) {
+        statusBarItem.text = '$(rocket) Event Horizon';
+        statusBarItem.tooltip = 'Event Horizon — Open Universe';
+      } else {
+        statusBarItem.text = `$(rocket) ${count} agent${count === 1 ? '' : 's'}`;
+        statusBarItem.tooltip = `Event Horizon — ${count} active agent${count === 1 ? '' : 's'}`;
+      }
+    }
+  }
+  updateStatusBar();
+
   // ── Claude Code transcript watchers (per session) ──────────────────────────
   // Maps session ID → active TranscriptWatcher. Watchers provide richer events
   // than hooks alone (waiting ring, token usage, tool details from JSONL).
@@ -129,10 +173,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // (transcript events carry fromTranscript=true in payload)
     metricsEngine.process(event);
     agentStateManager.apply(event);
-    if (webviewRef.current) {
-      webviewRef.current.postMessage({ type: 'event', payload: event });
-    }
-    updateBadge(agentStateManager);
+    broadcastEvent(event);
+    updateStatusBar();
   }
 
   // ── Copilot subagent session tracking ──────────────────────────────────────
@@ -207,9 +249,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     metricsEngine.process(event);
     agentStateManager.apply(event);
-    if (webviewRef.current) {
-      webviewRef.current.postMessage({ type: 'event', payload: event });
-    }
+    broadcastEvent(event);
+    updateStatusBar();
 
     // Start transcript watcher for Claude Code agents when we first see a transcript path.
     // The watcher provides richer events (waiting ring, per-turn tokens, tool details)
@@ -266,7 +307,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     // Update sidebar badge with active agent count
-    updateBadge(agentStateManager);
+
   }
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
@@ -315,22 +356,19 @@ export function activate(context: vscode.ExtensionContext): void {
     cachedSkills = skills;
     return skills;
   };
-  const provider = createWebviewProvider(context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills, webviewViewRef);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('eventHorizon.universe', provider, {
-      webviewOptions: { retainContextWhenHidden: true }, // 2.2 — keep WebGL context alive when panel is hidden
-    })
+  // ── Main universe panel (editor area) ──────────────────────────────────────
+  const openUniverse = () => openUniversePanel(
+    context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills,
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('eventHorizon.open', () => {
-      vscode.commands.executeCommand('eventHorizon.universe.focus');
-    })
+    vscode.commands.registerCommand('eventHorizon.open', openUniverse)
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('eventHorizon.setupClaudeCode', runSetupClaudeCodeHooks)
   );
+
 
   // Show one-time welcome notification on first install
   const hasShownWelcome = context.globalState.get<boolean>('welcomeShown');
@@ -346,7 +384,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (choice === 'Connect Claude Code') {
           void vscode.commands.executeCommand('eventHorizon.setupClaudeCode');
         } else if (choice === 'Show Demo') {
-          void vscode.commands.executeCommand('eventHorizon.universe.focus');
+          void vscode.commands.executeCommand('eventHorizon.open');
         }
       });
   }
@@ -369,7 +407,7 @@ export function activate(context: vscode.ExtensionContext): void {
       timestamp: Date.now(),
       payload: { toAgentId: toId, payloadSize: 1, cooperation: true },
     };
-    webviewRef.current?.postMessage({ type: 'event', payload: coopEvent });
+    broadcastEvent(coopEvent);
   }
 
   function scheduleCoopShip() {
@@ -432,6 +470,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push({
     dispose: () => {
       if (cooperationTimer) clearTimeout(cooperationTimer);
+      if (statusBarBlinkTimer) clearInterval(statusBarBlinkTimer);
       unsubscribeEventBus();
       stopEventServer();
       // Clean up all transcript watchers
