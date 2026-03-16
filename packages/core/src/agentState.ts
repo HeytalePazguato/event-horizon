@@ -49,14 +49,18 @@ export class AgentStateManager {
 
     switch (type) {
       case 'agent.spawn': {
-        this.agents.set(agentId, {
-          id: agentId,
-          name: agentName,
-          type: agentType,
-          state: 'idle',
-          currentTaskId: null,
-          cwd: (payload?.cwd as string) ?? undefined,
-        });
+        // Only create if agent doesn't exist - allows heartbeat re-announcements
+        // without resetting state of already-tracked agents
+        if (!this.agents.has(agentId)) {
+          this.agents.set(agentId, {
+            id: agentId,
+            name: agentName,
+            type: agentType,
+            state: 'idle',
+            currentTaskId: null,
+            cwd: (payload?.cwd as string) ?? undefined,
+          });
+        }
         break;
       }
       case 'agent.idle': {

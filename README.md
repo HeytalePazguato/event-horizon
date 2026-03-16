@@ -183,8 +183,8 @@ The table below shows which agent lifecycle events are supported and their visua
 | **Workspace Detection** | ✅ | ✅ | ✅ | Asteroid belt around group |
 | **Skill Discovery** | ✅ | ✅ | ✅ | Skills tab + orbit ring dots |
 | **Skill Usage** | ✅ | ✅ | ✅ | Pulsing dot + floating label |
-| **Token Usage** | ✅ | — | — | Displayed in Command Center |
-| **Estimated Cost** | ✅ | — | — | USD estimate in Command Center |
+| **Token Usage** | ✅ | — | ✅ | Displayed in Command Center |
+| **Estimated Cost** | ✅ | — | ✅ | USD estimate in Command Center |
 | **Error** | ✅ | — | ✅ | Red error glow |
 
 ### Known Limitations

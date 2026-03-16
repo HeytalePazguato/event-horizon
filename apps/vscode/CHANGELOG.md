@@ -10,6 +10,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Astronaut mass variation**: astronauts now spawn with random mass (0.5–2.0). Light astronauts drift faster, curve dramatically near planets, and get flung around by gravity. Heavy astronauts move slowly, resist gravitational pull, and maintain straighter paths. Heavier astronauts appear slightly larger
 - **OpenCode subagent tracking**: subagents spawned via the Task tool now appear as moons orbiting the parent OpenCode planet. Detection uses `session.created` events with `parentID` field from OpenCode's plugin hooks — no SSE connection required
 - **OpenCode token & cost tracking**: OpenCode agents now display cumulative token usage and estimated cost in the Command Center Info tab, matching Claude Code's functionality. Token data is extracted from `message.updated` events and accumulated per session
+- **OpenCode session discovery**: OpenCode plugin now sends heartbeat announcements every 30 seconds continuously. Event Horizon will detect running OpenCode agents within 30 seconds of starting, even if OpenCode was started hours earlier. Requires reinstalling hooks and restarting OpenCode
 
 ### Improved
 - **Planet gravity**: planets now have a localized gravity field (3× radius). Astronauts passing nearby curve their trajectory; only those very close get captured into orbit. Exponential falloff (t⁶) keeps the edge gentle and the core strong. Larger planets pull stronger (proportional to rendered radius, including settings size override). Jetpack can escape the pull

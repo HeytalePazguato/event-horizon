@@ -37,7 +37,10 @@ import * as fsp from 'fs/promises';
 async function nudgeRunningAgents(): Promise<void> {
   const home = os.homedir();
   const filesToTouch: string[] = [
+    // Claude Code: touching settings.json triggers ConfigChange hook
     path.join(home, '.claude', 'settings.json'),
+    // OpenCode: touching the plugin file may trigger a reload
+    path.join(home, '.config', 'opencode', 'plugins', 'event-horizon.ts'),
   ];
   for (const filePath of filesToTouch) {
     try {
@@ -46,6 +49,8 @@ async function nudgeRunningAgents(): Promise<void> {
     } catch { /* file doesn't exist or not writable — skip */ }
   }
 }
+
+
 
 // ── Sidebar badge ────────────────────────────────────────────────────────────
 
@@ -281,6 +286,9 @@ export function activate(context: vscode.ExtensionContext): void {
       // Nudge running agents to announce themselves by touching their config
       // files. This triggers ConfigChange hooks so each running session sends
       // its real session ID, cwd, and name to our HTTP server.
+      // For OpenCode, the plugin sends heartbeat session.created events for
+      // the first 2 minutes after startup, so agents will be discovered if
+      // Event Horizon starts within that window.
       void nudgeRunningAgents();
     })
     .catch(() => {

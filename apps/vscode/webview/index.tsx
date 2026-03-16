@@ -362,7 +362,8 @@ function App() {
         else if (type === 'task.progress') state = 'thinking';
         else if (type === 'tool.result') state = 'thinking';
         else if (type === 'task.complete' || type === 'task.fail') state = 'idle';
-        else if (type === 'agent.spawn') state = 'idle';
+        // agent.spawn: only set to idle if agent is new, otherwise preserve state (for heartbeat re-announcements)
+        else if (type === 'agent.spawn') state = prevAgent?.state ?? 'idle';
         else state = prevAgent?.state ?? 'idle';  // preserve current state for unknown events
 
         // Capture cwd from payload for workspace-aware cooperation detection
