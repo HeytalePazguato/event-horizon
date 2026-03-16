@@ -407,10 +407,10 @@ function App() {
             : (m?.activeSubagents ?? 0);
         const tb = { ...(m?.toolBreakdown ?? {}) };
         if (type === 'tool.call' && toolName) tb[toolName] = (tb[toolName] ?? 0) + 1;
-        // Token/cost — session totals (replace, not accumulate)
-        const inputTokens = typeof raw.payload?.inputTokens === 'number' ? raw.payload.inputTokens as number : (m?.inputTokens ?? 0);
-        const outputTokens = typeof raw.payload?.outputTokens === 'number' ? raw.payload.outputTokens as number : (m?.outputTokens ?? 0);
-        const estimatedCostUsd = typeof raw.payload?.costUsd === 'number' ? raw.payload.costUsd as number : (m?.estimatedCostUsd ?? 0);
+        // Token/cost — session totals (replace, not accumulate). -1 = no data yet
+        const inputTokens = typeof raw.payload?.inputTokens === 'number' ? raw.payload.inputTokens as number : (m?.inputTokens ?? -1);
+        const outputTokens = typeof raw.payload?.outputTokens === 'number' ? raw.payload.outputTokens as number : (m?.outputTokens ?? -1);
+        const estimatedCostUsd = typeof raw.payload?.costUsd === 'number' ? raw.payload.costUsd as number : (m?.estimatedCostUsd ?? -1);
         return {
           ...prev,
           [agentId]: {
@@ -440,10 +440,20 @@ function App() {
           const currentMetrics = Object.values(metricsMapRef.current);
           let totalTokens = 0;
           let totalCost = 0;
+          let hasTokenData = false;
+          let hasCostData = false;
           for (const am of currentMetrics) {
-            totalTokens += (am.inputTokens ?? 0) + (am.outputTokens ?? 0);
-            totalCost += am.estimatedCostUsd ?? 0;
+            // Skip negative values (-1 = no data)
+            const input = am.inputTokens ?? -1;
+            const output = am.outputTokens ?? -1;
+            const cost = am.estimatedCostUsd ?? -1;
+            if (input >= 0) { totalTokens += input; hasTokenData = true; }
+            if (output >= 0) { totalTokens += output; hasTokenData = true; }
+            if (cost >= 0) { totalCost += cost; hasCostData = true; }
           }
+          // Use -1 for singularity totals if no agent has data
+          if (!hasTokenData) totalTokens = -1;
+          if (!hasCostData) totalCost = -1;
           const s = useCommandCenterStore.getState();
           s.setSingularityStats({ ...s.singularityStats, totalTokens, totalCostUsd: totalCost });
         });

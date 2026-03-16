@@ -136,14 +136,16 @@ const MedalsView: FC = () => {
 };
 
 function formatTokens(n: number): string {
-  if (n <= 0) return '-';
+  if (n < 0) return '-'; // -1 = no data
+  if (n === 0) return '0';
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`;
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 function formatCost(usd: number): string {
-  if (usd <= 0) return '-';
+  if (usd < 0) return '-'; // -1 = no data
+  if (usd === 0) return '$0.00';
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   if (usd < 10) return `$${usd.toFixed(2)}`;
   return `$${usd.toFixed(1)}`;

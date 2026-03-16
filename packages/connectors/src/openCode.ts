@@ -45,6 +45,30 @@ const SEEN_IDS_MAX = 10_000;
 /** Track subagent session IDs → parent session IDs for remapping. */
 const subagentToParent = new Map<string, string>();
 
+/** Track cumulative token usage per agent session. */
+interface TokenAccumulator {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  lastMessageId: string | null;
+}
+const tokenAccumulators = new Map<string, TokenAccumulator>();
+
+/** Get or create token accumulator for an agent session. */
+function getTokenAccumulator(agentId: string): TokenAccumulator {
+  let acc = tokenAccumulators.get(agentId);
+  if (!acc) {
+    acc = { inputTokens: 0, outputTokens: 0, costUsd: 0, lastMessageId: null };
+    tokenAccumulators.set(agentId, acc);
+  }
+  return acc;
+}
+
+/** Clear token accumulator on session end. */
+function clearTokenAccumulator(agentId: string): void {
+  tokenAccumulators.delete(agentId);
+}
+
 export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -74,9 +98,10 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     payload.serverUrl = o.serverUrl;
   }
 
-  // Clear dedup set on session end to prevent unbounded growth
+  // Clear dedup set and token accumulator on session end to prevent unbounded growth
   if (eventName === 'session.deleted' || eventName === 'server.instance.disposed') {
     seenMessageIds.clear();
+    clearTokenAccumulator(agentId);
   }
 
   // Detect subagent sessions: session.created with parentID indicates a subagent
@@ -199,8 +224,39 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
       seenMessageIds.add(messageId);
       return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'task.start', timestamp: Date.now(), payload };
     }
-    if (role === 'assistant') {
-      return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'task.progress', timestamp: Date.now(), payload };
+    if (role === 'assistant' && messageId) {
+      // Extract and accumulate token/cost data from assistant messages
+      // OpenCode's AssistantMessage has: cost (number), tokens ({ input, output, reasoning, cache: { read, write } })
+      const enrichedPayload = { ...payload };
+      const acc = getTokenAccumulator(agentId);
+      
+      // Only accumulate if this is a new message (avoid double-counting on updates)
+      if (acc.lastMessageId !== messageId) {
+        acc.lastMessageId = messageId;
+        
+        const cost = info?.cost as number | undefined;
+        const tokens = info?.tokens as Record<string, unknown> | undefined;
+        
+        if (typeof cost === 'number') {
+          acc.costUsd += cost;
+        }
+        if (tokens) {
+          const inputTokens = (tokens.input as number | undefined) ?? 0;
+          const outputTokens = (tokens.output as number | undefined) ?? 0;
+          const cacheRead = ((tokens.cache as Record<string, unknown>)?.read as number | undefined) ?? 0;
+          const cacheWrite = ((tokens.cache as Record<string, unknown>)?.write as number | undefined) ?? 0;
+          // Include cache tokens in input count for consistency with Claude Code
+          acc.inputTokens += inputTokens + cacheRead + cacheWrite;
+          acc.outputTokens += outputTokens;
+        }
+      }
+      
+      // Always emit cumulative totals
+      enrichedPayload.inputTokens = acc.inputTokens;
+      enrichedPayload.outputTokens = acc.outputTokens;
+      enrichedPayload.costUsd = acc.costUsd;
+      
+      return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'task.progress', timestamp: Date.now(), payload: enrichedPayload };
     }
     // Duplicate user message or unknown role — skip
     return null;

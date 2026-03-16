@@ -64,9 +64,9 @@ export class MetricsEngine {
         errorCount: 0,
         sessionStartedAt: now,
         toolBreakdown: {},
-        inputTokens: 0,
-        outputTokens: 0,
-        estimatedCostUsd: 0,
+        inputTokens: -1,  // -1 = no data yet
+        outputTokens: -1, // -1 = no data yet
+        estimatedCostUsd: -1, // -1 = no data yet
         lastUpdated: now,
       };
       this.metrics.set(agentId, m);

@@ -122,8 +122,8 @@ export const EMPTY_SINGULARITY_STATS: SingularityStats = {
   agentsSeen: 0,
   eventsWitnessed: 0,
   errorsWitnessed: 0,
-  totalTokens: 0,
-  totalCostUsd: 0,
+  totalTokens: -1,  // -1 = no data yet
+  totalCostUsd: -1, // -1 = no data yet
   firstEventAt: 0,
 };
 

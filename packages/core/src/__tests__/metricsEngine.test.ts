@@ -98,9 +98,10 @@ describe('MetricsEngine', () => {
 
   it('accumulates token and cost data from event payload', () => {
     engine.process(makeEvent({ type: 'agent.spawn', agentId: 'a1', timestamp: 1000 }));
-    expect(engine.getMetrics('a1')!.inputTokens).toBe(0);
-    expect(engine.getMetrics('a1')!.outputTokens).toBe(0);
-    expect(engine.getMetrics('a1')!.estimatedCostUsd).toBe(0);
+    // Initial values are -1 (no data yet)
+    expect(engine.getMetrics('a1')!.inputTokens).toBe(-1);
+    expect(engine.getMetrics('a1')!.outputTokens).toBe(-1);
+    expect(engine.getMetrics('a1')!.estimatedCostUsd).toBe(-1);
 
     // Simulate a Stop event with token/cost data (session totals — replace)
     engine.process(makeEvent({
