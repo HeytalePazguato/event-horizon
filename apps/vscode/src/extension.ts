@@ -22,14 +22,7 @@ const webviewRef: { current: vscode.Webview | null } = { current: null };
 const webviewViewRef: { current: vscode.WebviewView | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
 
-// Output channel for debugging
-let outputChannel: vscode.OutputChannel | null = null;
-function log(message: string): void {
-  if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel('Event Horizon');
-  }
-  outputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
-}
+
 
 // ── Nudge running agents to announce themselves ─────────────────────────────
 
@@ -111,20 +104,19 @@ export function activate(context: vscode.ExtensionContext): void {
   const transcriptWatchers = new Map<string, TranscriptWatcher>();
 
   // ── OpenCode SSE watchers (per session) ────────────────────────────────────
-  // Maps session ID → active OpenCodeSSEWatcher. SSE watchers provide subagent
-  // events that are not available via plugin hooks (issue #16627).
+  // NOTE: SSE watchers are currently disabled - hooks provide subagent events
+  // via session.created with parentID. Keeping infrastructure for future use.
   const openCodeSSEWatchers = new Map<string, OpenCodeSSEWatcher>();
 
-  /** Events from OpenCode SSE watcher bypass hooks — route directly to webview. */
-  function onOpenCodeSSEEvent(event: AgentEvent): void {
-    // SSE events carry fromSSE=true in payload
-    metricsEngine.process(event);
-    agentStateManager.apply(event);
-    if (webviewRef.current) {
-      webviewRef.current.postMessage({ type: 'event', payload: event });
-    }
-    updateBadge(agentStateManager);
-  }
+  // /** Events from OpenCode SSE watcher bypass hooks — route directly to webview. */
+  // function onOpenCodeSSEEvent(event: AgentEvent): void {
+  //   metricsEngine.process(event);
+  //   agentStateManager.apply(event);
+  //   if (webviewRef.current) {
+  //     webviewRef.current.postMessage({ type: 'event', payload: event });
+  //   }
+  //   updateBadge(agentStateManager);
+  // }
 
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
@@ -146,12 +138,6 @@ export function activate(context: vscode.ExtensionContext): void {
   let lastRunSubagentParent: string | null = null;
 
   function onAgentEvent(event: AgentEvent): void {
-    // Log all OpenCode events for debugging
-    if (event.agentType === 'opencode') {
-      const payloadStr = JSON.stringify(event.payload ?? {}).slice(0, 500);
-      log(`OpenCode event: type=${event.type}, agentId=${event.agentId}, isSubagent=${event.payload?.isSubagent ?? false}, payload=${payloadStr}`);
-    }
-
     // Inject workspace cwd if the agent/event doesn't provide one
     if (!event.payload?.cwd) {
       const primaryFolder = vscode.workspace.workspaceFolders?.[0];
@@ -177,22 +163,18 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
-    // When an SSE watcher is active for this OpenCode agent, skip hook events
-    // that the SSE stream handles better (subagent events, question events).
-    // Hooks still handle: agent.spawn, agent.terminate, tool.*, permission.*
-    if (event.agentType === 'opencode' && !event.payload?.fromSSE) {
-      const hasSSEWatcher = openCodeSSEWatchers.has(event.agentId);
-      if (hasSSEWatcher) {
-        // SSE handles: task.start (subagents), task.complete (subagents), agent.waiting (questions)
-        // Let hooks handle everything else
-        const sseHandledTypes: Set<string> = new Set(['task.start', 'task.complete', 'agent.waiting']);
-        const hasServerUrl = !!(event.payload?.serverUrl);
-        // Only skip if this is a subagent-related event from hooks (not the initial spawn)
-        if (sseHandledTypes.has(event.type) && event.payload?.isSubagent && !hasServerUrl) {
-          return; // SSE watcher handles subagent events
-        }
-      }
-    }
+    // NOTE: SSE watcher filtering disabled - hooks now provide all subagent events
+    // via session.created with parentID. Keeping code commented for future use.
+    // if (event.agentType === 'opencode' && !event.payload?.fromSSE) {
+    //   const sseWatcher = openCodeSSEWatchers.get(event.agentId);
+    //   if (sseWatcher?.isConnected()) {
+    //     const sseHandledTypes: Set<string> = new Set(['task.start', 'task.complete', 'agent.waiting']);
+    //     const hasServerUrl = !!(event.payload?.serverUrl);
+    //     if (sseHandledTypes.has(event.type) && event.payload?.isSubagent && !hasServerUrl) {
+    //       return; // SSE watcher handles subagent events
+    //     }
+    //   }
+    // }
 
     // Track parent→subagent relationship for Copilot:
     // 1) PreToolUse with tool_name "runSubagent" = parent is about to spawn
@@ -243,27 +225,24 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
-    // Start OpenCode SSE watcher when we first see a serverUrl.
-    // The SSE stream provides subagent events not available via hooks.
-    const serverUrl = event.payload?.serverUrl as string | undefined;
-    if (serverUrl && event.agentType === 'opencode') {
-      const sessionId = event.agentId;
-      log(`OpenCode session ${sessionId} has serverUrl: ${serverUrl}`);
-      if (!openCodeSSEWatchers.has(sessionId)) {
-        log(`Creating SSE watcher for ${sessionId}`);
-        const watcher = new OpenCodeSSEWatcher(
-          serverUrl,
-          event.agentId,
-          event.agentName,
-          event.payload?.cwd as string | undefined,
-          { onEvent: onOpenCodeSSEEvent, onLog: log },
-        );
-        openCodeSSEWatchers.set(sessionId, watcher);
-        watcher.start().catch((err) => {
-          log(`SSE watcher failed to start: ${err}`);
-        });
-      }
-    }
+    // NOTE: OpenCode SSE watcher is disabled - hooks now provide subagent events
+    // via session.created with parentID. Keeping code for potential future use
+    // when OpenCode's SSE endpoint becomes more reliable.
+    // const serverUrl = event.payload?.serverUrl as string | undefined;
+    // if (serverUrl && event.agentType === 'opencode') {
+    //   const sessionId = event.agentId;
+    //   if (!openCodeSSEWatchers.has(sessionId)) {
+    //     const watcher = new OpenCodeSSEWatcher(
+    //       serverUrl,
+    //       event.agentId,
+    //       event.agentName,
+    //       event.payload?.cwd as string | undefined,
+    //       { onEvent: onOpenCodeSSEEvent },
+    //     );
+    //     openCodeSSEWatchers.set(sessionId, watcher);
+    //     watcher.start().catch(() => { /* fallback to hooks */ });
+    //   }
+    // }
 
     // Clean up transcript watcher when agent terminates
     if (event.type === 'agent.terminate') {

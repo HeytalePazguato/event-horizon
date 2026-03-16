@@ -86,6 +86,7 @@ export class OpenCodeSSEWatcher {
   private callbacks: OpenCodeSSEWatcherCallbacks;
   private abortController: AbortController | null = null;
   private destroyed = false;
+  private connected = false; // Track actual connection state
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -127,6 +128,7 @@ export class OpenCodeSSEWatcher {
   /** Stop watching and clean up. */
   destroy(): void {
     this.destroyed = true;
+    this.connected = false;
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
@@ -179,6 +181,7 @@ export class OpenCodeSSEWatcher {
     }
 
     this.log('Connected successfully');
+    this.connected = true;
 
     // Reset reconnect state on successful connection
     this.reconnectAttempts = 0;
@@ -205,6 +208,7 @@ export class OpenCodeSSEWatcher {
         }
       }
     } catch {
+      this.connected = false;
       if (!this.destroyed) {
         // Connection lost — schedule reconnect
         this.scheduleReconnect();
@@ -214,6 +218,7 @@ export class OpenCodeSSEWatcher {
 
   /** Schedule a reconnection attempt with exponential backoff. */
   private scheduleReconnect(): void {
+    this.connected = false;
     if (this.destroyed) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       // Give up — fall back to hooks
@@ -418,7 +423,7 @@ export class OpenCodeSSEWatcher {
 
   /** Check if the watcher is currently connected. */
   isConnected(): boolean {
-    return !this.destroyed && this.abortController !== null;
+    return !this.destroyed && this.connected;
   }
 
   /** Get the number of active subagents being tracked. */
