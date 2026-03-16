@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Visualize AI coding agents as a living cosmic system — planets, black holes, ships and more.",
@@ -39,31 +39,29 @@
     "commands": [
       {
         "command": "eventHorizon.open",
-        "title": "Event Horizon: Open Universe"
+        "title": "Event Horizon: Open Universe",
+        "icon": "$(rocket)"
       },
       {
         "command": "eventHorizon.setupClaudeCode",
         "title": "Event Horizon: Connect Claude Code"
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
+    "menus": {
+      "editor/title": [
         {
-          "id": "event-horizon",
-          "title": "Event Horizon",
-          "icon": "$(globe)"
+          "command": "eventHorizon.open",
+          "group": "navigation"
         }
       ]
     },
-    "views": {
-      "event-horizon": [
-        {
-          "type": "webview",
-          "id": "eventHorizon.universe",
-          "name": "Universe"
-        }
-      ]
-    },
+    "keybindings": [
+      {
+        "command": "eventHorizon.open",
+        "key": "ctrl+shift+e h",
+        "mac": "cmd+shift+e h"
+      }
+    ],
     "walkthroughs": [
       {
         "id": "eventHorizon.gettingStarted",
@@ -140,7 +138,7 @@
     "html2canvas": "^1.4.1"
   },
   "devDependencies": {
-    "@types/node": "^25.4.0",
+    "@types/node": "^25.5.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/vscode": "^1.110.0",

@@ -59,6 +59,18 @@ export function mapCopilotHookToEvent(payload: unknown): AgentEvent | null {
     if (p.agent_type) safePayload.subagentType = String(p.agent_type).slice(0, 128);
   }
 
+  // Pass transcript_path for Stop events (same as Claude Code — parse in extension host)
+  if (hookEvent === 'Stop') {
+    if (typeof p.transcript_path === 'string') safePayload.transcriptPath = String(p.transcript_path).slice(0, 1024);
+    // Forward any direct cost/usage fields if present (forward-compat)
+    if (typeof p.total_cost_usd === 'number') safePayload.costUsd = p.total_cost_usd;
+    const usage = (p.usage as Record<string, unknown> | undefined);
+    if (usage) {
+      if (typeof usage.input_tokens === 'number') safePayload.inputTokens = usage.input_tokens;
+      if (typeof usage.output_tokens === 'number') safePayload.outputTokens = usage.output_tokens;
+    }
+  }
+
   // Extract file_path from tool_input for file-touching tools (never content)
   const COPILOT_FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file', 'insert_edit_into_file']);
   if (safePayload.toolName && COPILOT_FILE_TOOLS.has(safePayload.toolName as string)) {

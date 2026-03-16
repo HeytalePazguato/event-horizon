@@ -35,6 +35,10 @@ export interface SkillInfo {
   category: string | null;
   /** Which agent types can use this skill. */
   agentTypes: Array<'claude-code' | 'opencode' | 'copilot'>;
+  /** Category from SKILL.md metadata.category (does not affect file location). */
+  metadataCategory: string | null;
+  /** Tags from SKILL.md metadata.tags (does not affect file location). */
+  tags: string[];
 }
 
 export interface MarketplaceEntry {
@@ -101,6 +105,10 @@ export interface SingularityStats {
   eventsWitnessed: number;
   /** Total errors witnessed across all agents. */
   errorsWitnessed: number;
+  /** Total tokens (input + output) across all agents. */
+  totalTokens: number;
+  /** Total estimated cost (USD) across all agents. */
+  totalCostUsd: number;
   /** Timestamp of first ever event. */
   firstEventAt: number;
 }
@@ -114,6 +122,8 @@ export const EMPTY_SINGULARITY_STATS: SingularityStats = {
   agentsSeen: 0,
   eventsWitnessed: 0,
   errorsWitnessed: 0,
+  totalTokens: -1,  // -1 = no data yet
+  totalCostUsd: -1, // -1 = no data yet
   firstEventAt: 0,
 };
 

@@ -117,13 +117,13 @@ const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
 const INITIAL_W = 640;
 const INITIAL_H = 400;
-const GRAVITY_STRENGTH = 0.15;
+const GRAVITY_STRENGTH = 0.8;
 const SINGULARITY_PULL = 1.2;
 const ASTRONAUT_MAX_SPEED = 3;
 const ASTRONAUT_SUCK_RADIUS = 92;   // outer glow of singularity — suck-in starts here
 const ASTRONAUT_GRAZE_RADIUS = 120; // near-miss zone just outside the gravity well
 const ASTRONAUT_DESTROY_RADIUS = 30;
-const SHIP_PROGRESS_SPEED = 0.006;
+const SHIP_PROGRESS_SPEED = 0.008;
 // SHIP_AVOID_RADIUS imported from math.ts
 const MAX_TRAIL_POINTS = 32;
 const UFO_INTERVAL_MIN_MS = 25000;
@@ -324,6 +324,8 @@ export const Universe: FC<UniverseProps> = ({
   const starsRef = useRef<Container | null>(null);
   const astronautsRef = useRef<Array<{
     id: number; c: Container; vx: number; vy: number;
+    /** Mass: 0.5 (light/fast) to 2.0 (heavy/slow). Affects drift and gravity response. */
+    mass: number;
     inGravityWell?: boolean; inGrazeZone?: boolean; escapeCount?: number; nextJetTime?: number;
     bounceCount: number; edgesHit: Set<string>;
     jetFiredAt: number; hasBouncedSinceJet: boolean;
@@ -336,7 +338,7 @@ export const Universe: FC<UniverseProps> = ({
   /** User-dragged positions override auto-layout. Cleared on reset. */
   const customPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   /** Active while a planet is being dragged — suppresses canvas pan. */
-  const planetDragRef = useRef<{ agentId: string; startX: number; startY: number } | null>(null);
+  const planetDragRef = useRef<{ agentId: string; startX: number; startY: number; moved: boolean } | null>(null);
   /** Active while an asteroid belt (group) is being dragged. */
   const beltDragRef = useRef<{ agentIds: string[]; startX: number; startY: number } | null>(null);
   const agentStatesRef    = useRef<Record<string, string>>(agentStates);
@@ -601,11 +603,15 @@ export const Universe: FC<UniverseProps> = ({
           astro.y = pos.y;
           astronautsContainer.addChildAt(astro, 0);
           const id = ++astronautIdRef.current;
+          // Mass varies 0.5–2.0: lighter astronauts drift faster, heavier drift slower
+          const mass = 0.5 + Math.random() * 1.5;
+          const driftSpeed = 1.2 / Math.sqrt(mass); // lighter = faster
           astronautsRef.current.push({
             id,
             c: astro,
-            vx: (Math.random() - 0.5) * 1.2,
-            vy: (Math.random() - 0.5) * 1.2,
+            vx: (Math.random() - 0.5) * driftSpeed,
+            vy: (Math.random() - 0.5) * driftSpeed,
+            mass,
             bounceCount: 0,
             edgesHit: new Set(),
             jetFiredAt: 0,
@@ -907,7 +913,7 @@ export const Universe: FC<UniverseProps> = ({
         planet.on('pointerout', () => onPlanetHoverRef.current?.(null));
         planet.on('pointertap', () => {
           // Only fire click if we didn't just finish dragging
-          if (!planetDragRef.current) onPlanetClickRef.current?.(agent.id);
+          if (!planetDragRef.current?.moved) onPlanetClickRef.current?.(agent.id);
         });
 
         // Drag-to-rearrange handlers
@@ -919,8 +925,7 @@ export const Universe: FC<UniverseProps> = ({
           const sz = sizeRef.current;
           const worldX = (e.global.x - sz.width / 2 - panPos.x) / scale;
           const worldY = (e.global.y - sz.height / 2 - panPos.y) / scale;
-          planetDragRef.current = { agentId: agent.id, startX: worldX - thisPlanet.x, startY: worldY - thisPlanet.y };
-          thisPlanet.cursor = 'grabbing';
+          planetDragRef.current = { agentId: agent.id, startX: worldX - thisPlanet.x, startY: worldY - thisPlanet.y, moved: false };
         });
 
         planetsContainer.addChild(planet);
@@ -1106,6 +1111,18 @@ export const Universe: FC<UniverseProps> = ({
       const drag = planetDragRef.current;
       let newX = worldX - drag.startX;
       let newY = worldY - drag.startY;
+
+      // Mark as moved and change cursor on first actual movement
+      if (!drag.moved) {
+        drag.moved = true;
+        const planetsContainer = planetsContainerRef.current;
+        if (planetsContainer) {
+          for (const child of planetsContainer.children) {
+            const p = child as ExtendedPlanet;
+            if (p.__agentId === drag.agentId) { p.cursor = 'grabbing'; break; }
+          }
+        }
+      }
 
       // Enforce minimum distance from singularity (center)
       const dist = Math.sqrt(newX * newX + newY * newY);
@@ -1773,11 +1790,13 @@ export const Universe: FC<UniverseProps> = ({
           continue;
         }
 
-        // Physics — stronger pull inside the gravity well, but NOT inescapable
+        // Physics — acceleration = force / mass.
+        // Lighter astronauts are more responsive to gravity; heavier ones resist more.
+        const invMass = 1 / a.mass;
         let ax: number;
         let ay: number;
         if (a.inGravityWell) {
-          const inward = 0.10 + (ASTRONAUT_SUCK_RADIUS - r) * 0.003;
+          const inward = (0.10 + (ASTRONAUT_SUCK_RADIUS - r) * 0.003) * invMass;
           ax = (dx / r) * inward;
           ay = (dy / r) * inward;
           // Visual: shrink and fade as astronaut approaches core
@@ -1785,21 +1804,34 @@ export const Universe: FC<UniverseProps> = ({
           a.c.scale.set(shrink);
           a.c.alpha = shrink;
         } else {
-          ax = (dx / r) * (SINGULARITY_PULL / r2) * dt * 60;
-          ay = (dy / r) * (SINGULARITY_PULL / r2) * dt * 60;
-          a.c.scale.set(1);
+          ax = (dx / r) * (SINGULARITY_PULL * invMass / r2) * dt * 60;
+          ay = (dy / r) * (SINGULARITY_PULL * invMass / r2) * dt * 60;
+          // Visual: scale by mass (heavy = noticeably larger sprite)
+          const massScale = 0.6 + a.mass * 0.4;
+          a.c.scale.set(massScale);
           a.c.alpha = 1;
         }
 
-        // Planet gravity (always active)
+        // Planet gravity — only within 2× planet radius (min 80px).
+        // Gentle enough that astronauts curve and can orbit, not get vacuumed in.
+        // Jetpack can escape the pull.
         let removed = false;
         for (const p of planets) {
           const px = p.x - a.c.x;
           const py = p.y - a.c.y;
           const pr2 = px * px + py * py + 1;
           const pr = Math.sqrt(pr2);
-          ax += (px / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
-          ay += (py / pr) * (GRAVITY_STRENGTH / pr2) * dt * 60;
+          const pRadius = p.__radius ?? 15;
+          const influenceRadius = Math.max(80, pRadius * 3);
+          if (pr < influenceRadius) {
+            const planetMass = pRadius / 15;
+            // Exponential falloff: nearly zero at edge, ramps sharply near surface
+            // t=0 at edge, t=1 at surface. t^6 means at halfway (t=0.5) force is ~1.5%
+            const t = 1 - pr / influenceRadius;
+            const falloff = t * t * t * t * t * t; // t^6
+            ax += (px / pr) * (GRAVITY_STRENGTH * planetMass * invMass * falloff) * dt * 60;
+            ay += (py / pr) * (GRAVITY_STRENGTH * planetMass * invMass * falloff) * dt * 60;
+          }
           if (pr < (p.__radius ?? 15) + 8) {
             if (p.__agentId) onAstronautLandedRef.current?.(p.__agentId);
             a.c.destroy({ children: true });
@@ -1812,12 +1844,13 @@ export const Universe: FC<UniverseProps> = ({
 
         a.vx += ax;
         a.vy += ay;
-        // Speed cap only outside the gravity well — inside, allow high velocity for dramatic spirals
+        // Speed cap scales with mass — heavier astronauts have a lower max speed
+        const maxSpeed = ASTRONAUT_MAX_SPEED / Math.sqrt(a.mass);
         if (!a.inGravityWell) {
           const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
-          if (speed > ASTRONAUT_MAX_SPEED) {
-            a.vx = (a.vx / speed) * ASTRONAUT_MAX_SPEED;
-            a.vy = (a.vy / speed) * ASTRONAUT_MAX_SPEED;
+          if (speed > maxSpeed) {
+            a.vx = (a.vx / speed) * maxSpeed;
+            a.vy = (a.vy / speed) * maxSpeed;
           }
         }
         a.c.x += a.vx;

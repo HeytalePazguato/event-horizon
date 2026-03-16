@@ -2,7 +2,30 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [0.0.7] — Unreleased
+## [0.0.8] — 2026-03-16
+
+### Added
+- **Per-agent token & cost tracking**: displays cumulative token usage (input + output + cache) and estimated USD cost per agent in the Command Center Info tab. Totals shown in the singularity view. Cost estimated using Claude's per-token rates
+- **Transcript watcher (Claude Code)**: tails the Claude Code JSONL transcript file in real time for richer, more accurate events than hooks alone. Provides precise waiting ring timing from `AskUserQuestion` tool use, per-turn token accumulation, and full tool metadata. Hooks remain as fallback if the transcript file is inaccessible
+- **Astronaut mass variation**: astronauts now spawn with random mass (0.5–2.0). Light astronauts drift faster, curve dramatically near planets, and get flung around by gravity. Heavy astronauts move slowly, resist gravitational pull, and maintain straighter paths. Heavier astronauts appear slightly larger
+- **OpenCode subagent tracking**: subagents spawned via the Task tool now appear as moons orbiting the parent OpenCode planet. Detection uses `session.created` events with `parentID` field from OpenCode's plugin hooks — no SSE connection required
+- **OpenCode token & cost tracking**: OpenCode agents now display cumulative token usage and estimated cost in the Command Center Info tab, matching Claude Code's functionality. Token data is extracted from `message.updated` events and accumulated per session
+- **OpenCode session discovery**: OpenCode plugin now sends heartbeat announcements every 30 seconds continuously. Event Horizon will detect running OpenCode agents within 30 seconds of starting, even if OpenCode was started hours earlier. Requires reinstalling hooks and restarting OpenCode
+- **Editor-area universe panel**: the full universe now opens as an editor tab in the main working area instead of the narrow sidebar. Click the rocket icon in the editor title bar or run `Event Horizon: Open Universe` from the command palette. Keybinding: `Ctrl+Shift+E H`
+- **Status bar agent counter**: a persistent rocket indicator in the bottom status bar showing the active agent count. Clicking it opens the universe. When an agent is waiting for user input, the bar blinks amber with a bell icon showing which agent needs attention
+
+### Improved
+- **Planet gravity**: planets now have a localized gravity field (3× radius). Astronauts passing nearby curve their trajectory; only those very close get captured into orbit. Exponential falloff (t⁶) keeps the edge gentle and the core strong. Larger planets pull stronger (proportional to rendered radius, including settings size override). Jetpack can escape the pull
+- **Demo mode realism**: agents now spawn one by one over 3–5 seconds in random order. Each agent runs an independent state machine (idle → thinking → tool_use → completing) with randomized timing, so no two planets change state in lockstep. Agents cycle through realistic multi-tool work bursts, occasionally error, spawn/despawn subagent moons, activate skills (code-review, run-tests, etc.), and trigger file collision lightning between workspace-sharing agents
+
+### Fixed
+- **Ghost skill indicator**: the active skill dot no longer appears for built-in CLI commands (e.g. `/commit`) that are not actual installed skills
+- **Planet click-to-select broken after drag feature**: clicking a planet no longer triggers the Command Center — drag handler was intercepting all clicks. Fixed by tracking whether the pointer actually moved before suppressing the click event
+- **Cooperation ship spam with many agents**: when 5+ agents share a workspace, overlapping ship arcs would obscure the planets. Capped visible ships to 2 per directed pair, removed burst convoys, scaled spawn intervals by pair count so large groups don't flood the universe, and increased ship travel speed for faster visual turnover
+- **Move Skill created broken paths**: the Move Skill feature allowed moving skills into category subfolders (e.g. `skills/documentation/my-skill/`), which breaks agent discovery — Claude Code, OpenCode, and Copilot only scan one level deep. Replaced the category combobox with a "Move to Root" button that only appears for skills already in subfolders, with a warning explaining the issue. Skills in subfolders now show an amber warning in the skill card. Added `metadata.category` and `metadata.tags` parsing from SKILL.md frontmatter as the correct way to categorize skills without affecting file layout
+- **Marketplace search timeout**: API searches now have an 8-second timeout. Shows "Search timed out." or "Search failed." with a Retry button instead of spinning forever
+
+## [0.0.7] — 2026-03-15
 
 ### Added
 - **Sidebar badge**: VS Code activity bar icon now shows a numeric badge with the count of active agents. Updates in real time as agents connect and disconnect

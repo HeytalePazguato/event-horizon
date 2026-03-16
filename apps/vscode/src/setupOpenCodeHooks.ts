@@ -60,15 +60,28 @@ function sendExit(eventName, extra) {
   } catch {}
 }
 
-export default async function EventHorizon({ project, directory, worktree }) {
+export default async function EventHorizon({ project, directory, worktree, serverUrl }) {
   const sessionId = String(project?.id ?? "opencode-1");
   const agentName = "OpenCode";
   const cwd = worktree || directory || undefined;
+  // OpenCode's internal server URL — used by Event Horizon for SSE subagent tracking
+  const opencodeServerUrl = typeof serverUrl === "object" && serverUrl?.href ? serverUrl.href : undefined;
 
-  send("session.created", { sessionId, agentName, cwd, payload: {} });
+  // Send initial session.created
+  send("session.created", { sessionId, agentName, cwd, payload: {}, serverUrl: opencodeServerUrl });
+
+  // Continuously re-send session.created as a heartbeat so Event Horizon
+  // can discover this agent even if it started after OpenCode.
+  // Runs every 30 seconds indefinitely - Event Horizon deduplicates spawns.
+  const heartbeatInterval = setInterval(() => {
+    send("session.created", { sessionId, agentName, cwd, payload: { heartbeat: true }, serverUrl: opencodeServerUrl });
+  }, 30000);
 
   // Send session.deleted when OpenCode exits (Ctrl+C, exit command, etc.)
-  const onExit = () => sendExit("session.deleted", { sessionId, agentName, cwd, payload: {} });
+  const onExit = () => {
+    clearInterval(heartbeatInterval);
+    sendExit("session.deleted", { sessionId, agentName, cwd, payload: {} });
+  };
   process.on("beforeExit", onExit);
   process.on("SIGINT", () => { onExit(); process.exit(0); });
   process.on("SIGTERM", () => { onExit(); process.exit(0); });

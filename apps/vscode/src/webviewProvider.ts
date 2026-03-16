@@ -1,5 +1,5 @@
 /**
- * Webview provider for the universe panel.
+ * Webview provider for the universe panel (editor area) and sidebar launcher.
  */
 
 import * as vscode from 'vscode';
@@ -12,16 +12,18 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import type { SkillInfo } from './skillScanner.js';
 
+// ── Marketplace search ───────────────────────────────────────────────────────
+
 async function handleMarketplaceSearch(
   webview: vscode.Webview,
   marketplaceUrl: string,
   query: string,
 ): Promise<void> {
+  const SEARCH_TIMEOUT_MS = 8000;
   try {
-    // SkillHub API — the only marketplace with a known API
     if (marketplaceUrl.includes('skillhub.club')) {
       const searchUrl = `https://www.skillhub.club/api/skills/search?q=${encodeURIComponent(query)}&limit=20`;
-      const response = await fetch(searchUrl);
+      const response = await fetch(searchUrl, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json() as { skills?: Array<{ name?: string; description?: string; author?: string; slug?: string }> };
       const results = (data.skills ?? []).map((s: { name?: string; description?: string; author?: string; slug?: string }) => ({
@@ -33,9 +35,8 @@ async function handleMarketplaceSearch(
       }));
       void webview.postMessage({ type: 'marketplace-search-results', results, source: marketplaceUrl });
     } else {
-      // Unknown API marketplace — try a generic JSON endpoint
       const searchUrl = `${marketplaceUrl.replace(/\/$/, '')}/api/search?q=${encodeURIComponent(query)}`;
-      const response = await fetch(searchUrl);
+      const response = await fetch(searchUrl, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json() as { results?: Array<{ name?: string; description?: string; author?: string; url?: string }> };
       const results = (data.results ?? []).map((s: { name?: string; description?: string; author?: string; url?: string }) => ({
@@ -47,11 +48,13 @@ async function handleMarketplaceSearch(
       }));
       void webview.postMessage({ type: 'marketplace-search-results', results, source: marketplaceUrl });
     }
-  } catch {
-    void webview.postMessage({ type: 'marketplace-search-error', source: marketplaceUrl });
-    void vscode.window.showWarningMessage('Marketplace search failed. The API may be unavailable.');
+  } catch (err) {
+    const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
+    void webview.postMessage({ type: 'marketplace-search-error', source: marketplaceUrl, reason: isTimeout ? 'timeout' : 'error' });
   }
 }
+
+// ── Skill helpers ────────────────────────────────────────────────────────────
 
 async function handleCreateSkill(msg: Record<string, unknown>): Promise<void> {
   const name = msg.name as string;
@@ -66,7 +69,6 @@ async function handleCreateSkill(msg: Record<string, unknown>): Promise<void> {
     return;
   }
 
-  // Build frontmatter — only spec-supported fields
   const lines: string[] = ['---'];
   lines.push(`name: ${name}`);
   if (msg.description) lines.push(`description: "${msg.description}"`);
@@ -79,7 +81,6 @@ async function handleCreateSkill(msg: Record<string, unknown>): Promise<void> {
   lines.push('');
   const content = lines.join('\n');
 
-  // Determine target directory — includes category subfolder if provided
   let skillsBase: string;
   if (scope === 'personal') {
     skillsBase = path.join(os.homedir(), '.claude', 'skills');
@@ -107,22 +108,10 @@ async function handleCreateSkill(msg: Record<string, unknown>): Promise<void> {
   }
 }
 
-/**
- * Move a skill's folder to a new category (or root).
- * e.g. skills/my-skill/ → skills/documentation/my-skill/
- *      skills/old-cat/my-skill/ → skills/new-cat/my-skill/
- *      skills/old-cat/my-skill/ → skills/my-skill/ (move to root)
- */
-async function handleMoveSkill(filePath: string, newCategory: string): Promise<void> {
-  if (newCategory && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newCategory)) {
-    void vscode.window.showErrorMessage('Invalid category name — use kebab-case.');
-    return;
-  }
-
+async function handleMoveSkill(filePath: string, _newCategory: string): Promise<void> {
   const skillDir = path.dirname(filePath);
   const skillName = path.basename(skillDir);
 
-  // Find the "skills" directory in the path to determine the root
   const normalized = filePath.replace(/\\/g, '/');
   const parts = normalized.split('/');
   const skillsIdx = parts.lastIndexOf('skills');
@@ -130,40 +119,31 @@ async function handleMoveSkill(filePath: string, newCategory: string): Promise<v
     void vscode.window.showErrorMessage('Cannot determine skills root directory.');
     return;
   }
-  // Reconstruct with native separators
   const skillsRoot = parts.slice(0, skillsIdx + 1).join(path.sep);
   const parentDir = path.dirname(skillDir);
+  const newDir = path.join(skillsRoot, skillName);
 
-  const newDir = newCategory
-    ? path.join(skillsRoot, newCategory, skillName)
-    : path.join(skillsRoot, skillName);
-
-  if (path.resolve(newDir) === path.resolve(skillDir)) return;
+  if (path.resolve(newDir) === path.resolve(skillDir)) {
+    void vscode.window.showInformationMessage(`Skill "${skillName}" is already at the root.`);
+    return;
+  }
 
   try {
-    await fsp.mkdir(path.dirname(newDir), { recursive: true });
     await fsp.rename(skillDir, newDir);
-
-    // Clean up empty old category folder
     try {
       const remaining = await fsp.readdir(parentDir);
       if (remaining.length === 0 && path.resolve(parentDir) !== path.resolve(skillsRoot)) {
         await fsp.rmdir(parentDir);
       }
     } catch { /* ignore */ }
-
     void vscode.window.showInformationMessage(
-      `Skill "${skillName}" moved to ${newCategory || 'root'}.`,
+      `Skill "${skillName}" moved to root. Use metadata.category in SKILL.md for categorization.`,
     );
   } catch (err) {
     void vscode.window.showErrorMessage(`Failed to move skill: ${err}`);
   }
 }
 
-/**
- * Duplicate a skill: copy its SKILL.md to a new folder with an updated name.
- * The new skill is placed in the same scope/category as the original.
- */
 async function handleDuplicateSkill(filePath: string, newName: string): Promise<void> {
   if (!newName || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newName)) {
     void vscode.window.showErrorMessage('Invalid skill name — use kebab-case (e.g. my-skill-copy).');
@@ -173,7 +153,6 @@ async function handleDuplicateSkill(filePath: string, newName: string): Promise<
   const skillDir = path.dirname(filePath);
   const parentDir = path.dirname(skillDir);
 
-  // Read source SKILL.md
   let content: string;
   try {
     content = await fsp.readFile(filePath, 'utf8');
@@ -182,7 +161,6 @@ async function handleDuplicateSkill(filePath: string, newName: string): Promise<
     return;
   }
 
-  // Update the name field in frontmatter
   content = content.replace(/^(name:\s*).+$/m, `$1${newName}`);
 
   const newDir = path.join(parentDir, newName);
@@ -199,229 +177,272 @@ async function handleDuplicateSkill(filePath: string, newName: string): Promise<
   }
 }
 
-export function createWebviewProvider(
+// ── Shared webview setup ─────────────────────────────────────────────────────
+
+async function getConnectedAgentTypes(): Promise<string[]> {
+  const types: string[] = [];
+  if (await isClaudeCodeHooksInstalled()) types.push('claude-code');
+  if (await isOpenCodeHooksInstalled()) types.push('opencode');
+  if (await isCopilotHooksInstalled()) types.push('copilot');
+  return types;
+}
+
+/** Set up hydration + message handling for the full universe webview. */
+function wireUniverseWebview(
+  webview: vscode.Webview,
+  context: vscode.ExtensionContext,
+  agentStateManager: AgentStateManager,
+  metricsEngine: MetricsEngine,
+  getSkills?: () => SkillInfo[],
+  rescanSkills?: () => Promise<SkillInfo[]>,
+): void {
+  function hydrateWebview() {
+    void getConnectedAgentTypes().then((agentTypes) => {
+      void webview.postMessage({ type: 'connected-agents', agentTypes });
+    });
+
+    const agents = agentStateManager.getAllAgents();
+    const metrics = metricsEngine.getAllMetrics();
+    if (agents.length > 0) {
+      void webview.postMessage({ type: 'init-state', agents, metrics });
+    }
+
+    const savedMedals = context.globalState.get<{
+      unlockedAchievements: string[];
+      achievementTiers: Record<string, number>;
+      achievementCounts: Record<string, number>;
+    }>('medals');
+    if (savedMedals?.unlockedAchievements?.length) {
+      void webview.postMessage({ type: 'init-medals', ...savedMedals });
+    }
+
+    const savedSettings = context.globalState.get<Record<string, unknown>>('visualSettings');
+    const savedGeneral = context.globalState.get<Record<string, unknown>>('generalSettings');
+    if (savedSettings || savedGeneral) {
+      void webview.postMessage({
+        type: 'init-settings',
+        settings: savedSettings ?? undefined,
+        ...(savedGeneral ?? {}),
+      });
+    }
+
+    const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
+    if (savedSingularity) {
+      void webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
+    }
+
+    const cachedSkills = getSkills?.() ?? [];
+    if (cachedSkills.length > 0) {
+      void webview.postMessage({ type: 'skills-update', skills: cachedSkills });
+    } else {
+      const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+      void import('./skillScanner.js').then(({ getInstalledSkills }) =>
+        getInstalledSkills(folders).then((skills) => {
+          void webview.postMessage({ type: 'skills-update', skills });
+        })
+      );
+    }
+  }
+
+  webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
+    if (msg?.type === 'ready') {
+      hydrateWebview();
+      return;
+    }
+    if (msg?.type === 'persist-medals') {
+      void context.globalState.update('medals', {
+        unlockedAchievements: msg.unlockedAchievements,
+        achievementTiers: msg.achievementTiers,
+        achievementCounts: msg.achievementCounts,
+      });
+      return;
+    }
+    if (msg?.type === 'persist-singularity') {
+      void context.globalState.update('singularityStats', msg.stats);
+      return;
+    }
+    if (msg?.type === 'persist-settings') {
+      void context.globalState.update('visualSettings', msg.settings);
+      void context.globalState.update('generalSettings', {
+        achievementsEnabled: msg.achievementsEnabled,
+        animationSpeed: msg.animationSpeed,
+        eventServerPort: msg.eventServerPort,
+      });
+      return;
+    }
+    if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
+      void runSetupClaudeCodeHooks().then(async () => {
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'setup-agent' && msg.agentType === 'opencode') {
+      void runSetupOpenCodeHooks().then(async () => {
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'remove-agent' && msg.agentType === 'claude-code') {
+      void removeClaudeCodeHooks().then(async () => {
+        void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'setup-agent' && msg.agentType === 'copilot') {
+      void runSetupCopilotHooks().then(async () => {
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'remove-agent' && msg.agentType === 'opencode') {
+      void removeOpenCodeHooks().then(async () => {
+        void vscode.window.showInformationMessage('Event Horizon: OpenCode plugin removed.');
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'remove-agent' && msg.agentType === 'copilot') {
+      void removeCopilotHooks().then(async () => {
+        void vscode.window.showInformationMessage('Event Horizon: Copilot hooks removed.');
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'spawn-agent' && msg.command) {
+      const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
+      if (!ALLOWED_COMMANDS.includes(msg.command)) return;
+      const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
+      terminal.sendText(msg.command);
+      terminal.show();
+    } else if (msg?.type === 'open-skill-file' && typeof msg.filePath === 'string') {
+      const uri = vscode.Uri.file(msg.filePath);
+      void vscode.workspace.openTextDocument(uri).then((doc) => {
+        void vscode.window.showTextDocument(doc);
+      });
+    } else if (msg?.type === 'create-skill') {
+      void handleCreateSkill(msg).then(async () => {
+        if (rescanSkills) {
+          const skills = await rescanSkills();
+          void webview.postMessage({ type: 'skills-update', skills });
+        }
+      });
+    } else if (msg?.type === 'open-marketplace-url' && typeof msg.url === 'string') {
+      void vscode.env.openExternal(vscode.Uri.parse(msg.url));
+    } else if (msg?.type === 'marketplace-search' && typeof msg.marketplaceUrl === 'string' && typeof msg.query === 'string') {
+      void handleMarketplaceSearch(webview, msg.marketplaceUrl, msg.query);
+    } else if (msg?.type === 'install-skill-from-url' && typeof msg.url === 'string') {
+      void vscode.env.openExternal(vscode.Uri.parse(msg.url));
+      void vscode.window.showInformationMessage(`Opening skill page. Use "skillhub install" or download manually to install.`);
+    } else if (msg?.type === 'move-skill' && typeof msg.filePath === 'string' && typeof msg.newCategory === 'string') {
+      void handleMoveSkill(msg.filePath, msg.newCategory).then(async () => {
+        if (rescanSkills) {
+          const skills = await rescanSkills();
+          void webview.postMessage({ type: 'skills-update', skills });
+        }
+      });
+    } else if (msg?.type === 'duplicate-skill' && typeof msg.filePath === 'string' && typeof msg.newName === 'string') {
+      void handleDuplicateSkill(msg.filePath, msg.newName).then(async () => {
+        if (rescanSkills) {
+          const skills = await rescanSkills();
+          void webview.postMessage({ type: 'skills-update', skills });
+        }
+      });
+    }
+  });
+}
+
+// ── Full universe panel (editor area) ────────────────────────────────────────
+
+let universePanel: vscode.WebviewPanel | null = null;
+
+/**
+ * Open or focus the full universe in the main editor area as a WebviewPanel.
+ * Returns the webview reference so the extension can forward events to it.
+ */
+export function openUniversePanel(
   context: vscode.ExtensionContext,
   webviewRef: { current: vscode.Webview | null },
   agentStateManager: AgentStateManager,
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
-  webviewViewRef?: { current: vscode.WebviewView | null },
-): vscode.WebviewViewProvider {
+): void {
+  // If already open, just reveal it
+  if (universePanel) {
+    universePanel.reveal(vscode.ViewColumn.One);
+    return;
+  }
+
   const version = (context.extension.packageJSON as { version: string }).version;
 
+  const panel = vscode.window.createWebviewPanel(
+    'eventHorizon.universe',
+    'Event Horizon',
+    { viewColumn: vscode.ViewColumn.One, preserveFocus: false },
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'webview-dist')],
+    },
+  );
+
+  universePanel = panel;
+  webviewRef.current = panel.webview;
+
+  const scriptUri = panel.webview.asWebviewUri(
+    vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js'),
+  );
+
+  panel.webview.html = getUniverseHtml(panel.webview, scriptUri, version);
+
+  wireUniverseWebview(panel.webview, context, agentStateManager, metricsEngine, getSkills, rescanSkills);
+
+  panel.onDidDispose(() => {
+    universePanel = null;
+    webviewRef.current = null;
+  });
+}
+
+// ── Sidebar launcher (activity bar) ─────────────────────────────────────────
+
+/**
+ * Minimal sidebar view that shows an "Open Universe" button and carries the
+ * agent count badge on the activity bar icon.
+ */
+export function createSidebarProvider(
+  _context: vscode.ExtensionContext,
+  webviewViewRef: { current: vscode.WebviewView | null },
+): vscode.WebviewViewProvider {
   return {
     resolveWebviewView(
       webviewView: vscode.WebviewView,
       _resolveContext: vscode.WebviewViewResolveContext,
-      _token: vscode.CancellationToken
+      _token: vscode.CancellationToken,
     ): void {
-      webviewRef.current = webviewView.webview;
       if (webviewViewRef) webviewViewRef.current = webviewView;
+
       webviewView.onDidDispose(() => {
-        webviewRef.current = null;
         if (webviewViewRef) webviewViewRef.current = null;
       });
 
-      webviewView.webview.options = {
-        enableScripts: true,
-        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'webview-dist')],
-      };
+      webviewView.webview.options = { enableScripts: true };
 
-      const scriptUri = webviewView.webview.asWebviewUri(
-        vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js')
-      );
+      webviewView.webview.html = getSidebarHtml();
 
-      async function getConnectedAgentTypes(): Promise<string[]> {
-        const types: string[] = [];
-        if (await isClaudeCodeHooksInstalled()) types.push('claude-code');
-        if (await isOpenCodeHooksInstalled()) types.push('opencode');
-        if (await isCopilotHooksInstalled()) types.push('copilot');
-        return types;
-      }
-
-      // Render HTML first; hydration happens when webview sends 'ready'
-      webviewView.webview.html = getWebviewHtml(webviewView.webview, scriptUri, version, []);
-
-      function hydrateWebview() {
-        // Connected agent types
-        void getConnectedAgentTypes().then((agentTypes) => {
-          void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes });
-        });
-
-        // 2.2 — hydrate webview with accumulated state on (re)open
-        const agents = agentStateManager.getAllAgents();
-        const metrics = metricsEngine.getAllMetrics();
-        if (agents.length > 0) {
-          void webviewView.webview.postMessage({ type: 'init-state', agents, metrics });
-        }
-
-        // Hydrate persisted medals from globalState
-        const savedMedals = context.globalState.get<{
-          unlockedAchievements: string[];
-          achievementTiers: Record<string, number>;
-          achievementCounts: Record<string, number>;
-        }>('medals');
-        if (savedMedals?.unlockedAchievements?.length) {
-          void webviewView.webview.postMessage({ type: 'init-medals', ...savedMedals });
-        }
-
-        // Hydrate persisted settings (visual + general)
-        const savedSettings = context.globalState.get<Record<string, unknown>>('visualSettings');
-        const savedGeneral = context.globalState.get<Record<string, unknown>>('generalSettings');
-        if (savedSettings || savedGeneral) {
-          void webviewView.webview.postMessage({
-            type: 'init-settings',
-            settings: savedSettings ?? undefined,
-            ...(savedGeneral ?? {}),
-          });
-        }
-
-        // Hydrate persisted singularity stats from globalState
-        const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
-        if (savedSingularity) {
-          void webviewView.webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
-        }
-
-        // Hydrate installed skills — if initial scan isn't done yet, re-scan now
-        const cachedSkills = getSkills?.() ?? [];
-        if (cachedSkills.length > 0) {
-          void webviewView.webview.postMessage({ type: 'skills-update', skills: cachedSkills });
-        } else {
-          // Initial scan may not have finished — re-scan and send
-          const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-          void import('./skillScanner.js').then(({ getInstalledSkills }) =>
-            getInstalledSkills(folders).then((skills) => {
-              void webviewView.webview.postMessage({ type: 'skills-update', skills });
-            })
-          );
-        }
-      }
-
-      webviewView.webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
-        // Webview JS has loaded and is ready to receive messages
-        if (msg?.type === 'ready') {
-          hydrateWebview();
-          return;
-        }
-        // Persist medal state changes to globalState
-        if (msg?.type === 'persist-medals') {
-          void context.globalState.update('medals', {
-            unlockedAchievements: msg.unlockedAchievements,
-            achievementTiers: msg.achievementTiers,
-            achievementCounts: msg.achievementCounts,
-          });
-          return;
-        }
-        // Persist singularity stats to globalState
-        if (msg?.type === 'persist-singularity') {
-          void context.globalState.update('singularityStats', msg.stats);
-          return;
-        }
-        // Persist visual + general settings to globalState
-        if (msg?.type === 'persist-settings') {
-          void context.globalState.update('visualSettings', msg.settings);
-          void context.globalState.update('generalSettings', {
-            achievementsEnabled: msg.achievementsEnabled,
-            animationSpeed: msg.animationSpeed,
-            eventServerPort: msg.eventServerPort,
-          });
-          return;
-        }
-        if (msg?.type === 'setup-agent' && msg.agentType === 'claude-code') {
-          void runSetupClaudeCodeHooks().then(async () => {
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
-          });
-        } else if (msg?.type === 'setup-agent' && msg.agentType === 'opencode') {
-          void runSetupOpenCodeHooks().then(async () => {
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
-          });
-        } else if (msg?.type === 'remove-agent' && msg.agentType === 'claude-code') {
-          void removeClaudeCodeHooks().then(async () => {
-            void vscode.window.showInformationMessage('Event Horizon: Claude Code hooks removed.');
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
-          });
-        } else if (msg?.type === 'setup-agent' && msg.agentType === 'copilot') {
-          void runSetupCopilotHooks().then(async () => {
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
-          });
-        } else if (msg?.type === 'remove-agent' && msg.agentType === 'opencode') {
-          void removeOpenCodeHooks().then(async () => {
-            void vscode.window.showInformationMessage('Event Horizon: OpenCode plugin removed.');
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
-          });
-        } else if (msg?.type === 'remove-agent' && msg.agentType === 'copilot') {
-          void removeCopilotHooks().then(async () => {
-            void vscode.window.showInformationMessage('Event Horizon: Copilot hooks removed.');
-            void webviewView.webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
-          });
-        } else if (msg?.type === 'spawn-agent' && msg.command) {
-          // 1.1 — whitelist allowed commands to prevent arbitrary shell execution
-          const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
-          if (!ALLOWED_COMMANDS.includes(msg.command)) return;
-          const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
-          terminal.sendText(msg.command);
-          terminal.show();
-        } else if (msg?.type === 'open-skill-file' && typeof msg.filePath === 'string') {
-          const uri = vscode.Uri.file(msg.filePath);
-          void vscode.workspace.openTextDocument(uri).then((doc) => {
-            void vscode.window.showTextDocument(doc);
-          });
-        } else if (msg?.type === 'create-skill') {
-          void handleCreateSkill(msg).then(async () => {
-            if (rescanSkills) {
-              const skills = await rescanSkills();
-              void webviewView.webview.postMessage({ type: 'skills-update', skills });
-            }
-          });
-        } else if (msg?.type === 'open-marketplace-url' && typeof msg.url === 'string') {
-          void vscode.env.openExternal(vscode.Uri.parse(msg.url));
-        } else if (msg?.type === 'marketplace-search' && typeof msg.marketplaceUrl === 'string' && typeof msg.query === 'string') {
-          void handleMarketplaceSearch(webviewView.webview, msg.marketplaceUrl, msg.query);
-        } else if (msg?.type === 'install-skill-from-url' && typeof msg.url === 'string') {
-          // Open the skill URL in the browser — users install manually or via CLI
-          void vscode.env.openExternal(vscode.Uri.parse(msg.url));
-          void vscode.window.showInformationMessage(`Opening skill page. Use "skillhub install" or download manually to install.`);
-        } else if (msg?.type === 'move-skill' && typeof msg.filePath === 'string' && typeof msg.newCategory === 'string') {
-          void handleMoveSkill(msg.filePath, msg.newCategory).then(async () => {
-            if (rescanSkills) {
-              const skills = await rescanSkills();
-              void webviewView.webview.postMessage({ type: 'skills-update', skills });
-            }
-          });
-        } else if (msg?.type === 'duplicate-skill' && typeof msg.filePath === 'string' && typeof msg.newName === 'string') {
-          void handleDuplicateSkill(msg.filePath, msg.newName).then(async () => {
-            if (rescanSkills) {
-              const skills = await rescanSkills();
-              void webviewView.webview.postMessage({ type: 'skills-update', skills });
-            }
-          });
+      webviewView.webview.onDidReceiveMessage((msg: { type?: string }) => {
+        if (msg?.type === 'open-universe') {
+          void vscode.commands.executeCommand('eventHorizon.open');
         }
       });
     },
   };
 }
 
-function getWebviewHtml(
+// ── HTML ──────────────────────────────────────────────────────────────────────
+
+function getUniverseHtml(
   webview: vscode.Webview,
   scriptUri: vscode.Uri,
   version: string,
-  connectedAgentTypes: string[],
 ): string {
-  // unsafe-eval is required by PixiJS for WebGL shader compilation — cannot be removed.
-  // unsafe-inline is limited to styles only; scripts are loaded via src= with nonce-less cspSource.
   const csp = [
     "default-src 'none'",
-    "script-src 'unsafe-eval' " + webview.cspSource, // 1.6 — removed unsafe-inline for scripts
+    "script-src 'unsafe-eval' " + webview.cspSource,
     "style-src 'unsafe-inline'",
     "img-src " + webview.cspSource + " data:",
   ].join('; ');
 
-  // 3.5 — use extension version as cache-bust suffix so updates are picked up immediately
   const scriptSrc = scriptUri.toString() + '?v=' + version;
-
-  // 1.6 — initial state injected via data attribute to avoid inline script (CSP compliance)
-  const initData = JSON.stringify({ connectedAgents: connectedAgentTypes, version });
+  const initData = JSON.stringify({ connectedAgents: [], version });
 
   return `<!DOCTYPE html>
 <html>
@@ -440,6 +461,80 @@ function getWebviewHtml(
 <body>
   <div id="root" data-eh-init="${initData.replace(/"/g, '&quot;')}"><div class="loading">Loading app\u2026</div></div>
   <script src="${scriptSrc}"></script>
+</body>
+</html>`;
+}
+
+function getSidebarHtml(): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      font-family: system-ui;
+      background: #050510 linear-gradient(180deg, #0a0a18 0%, #050508 50%, #030306 100%);
+      color: #8899aa;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .launcher {
+      text-align: center;
+      padding: 24px 16px;
+    }
+    .title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #90d0a0;
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+    .subtitle {
+      font-size: 10px;
+      color: #4a6a5a;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .open-btn {
+      display: inline-block;
+      padding: 8px 20px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: Consolas, monospace;
+      color: #b0f0c0;
+      background: linear-gradient(180deg, #1e3228 0%, #142820 100%);
+      border: 1px solid #3a6a4a;
+      border-radius: 3px;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: box-shadow 0.15s;
+    }
+    .open-btn:hover {
+      box-shadow: 0 0 8px rgba(60,160,90,0.35);
+      border-color: #50aa70;
+    }
+    .hint {
+      font-size: 9px;
+      color: #3a5a4a;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="launcher">
+    <div class="title">Event Horizon</div>
+    <div class="subtitle">AI agent universe visualization</div>
+    <button class="open-btn" id="openBtn">Open Universe</button>
+    <div class="hint">Opens in the main editor area</div>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+    document.getElementById('openBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'open-universe' });
+    });
+  </script>
 </body>
 </html>`;
 }

@@ -96,6 +96,47 @@ describe('MetricsEngine', () => {
     expect(engine.getMetrics('a1')!.activeTasks).toBe(0);
   });
 
+  it('accumulates token and cost data from event payload', () => {
+    engine.process(makeEvent({ type: 'agent.spawn', agentId: 'a1', timestamp: 1000 }));
+    // Initial values are -1 (no data yet)
+    expect(engine.getMetrics('a1')!.inputTokens).toBe(-1);
+    expect(engine.getMetrics('a1')!.outputTokens).toBe(-1);
+    expect(engine.getMetrics('a1')!.estimatedCostUsd).toBe(-1);
+
+    // Simulate a Stop event with token/cost data (session totals — replace)
+    engine.process(makeEvent({
+      type: 'task.complete',
+      agentId: 'a1',
+      timestamp: 2000,
+      payload: { inputTokens: 5000, outputTokens: 3000, costUsd: 0.42 },
+    }));
+    const m = engine.getMetrics('a1')!;
+    expect(m.inputTokens).toBe(5000);
+    expect(m.outputTokens).toBe(3000);
+    expect(m.estimatedCostUsd).toBe(0.42);
+  });
+
+  it('replaces token data with latest values (not additive)', () => {
+    engine.process(makeEvent({ type: 'agent.spawn', agentId: 'a1', timestamp: 1000 }));
+    engine.process(makeEvent({
+      type: 'task.complete',
+      agentId: 'a1',
+      timestamp: 2000,
+      payload: { inputTokens: 5000, outputTokens: 3000, costUsd: 0.42 },
+    }));
+    // Second event with higher session totals — should replace, not add
+    engine.process(makeEvent({
+      type: 'task.complete',
+      agentId: 'a1',
+      timestamp: 3000,
+      payload: { inputTokens: 12000, outputTokens: 8000, costUsd: 1.05 },
+    }));
+    const m = engine.getMetrics('a1')!;
+    expect(m.inputTokens).toBe(12000);
+    expect(m.outputTokens).toBe(8000);
+    expect(m.estimatedCostUsd).toBe(1.05);
+  });
+
   it('counter drift fallback prevents negative activeTasks', () => {
     engine.process(makeEvent({ type: 'agent.spawn', agentId: 'a1', timestamp: 1000 }));
     // Complete without a preceding start — activeTasks should not go below 0

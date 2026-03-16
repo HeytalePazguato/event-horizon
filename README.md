@@ -166,39 +166,26 @@ Certain actions and milestones unlock achievements, displayed as medals in the C
 
 ### Hook & Event Support Matrix
 
-The table below shows which lifecycle events each agent supports and how they map to Event Horizon's internal `AgentEvent` types.
+The table below shows which agent lifecycle events are supported and their visual effects.
 
-| Hook / Event | Claude Code | GitHub Copilot | OpenCode | AgentEvent | Visual Effect |
-|---|---|---|---|---|---|
-| **SessionStart** | `SessionStart` ✅ | `SessionStart` ✅ | `session.created` ✅ | `agent.spawn` | Planet appears + pulse wave |
-| **SessionEnd** | `SessionEnd` ✅ | ❌ Never fires (see below) | `session.deleted` ✅ | `agent.terminate` | Planet removed |
-| **Stop** (per-turn) | — | `Stop` ✅ | — | `agent.idle` | Planet slows, green glow |
-| **UserPromptSubmit** | `UserPromptSubmit` ✅ | `UserPromptSubmit` ✅ | `message.updated` (role=user) ✅ | `task.start` | Thinking ring + moon spawns |
-| **PreToolUse** | `PreToolUse` ✅ | `PreToolUse` ✅ | `tool.execute.before` ✅ | `tool.call` | Blue tool-use glow |
-| **PostToolUse** | `PostToolUse` ✅ | `PostToolUse` ✅ | `tool.execute.after` ✅ | `tool.result` | Returns to thinking ring |
-| **SubagentStart** | `SubagentStart` ✅ | `SubagentStart` ✅ ⚠️ | — | `task.start` | Moon spawns on parent planet |
-| **SubagentStop** | `SubagentStop` ✅ | `SubagentStop` ✅ | — | `task.complete` | Moon lands |
-| **Notification** | `Notification` ✅ | — | — | `message.receive` | — |
-| **PermissionRequest** | `PermissionRequest` ✅ | — | `permission.asked` ✅ | `agent.waiting` | Amber pulsing ring |
-| **PermissionReply** | — | — | `permission.replied` ✅ | `message.receive` | Clears waiting ring |
-| **Stop** (Claude) | `Stop` ✅ | — | — | `task.complete` | Planet returns to idle |
-| **TaskCompleted** | `TaskCompleted` ✅ | — | — | `task.complete` | Planet returns to idle |
-| **SessionStatus** | — | — | `session.status` ✅ | `task.progress` / `task.complete` | Planet rotation speed change |
-| **SessionCompacted** | `PreCompact` ✅ | `PreCompact` (untested) | `session.compacted` ✅ | `message.receive` | — |
-| **SessionUpdated** | — | — | `session.updated` ✅ | `message.receive` | — |
-| **FileEdited** | — | — | `file.edited` ✅ | `file.write` | Lightning arc if collision |
-| **FileWatcherUpdated** | — | — | `file.watcher.updated` ✅ | `file.read` | Lightning arc if collision |
-| **CommandExecuted** | — | — | `command.executed` ✅ | `message.receive` | — |
-| **LSP Diagnostics** | — | — | `lsp.client.diagnostics` ✅ | `message.receive` | — |
-| **TodoUpdated** | — | — | `todo.updated` ✅ | `message.receive` | — |
-| **InstructionsLoaded** | `InstructionsLoaded` ✅ | — | — | `message.receive` | — |
-| **ConfigChange** | `ConfigChange` ✅ | — | — | `message.receive` | — |
-| **WorktreeCreate** | `WorktreeCreate` ✅ | — | — | `message.receive` | — |
-| **WorktreeRemove** | `WorktreeRemove` ✅ | — | — | `message.receive` | — |
-| **TeammateIdle** | `TeammateIdle` ✅ | — | — | `agent.idle` | Planet slows, green glow |
-| **Error** | `PostToolUseFailure` ✅ | — | `session.error` ✅ | `agent.error` | Red error glow |
-
-**OpenCode events not mapped** (infrastructure/TUI-only, no visualization value): `installation.updated`, `lsp.updated`, `shell.env`, `server.connected`, `session.diff`, `message.removed`, `message.part.updated`, `message.part.removed`, `tui.prompt.append`, `tui.command.execute`, `tui.toast.show`.
+| Lifecycle Event | Claude Code | GitHub Copilot | OpenCode | Visual Effect |
+|---|:---:|:---:|:---:|---|
+| **Session Start** | ✅ | ✅ | ✅ | Planet appears + pulse wave |
+| **Session End** | ✅ | ❌ | ✅ | Planet removed |
+| **Prompt Submit** | ✅ | ✅ | ✅ | Thinking ring activates |
+| **Tool Use** | ✅ | ✅ | ✅ | Blue tool-use glow |
+| **Subagent Start** | ✅ | ✅ | ✅ | Moon spawns on parent planet |
+| **Subagent Stop** | ✅ | ✅ | ✅ | Moon disappears |
+| **Permission Request** | ✅ | — | ✅ | Amber pulsing ring |
+| **Task Complete** | ✅ | ✅ | ✅ | Planet returns to idle |
+| **File Edit** | ✅ | ✅ | ✅ | Lightning arc if collision |
+| **File Collision** | ✅ | ✅ | ✅ | Lightning stream between planets |
+| **Workspace Detection** | ✅ | ✅ | ✅ | Asteroid belt around group |
+| **Skill Discovery** | ✅ | ✅ | ✅ | Skills tab + orbit ring dots |
+| **Skill Usage** | ✅ | ✅ | ✅ | Pulsing dot + floating label |
+| **Token Usage** | ✅ | — | ✅ | Displayed in Command Center |
+| **Estimated Cost** | ✅ | — | ✅ | USD estimate in Command Center |
+| **Error** | ✅ | — | ✅ | Red error glow |
 
 ### Known Limitations
 
@@ -206,9 +193,7 @@ The table below shows which lifecycle events each agent supports and how they ma
 
 - **Subagent permission completion not signaled** — When a subagent requests permission (e.g. to run a Bash command), the `PermissionRequest` hook fires and the waiting ring appears. However, Claude Code does not fire any hook when the user grants or denies the permission. The only signal is `PostToolUse`, which fires when the tool *finishes executing* — not when the user approves it. This means the waiting ring stays visible for the entire duration of the tool execution, not just during the approval prompt. This is a [known limitation on Claude Code's side](https://github.com/anthropics/claude-code/issues/33473#issuecomment-4043810416). Once a permission completion hook is added upstream, Event Horizon will use it to clear the ring immediately after approval.
 
-#### OpenCode
 
-- **No subagent hooks** ([issue #16627](https://github.com/anomalyco/opencode/issues/16627)) — OpenCode does not provide `SubagentStart` or `SubagentStop` events. There is no way to detect when a subagent is spawned or finishes, so subagent moons cannot be rendered for OpenCode planets.
 
 #### GitHub Copilot
 
@@ -222,15 +207,17 @@ The table below shows which lifecycle events each agent supports and how they ma
 
 Install **Event Horizon** from the VS Code Marketplace (or from a `.vsix` file), then:
 
-1. **Open the view:** Click the **globe icon** in the sidebar, or **Ctrl+Shift+P** then **Event Horizon: Open Universe**.
+1. **Open the universe:** Click the **rocket icon** (🚀) in the **editor title bar** (top-right, next to the split editor button), or press **Ctrl+Shift+P** → **Event Horizon: Open Universe**. The universe opens as a full editor tab.
 
 2. **Connect an agent:** Click **Connect** in the Command Center, choose your agent, click **Install**.
    - **Claude Code** — Adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet appears automatically.
    - **OpenCode** — Installs a plugin to `~/.config/opencode/plugins/`. Restart OpenCode after connecting.
 
-3. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI.
+4. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI.
 
-4. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
+5. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
+
+> **Customizing the title bar icon:** The icon uses VS Code's built-in [Codicon](https://microsoft.github.io/vscode-codicons/dist/codicon.html) set. To change it, edit `"icon"` in the `eventHorizon.open` command entry in `apps/vscode/package.json` (e.g. `$(globe)`, `$(telescope)`, `$(star-full)`).
 
 ---
 

@@ -150,6 +150,44 @@ describe('mapClaudeHookToEvent', () => {
     expect(p.skillName).toBeUndefined();
   });
 
+  it('extracts transcript_path from Stop event', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      transcript_path: '/home/user/.claude/projects/abc123.jsonl',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('task.complete');
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.transcriptPath).toBe('/home/user/.claude/projects/abc123.jsonl');
+  });
+
+  it('extracts token/cost from Stop if usage is present (forward-compat)', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      total_cost_usd: 1.23,
+      usage: { input_tokens: 15000, output_tokens: 8500 },
+    });
+    expect(result).not.toBeNull();
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.inputTokens).toBe(15000);
+    expect(p.outputTokens).toBe(8500);
+    expect(p.costUsd).toBe(1.23);
+  });
+
+  it('extracts transcript_path from any hook event (not just Stop)', () => {
+    const result = mapClaudeHookToEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Read',
+      transcript_path: '/some/path.jsonl',
+    });
+    expect(result).not.toBeNull();
+    const p = result!.payload as Record<string, unknown>;
+    expect(p.transcriptPath).toBe('/some/path.jsonl');
+  });
+
   it('does not set isSkill for non-Skill tools', () => {
     const result = mapClaudeHookToEvent({
       hook_event_name: 'PreToolUse',

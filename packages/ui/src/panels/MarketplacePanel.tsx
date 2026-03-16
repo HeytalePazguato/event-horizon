@@ -46,8 +46,9 @@ const MarketplaceCard: FC<{
   onRemove: (url: string) => void;
   searchResults?: MarketplaceSkillResult[];
   searchLoading?: boolean;
+  searchError?: 'timeout' | 'error' | null;
   onInstallSkill?: (result: MarketplaceSkillResult) => void;
-}> = ({ entry, isDefault, onBrowse, onSearch, onRemove, searchResults, searchLoading, onInstallSkill }) => {
+}> = ({ entry, isDefault, onBrowse, onSearch, onRemove, searchResults, searchLoading, searchError, onInstallSkill }) => {
   const [query, setQuery] = useState('');
 
   return (
@@ -201,9 +202,28 @@ const MarketplaceCard: FC<{
           ))}
         </div>
       )}
-      {searchResults && searchResults.length === 0 && !searchLoading && (
+      {searchResults && searchResults.length === 0 && !searchLoading && !searchError && (
         <div style={{ fontSize: 8, color: '#5a6a52', marginTop: 4 }}>
           No results found.
+        </div>
+      )}
+      {searchError && !searchLoading && (
+        <div style={{ fontSize: 8, color: '#c06060', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span>{searchError === 'timeout' ? 'Search timed out.' : 'Search failed.'}</span>
+          <button
+            type="button"
+            onClick={() => { if (query.trim()) onSearch(entry.url, query.trim()); }}
+            style={{
+              padding: '1px 6px',
+              fontSize: 7,
+              border: '1px solid #4a3a3a',
+              background: 'rgba(90,50,50,0.3)',
+              color: '#c08080',
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
         </div>
       )}
     </div>
@@ -218,6 +238,7 @@ export interface MarketplacePanelProps {
   searchResults?: MarketplaceSkillResult[];
   searchLoading?: boolean;
   searchSource?: string;
+  searchError?: 'timeout' | 'error' | null;
 }
 
 export const MarketplacePanel: FC<MarketplacePanelProps> = ({
@@ -228,6 +249,7 @@ export const MarketplacePanel: FC<MarketplacePanelProps> = ({
   searchResults,
   searchLoading,
   searchSource,
+  searchError,
 }) => {
   const marketplaces = useCommandCenterStore((s) => s.registeredMarketplaces);
   const addMarketplace = useCommandCenterStore((s) => s.addMarketplace);
@@ -285,6 +307,7 @@ export const MarketplacePanel: FC<MarketplacePanelProps> = ({
             onRemove={removeMarketplace}
             searchResults={searchSource === entry.url ? searchResults : undefined}
             searchLoading={searchSource === entry.url ? searchLoading : undefined}
+            searchError={searchSource === entry.url ? searchError : undefined}
             onInstallSkill={onInstallSkill}
           />
         ))}

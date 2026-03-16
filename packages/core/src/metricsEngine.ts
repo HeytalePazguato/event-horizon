@@ -17,6 +17,9 @@ export interface AgentMetrics {
   errorCount: number;
   sessionStartedAt: number;
   toolBreakdown: Record<string, number>;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
   lastUpdated: number;
 }
 
@@ -61,6 +64,9 @@ export class MetricsEngine {
         errorCount: 0,
         sessionStartedAt: now,
         toolBreakdown: {},
+        inputTokens: -1,  // -1 = no data yet
+        outputTokens: -1, // -1 = no data yet
+        estimatedCostUsd: -1, // -1 = no data yet
         lastUpdated: now,
       };
       this.metrics.set(agentId, m);
@@ -129,6 +135,14 @@ export class MetricsEngine {
         return;
       default:
         break;
+    }
+
+    // Accumulate token/cost data from event payload (session totals — replace, not add)
+    const payload = event.payload as Record<string, unknown> | undefined;
+    if (payload) {
+      if (typeof payload.inputTokens === 'number') m.inputTokens = payload.inputTokens;
+      if (typeof payload.outputTokens === 'number') m.outputTokens = payload.outputTokens;
+      if (typeof payload.costUsd === 'number') m.estimatedCostUsd = payload.costUsd;
     }
 
     this.metrics.set(agentId, { ...m });
