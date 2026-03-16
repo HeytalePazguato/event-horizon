@@ -75,7 +75,7 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
   const eventName = o.event ?? o.name;
   if (typeof eventName !== 'string') return null;
 
-  let agentId = String(o.agentId ?? o.sessionId ?? 'opencode-1').slice(0, 128);
+  const agentId = String(o.agentId ?? o.sessionId ?? 'opencode-1').slice(0, 128);
   const agentName = String(o.agentName ?? 'OpenCode').slice(0, 64);
   const rawPayload = (o.payload as Record<string, unknown>) ?? (o.data as Record<string, unknown>) ?? {};
   // Shallow copy to avoid mutating the caller's input object

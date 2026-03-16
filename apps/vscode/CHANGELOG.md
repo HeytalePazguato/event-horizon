@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [0.0.8] — Unreleased
+## [0.0.8] — 2026-03-16
 
 ### Added
 - **Per-agent token & cost tracking**: displays cumulative token usage (input + output + cache) and estimated USD cost per agent in the Command Center Info tab. Totals shown in the singularity view. Cost estimated using Claude's per-token rates
