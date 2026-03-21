@@ -158,7 +158,29 @@ export const EMPTY_SINGULARITY_STATS: SingularityStats = {
   firstEventAt: 0,
 };
 
+/** A single point on the agent activity timeline. */
+export interface TimelineEntry {
+  ts: number;
+  agentId: string;
+  agentName: string;
+  agentType: string;
+  /** The event category: state change, file op, tool call, error. */
+  kind: 'state' | 'file' | 'tool' | 'error';
+  /** Human label — e.g. "idle → thinking", "Read src/index.ts", "Bash". */
+  label: string;
+}
+
+const TIMELINE_CAP = 500;
+
 export interface CommandCenterState {
+  /** Which view mode the webview is in. */
+  viewMode: 'universe' | 'operations';
+  setViewMode: (mode: 'universe' | 'operations') => void;
+  toggleViewMode: () => void;
+  /** Rolling timeline buffer (capped at 500 entries, oldest pruned). */
+  timeline: TimelineEntry[];
+  addTimelineEntry: (entry: TimelineEntry) => void;
+  clearTimeline: () => void;
   selectedAgentId: string | null;
   selectedAgent: AgentState | null;
   selectedMetrics: AgentMetrics | null;
@@ -297,6 +319,15 @@ export function clearAllBoostTimers(): void {
 }
 
 export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
+  viewMode: 'universe',
+  setViewMode: (mode) => set({ viewMode: mode }),
+  toggleViewMode: () => set((s) => ({ viewMode: s.viewMode === 'universe' ? 'operations' : 'universe' })),
+  timeline: [],
+  addTimelineEntry: (entry) => set((s) => {
+    const next = [...s.timeline, entry];
+    return { timeline: next.length > TIMELINE_CAP ? next.slice(next.length - TIMELINE_CAP) : next };
+  }),
+  clearTimeline: () => set({ timeline: [] }),
   selectedAgentId: null,
   selectedAgent: null,
   selectedMetrics: null,

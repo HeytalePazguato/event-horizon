@@ -2,6 +2,14 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.1.0] — Unreleased
+
+### Added
+
+### Improved
+
+### Fixed
+
 ## [0.0.9] — 2026-03-21
 
 ### Added
