@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [0.0.9] — Unreleased
+## [0.0.9] — 2026-03-21
 
 ### Added
 - **Lightning arc filename label**: file collision lightning now shows the contested filename at the midpoint of the arc (9px cyan monospace text), so you can immediately see which file two agents are fighting over
