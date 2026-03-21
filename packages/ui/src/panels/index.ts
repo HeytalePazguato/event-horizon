@@ -10,3 +10,6 @@ export type { MarketplacePanelProps } from './MarketplacePanel.js';
 export { SettingsPanel } from './SettingsPanel.js';
 export { SettingsModal } from './SettingsModal.js';
 export { FileHeatmap } from './FileHeatmap.js';
+export { AgentSidebar } from './AgentSidebar.js';
+export { OverviewPanel } from './OverviewPanel.js';
+export { PlanetIcon, SingularityIcon } from './AgentIdentity.js';

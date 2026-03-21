@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
+import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { SkillInfo, CreateSkillRequest, MarketplaceSkillResult } from '@event-horizon/ui';
 import type { AgentState, AgentRuntimeState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
@@ -1493,50 +1493,12 @@ function App() {
 
       {/* Operations view — full-screen dashboard (rendered only when active) */}
       {viewMode === 'operations' && (
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          background: 'linear-gradient(180deg, #080e0a 0%, #040806 100%)',
-          fontFamily: 'Consolas, monospace',
-          color: '#90b088',
-          minHeight: 0,
-        }}>
-          {/* Placeholder — will be replaced by OperationsView component in Phase C */}
-          <div style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: 'column',
-            gap: 12,
-          }}>
-            <div style={{ fontSize: 14, color: '#78b890', fontWeight: 600, letterSpacing: '0.1em' }}>
-              OPERATIONS VIEW
-            </div>
-            <div style={{ fontSize: 11, color: '#4a7a5a' }}>
-              {agents.length} agent{agents.length !== 1 ? 's' : ''} connected
-            </div>
-            <button
-              type="button"
-              onClick={() => useCommandCenterStore.getState().toggleViewMode()}
-              style={{
-                marginTop: 8,
-                padding: '6px 16px',
-                border: '1px solid #25904a',
-                borderRadius: 3,
-                background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)',
-                color: '#60d080',
-                fontSize: 11,
-                fontFamily: 'Consolas, monospace',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Back to Universe
-            </button>
-          </div>
-        </div>
+        <OperationsView
+          agents={agents}
+          agentMap={agentMap}
+          metricsMap={metricsMap}
+          agentStates={agentStates}
+        />
       )}
 
       <AchievementToasts />
