@@ -152,6 +152,8 @@ export interface CommandCenterState {
   demoRequested: boolean;
   /** True while demo simulation is active — guards achievements from firing. */
   demoMode: boolean;
+  /** Timestamp when demo simulation started (0 = not running). */
+  demoStartedAt: number;
   /** Active toast notifications. */
   activeToasts: ToastEntry[];
   /** Achievement IDs that have already been unlocked (one-shot). */
@@ -271,6 +273,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   infoOpen: false,
   demoRequested: false,
   demoMode: false,
+  demoStartedAt: 0,
   activeToasts: [],
   unlockedAchievements: [],
   achievementCounts: {},
@@ -405,7 +408,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),
 
   requestDemo: () => set((s) => ({ demoRequested: !s.demoRequested })),
-  setDemoMode: (active) => set({ demoMode: active }),
+  setDemoMode: (active) => set({ demoMode: active, demoStartedAt: active ? Date.now() : 0 }),
 
   unlockAchievement: (id) => {
     // Achievements disabled guard

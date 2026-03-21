@@ -867,14 +867,14 @@ function App() {
     const DEMO_CWD_A = '/home/user/projects/event-horizon';
     const DEMO_CWD_B = '/home/user/projects/backend-api';
     const demoAgents = [
-      { id: 'demo-claude',   name: 'Claude',   agentType: 'claude-code', cwd: DEMO_CWD_A },
-      { id: 'demo-opencode', name: 'OpenCode', agentType: 'opencode',    cwd: DEMO_CWD_A },
-      { id: 'demo-copilot',  name: 'Copilot',  agentType: 'copilot',     cwd: DEMO_CWD_B },
-      { id: 'demo-cursor',   name: 'Cursor',   agentType: 'cursor',      cwd: DEMO_CWD_B },
-      { id: 'demo-gemini',   name: 'Gemini',   agentType: 'unknown',     cwd: DEMO_CWD_B },
-      { id: 'demo-solo-1',   name: 'Windsurf', agentType: 'unknown' },
-      { id: 'demo-solo-2',   name: 'Aider',    agentType: 'unknown' },
-      { id: 'demo-solo-3',   name: 'Devin',    agentType: 'unknown' },
+      { id: 'demo-claude',   name: '[Demo] Claude',   agentType: 'claude-code', cwd: DEMO_CWD_A },
+      { id: 'demo-opencode', name: '[Demo] OpenCode', agentType: 'opencode',    cwd: DEMO_CWD_A },
+      { id: 'demo-copilot',  name: '[Demo] Copilot',  agentType: 'copilot',     cwd: DEMO_CWD_B },
+      { id: 'demo-cursor',   name: '[Demo] Cursor',   agentType: 'cursor',      cwd: DEMO_CWD_B },
+      { id: 'demo-gemini',   name: '[Demo] Gemini',   agentType: 'unknown',     cwd: DEMO_CWD_B },
+      { id: 'demo-solo-1',   name: '[Demo] Windsurf', agentType: 'unknown' },
+      { id: 'demo-solo-2',   name: '[Demo] Aider',    agentType: 'unknown' },
+      { id: 'demo-solo-3',   name: '[Demo] Devin',    agentType: 'unknown' },
     ];
     const DEMO_WS_GROUPS: string[][] = [
       ['demo-claude', 'demo-opencode'],

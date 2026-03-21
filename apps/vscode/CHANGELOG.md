@@ -12,6 +12,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Native VS Code settings**: all settings now appear in `Preferences > Settings` under "Event Horizon" — port, animation speed, achievements toggle, and per-agent colors/sizes. Changes sync bidirectionally between the Settings UI, `settings.json`, and the in-app modal. The in-app Settings modal remains as a visual bonus
 
 ### Improved
+- **Demo mode clarity**: demo agents are now labeled `[Demo] Claude`, `[Demo] OpenCode`, etc. — visible on planet labels and in the Command Center identity panel. An amber "DEMO 0:00" timer in the header bar shows elapsed time, and a "Clear" button lets you stop the demo instantly without hunting for the grid button
 - **Extension description**: marketplace search description now emphasizes utility ("Real-time visual monitoring for Claude Code, OpenCode & Copilot") instead of aesthetics
 - **Keywords**: replaced `cosmic` and `cursor` with `claude-code`, `opencode`, and `monitoring` for better marketplace discoverability
 

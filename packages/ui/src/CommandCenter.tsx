@@ -8,7 +8,7 @@
  */
 
 import type { FC } from 'react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { AgentIdentity } from './panels/AgentIdentity.js';
 import { MetricsPanel } from './panels/MetricsPanel.js';
@@ -164,6 +164,23 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
   const setCcMinimized = useCommandCenterStore((s) => s.setCcMinimized);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
   const toggleSettings = useCommandCenterStore((s) => s.toggleSettings);
+  const demoMode = useCommandCenterStore((s) => s.demoMode);
+  const demoStartedAt = useCommandCenterStore((s) => s.demoStartedAt);
+  const requestDemo = useCommandCenterStore((s) => s.requestDemo);
+  // Live-ticking demo timer
+  const [demoElapsed, setDemoElapsed] = useState('');
+  useEffect(() => {
+    if (!demoMode || !demoStartedAt) { setDemoElapsed(''); return; }
+    const tick = () => {
+      const secs = Math.floor((Date.now() - demoStartedAt) / 1000);
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      setDemoElapsed(`${m}:${s.toString().padStart(2, '0')}`);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [demoMode, demoStartedAt]);
   return (
     <div data-command-center style={outerWrapper}>
       <div style={{ ...wrapper, minHeight: minimized ? 38 : undefined }}>
@@ -185,10 +202,10 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
           }}
         >
           <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em', marginBottom: 4 }}>
-            {hoveredBtn === 'tour' ? 'Guided Tour' : hoveredBtn === 'settings' ? 'Settings' : (minimized ? 'Expand' : 'Minimize')}
+            {hoveredBtn === 'clearDemo' ? 'Clear Demo' : hoveredBtn === 'tour' ? 'Guided Tour' : hoveredBtn === 'settings' ? 'Settings' : (minimized ? 'Expand' : 'Minimize')}
           </div>
           <div style={{ fontSize: 9, color: '#4a7a58', lineHeight: 1.5 }}>
-            {hoveredBtn === 'tour' ? 'Restart the 4-step walkthrough of the Command Center.' : hoveredBtn === 'settings' ? 'Customize agent colors, sizes, and preferences.' : (minimized ? 'Expand the Command Center.' : 'Collapse the Command Center.')}
+            {hoveredBtn === 'clearDemo' ? 'Stop the demo simulation and remove all demo agents.' : hoveredBtn === 'tour' ? 'Restart the 4-step walkthrough of the Command Center.' : hoveredBtn === 'settings' ? 'Customize agent colors, sizes, and preferences.' : (minimized ? 'Expand the Command Center.' : 'Collapse the Command Center.')}
           </div>
         </div>,
         document.body
@@ -207,6 +224,38 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
           }}
         />
         <span>Command Center</span>
+        {/* Demo mode indicator */}
+        {demoMode && (
+          <>
+            <span style={{ fontSize: 9, color: '#d4944a', letterSpacing: '0.08em', marginLeft: 6 }}>
+              DEMO {demoElapsed}
+            </span>
+            <button
+              type="button"
+              onClick={requestDemo}
+              onMouseEnter={() => setHoveredBtn('clearDemo')}
+              onMouseLeave={() => setHoveredBtn(null)}
+              aria-label="Clear Demo"
+              style={{
+                marginLeft: 4,
+                padding: '1px 6px',
+                border: '1px solid #8a5a2a',
+                borderRadius: 2,
+                background: 'rgba(40,25,10,0.8)',
+                color: '#d4944a',
+                fontSize: 8,
+                fontFamily: 'Consolas, monospace',
+                fontWeight: 600,
+                cursor: 'pointer',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                lineHeight: 1.4,
+              }}
+            >
+              Clear
+            </button>
+          </>
+        )}
         {/* Separator ticks */}
         <div aria-hidden style={{ marginLeft: 4, display: 'flex', gap: 3, alignItems: 'center' }}>
           {[1, 0.5, 0.25].map((op, k) => (
