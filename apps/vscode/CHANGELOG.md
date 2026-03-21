@@ -5,6 +5,16 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ## [0.1.0] — Unreleased
 
 ### Added
+- **Operations View**: full-screen dashboard alternative to the Universe. Toggle via the `$(layout)` button in the editor title bar, the `&#x2261;` button in the Command Center header, or `Ctrl+Shift+E O`. Same editor tab — the Universe is hidden (not destroyed) and the PixiJS ticker pauses to save CPU
+- **Agent Sidebar**: left navigation panel (200px) in Operations view showing "All Agents" (singularity stats) + per-agent rows grouped by workspace with planet icons and state color dots. Click to select/filter
+- **Overview tab**: full-width 4×3 metrics grid with 16px values, agent header (planet icon + name + type + state + cwd), horizontal tool breakdown bar chart. "All Agents" mode shows singularity stats + agent summary table with per-agent Load, Tools, Errors, Tokens, Cost columns
+- **Files tab (expanded)**: sortable columns (File, Ops, Reads, Writes, Errors, Agents, Last Active) with click-to-sort arrows. Full Paths toggle, heat color legend, click-to-expand rows showing per-agent breakdown with colored dots and portal tooltips
+- **Logs tab (expanded)**: full-height searchable event log with event type filter chips, auto-scroll toggle, click-to-copy entries, filtered by selected agent in sidebar
+- **Timeline tab**: horizontal swimlane visualization — one row per agent, colored blocks for state changes (green), tool calls (amber), file ops (blue), and errors (red). Auto-scrolls to "now" line, hover tooltips with event details. Rolling buffer of 500 entries
+- **Timeline event recording**: agent.spawn, agent.terminate, agent.error, tool.call, file.read, file.write events all feed the timeline buffer. Demo simulation also records timeline entries
+- **View toggle command**: `eventHorizon.toggleView` registered as VS Code command with `$(layout)` icon in editor title bar and `Ctrl+Shift+E O` keybinding
+- **Agent grouping utility**: `groupAgentsByWorkspace()` groups agents by working directory folder name, sorts alphabetically, puts "Solo" agents last. Reused by sidebar and available for future features
+- **15 new tests**: viewMode toggle (3), timeline buffer + cap (3), groupAgentsByWorkspace (6), folderName (3). Total: 254 → 269
 
 ### Improved
 
