@@ -312,7 +312,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
-  startEventServer({ onEvent: (event) => eventBus.emit(event) })
+  const configuredPort = vscode.workspace.getConfiguration('eventHorizon').get<number>('port', 28765);
+  startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
     .then(async () => {
       // Refresh hooks only if the token changed (stale from a previous session)
       const [staleClaude, staleOpenCode, staleCopilot] = await Promise.all([

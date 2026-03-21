@@ -62,6 +62,108 @@
         "mac": "cmd+shift+e h"
       }
     ],
+    "configuration": {
+      "title": "Event Horizon",
+      "properties": {
+        "eventHorizon.port": {
+          "type": "number",
+          "default": 28765,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port for the local event server that receives agent hooks. Requires extension restart.",
+          "order": 1
+        },
+        "eventHorizon.animationSpeed": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0.25,
+          "maximum": 3.0,
+          "description": "Animation speed multiplier (0.25 = slow-mo, 3.0 = fast-forward).",
+          "order": 2
+        },
+        "eventHorizon.achievementsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable achievement medals and toast notifications.",
+          "order": 3
+        },
+        "eventHorizon.agentColors.claudeCode": {
+          "type": "string",
+          "default": "#88aaff",
+          "format": "color",
+          "description": "Planet color for Claude Code agents.",
+          "order": 10
+        },
+        "eventHorizon.agentColors.copilot": {
+          "type": "string",
+          "default": "#cc88ff",
+          "format": "color",
+          "description": "Planet color for GitHub Copilot agents.",
+          "order": 11
+        },
+        "eventHorizon.agentColors.opencode": {
+          "type": "string",
+          "default": "#88ffaa",
+          "format": "color",
+          "description": "Planet color for OpenCode agents.",
+          "order": 12
+        },
+        "eventHorizon.agentColors.cursor": {
+          "type": "string",
+          "default": "#44ddcc",
+          "format": "color",
+          "description": "Planet color for Cursor agents.",
+          "order": 13
+        },
+        "eventHorizon.agentColors.unknown": {
+          "type": "string",
+          "default": "#aaccff",
+          "format": "color",
+          "description": "Planet color for unrecognized agent types.",
+          "order": 14
+        },
+        "eventHorizon.agentSizes.claudeCode": {
+          "type": "number",
+          "default": 1.35,
+          "minimum": 0.4,
+          "maximum": 2.0,
+          "description": "Planet size multiplier for Claude Code agents.",
+          "order": 20
+        },
+        "eventHorizon.agentSizes.copilot": {
+          "type": "number",
+          "default": 0.72,
+          "minimum": 0.4,
+          "maximum": 2.0,
+          "description": "Planet size multiplier for GitHub Copilot agents.",
+          "order": 21
+        },
+        "eventHorizon.agentSizes.opencode": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0.4,
+          "maximum": 2.0,
+          "description": "Planet size multiplier for OpenCode agents.",
+          "order": 22
+        },
+        "eventHorizon.agentSizes.cursor": {
+          "type": "number",
+          "default": 0.92,
+          "minimum": 0.4,
+          "maximum": 2.0,
+          "description": "Planet size multiplier for Cursor agents.",
+          "order": 23
+        },
+        "eventHorizon.agentSizes.unknown": {
+          "type": "number",
+          "default": 1.12,
+          "minimum": 0.4,
+          "maximum": 2.0,
+          "description": "Planet size multiplier for unrecognized agent types.",
+          "order": 24
+        }
+      }
+    },
     "walkthroughs": [
       {
         "id": "eventHorizon.gettingStarted",

@@ -187,6 +187,68 @@ async function getConnectedAgentTypes(): Promise<string[]> {
   return types;
 }
 
+// ── VS Code native settings helpers ─────────────────────────────────────────
+
+/** Agent type keys used in VS Code settings (camelCase) → store keys (kebab-case). */
+const AGENT_CONFIG_MAP: Record<string, string> = {
+  claudeCode: 'claude-code',
+  copilot: 'copilot',
+  opencode: 'opencode',
+  cursor: 'cursor',
+  unknown: 'unknown',
+};
+
+/** Read the current VS Code configuration and return the settings objects. */
+function readVscodeConfig(): {
+  settings: Record<string, { color: string; sizeMult: number }>;
+  achievementsEnabled: boolean;
+  animationSpeed: number;
+  eventServerPort: number;
+} {
+  const cfg = vscode.workspace.getConfiguration('eventHorizon');
+  const settings: Record<string, { color: string; sizeMult: number }> = {};
+  for (const [cfgKey, storeKey] of Object.entries(AGENT_CONFIG_MAP)) {
+    settings[storeKey] = {
+      color: cfg.get<string>(`agentColors.${cfgKey}`, '#aaccff'),
+      sizeMult: cfg.get<number>(`agentSizes.${cfgKey}`, 1.0),
+    };
+  }
+  return {
+    settings,
+    achievementsEnabled: cfg.get<boolean>('achievementsEnabled', true),
+    animationSpeed: cfg.get<number>('animationSpeed', 1.0),
+    eventServerPort: cfg.get<number>('port', 28765),
+  };
+}
+
+/** Write settings back to VS Code configuration (user-level). */
+async function writeVscodeConfig(msg: {
+  settings?: Record<string, { color: string; sizeMult: number }>;
+  achievementsEnabled?: boolean;
+  animationSpeed?: number;
+  eventServerPort?: number;
+}): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('eventHorizon');
+  if (msg.achievementsEnabled !== undefined) {
+    await cfg.update('achievementsEnabled', msg.achievementsEnabled, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.animationSpeed !== undefined) {
+    await cfg.update('animationSpeed', msg.animationSpeed, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.eventServerPort !== undefined) {
+    await cfg.update('port', msg.eventServerPort, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.settings) {
+    for (const [cfgKey, storeKey] of Object.entries(AGENT_CONFIG_MAP)) {
+      const v = msg.settings[storeKey];
+      if (v) {
+        await cfg.update(`agentColors.${cfgKey}`, v.color, vscode.ConfigurationTarget.Global);
+        await cfg.update(`agentSizes.${cfgKey}`, v.sizeMult, vscode.ConfigurationTarget.Global);
+      }
+    }
+  }
+}
+
 /** Set up hydration + message handling for the full universe webview. */
 function wireUniverseWebview(
   webview: vscode.Webview,
@@ -196,6 +258,26 @@ function wireUniverseWebview(
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
 ): void {
+  // Guard to suppress config-change echoes when the webview writes back to VS Code settings
+  let suppressConfigEcho = false;
+
+  // Listen for VS Code settings changes and push to webview
+  const configListener = vscode.workspace.onDidChangeConfiguration((e) => {
+    if (suppressConfigEcho) return;
+    if (e.affectsConfiguration('eventHorizon')) {
+      const cfg = readVscodeConfig();
+      const savedGeneral = context.globalState.get<Record<string, unknown>>('generalSettings');
+      void webview.postMessage({
+        type: 'init-settings',
+        ...cfg,
+        // Preserve non-config settings (tourCompleted) from globalState
+        tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
+      });
+    }
+  });
+  // Clean up listener when webview is disposed (handled by caller via context.subscriptions)
+  context.subscriptions.push(configListener);
+
   function hydrateWebview() {
     void getConnectedAgentTypes().then((agentTypes) => {
       void webview.postMessage({ type: 'connected-agents', agentTypes });
@@ -216,15 +298,16 @@ function wireUniverseWebview(
       void webview.postMessage({ type: 'init-medals', ...savedMedals });
     }
 
-    const savedSettings = context.globalState.get<Record<string, unknown>>('visualSettings');
+    // Read from VS Code native settings (preferred) with globalState fallback for
+    // settings not exposed in contributes.configuration (e.g. tourCompleted).
+    const vscodeSettings = readVscodeConfig();
     const savedGeneral = context.globalState.get<Record<string, unknown>>('generalSettings');
-    if (savedSettings || savedGeneral) {
-      void webview.postMessage({
-        type: 'init-settings',
-        settings: savedSettings ?? undefined,
-        ...(savedGeneral ?? {}),
-      });
-    }
+    void webview.postMessage({
+      type: 'init-settings',
+      ...vscodeSettings,
+      // Preserve non-config settings from globalState
+      tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
+    });
 
     const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
     if (savedSingularity) {
@@ -262,12 +345,20 @@ function wireUniverseWebview(
       return;
     }
     if (msg?.type === 'persist-settings') {
-      void context.globalState.update('visualSettings', msg.settings);
+      // Write to globalState (non-config settings like tourCompleted)
       void context.globalState.update('generalSettings', {
-        achievementsEnabled: msg.achievementsEnabled,
-        animationSpeed: msg.animationSpeed,
-        eventServerPort: msg.eventServerPort,
         tourCompleted: msg.tourCompleted,
+      });
+      // Write to VS Code native settings — suppress echo to avoid feedback loop
+      suppressConfigEcho = true;
+      void writeVscodeConfig({
+        settings: msg.settings as Record<string, { color: string; sizeMult: number }> | undefined,
+        achievementsEnabled: msg.achievementsEnabled as boolean | undefined,
+        animationSpeed: msg.animationSpeed as number | undefined,
+        eventServerPort: msg.eventServerPort as number | undefined,
+      }).finally(() => {
+        // Re-enable after a small delay to let all config change events flush
+        setTimeout(() => { suppressConfigEcho = false; }, 200);
       });
       return;
     }
