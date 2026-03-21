@@ -224,44 +224,44 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
           }}
         />
         <span>Command Center</span>
-        {/* Demo mode indicator */}
-        {demoMode && (
-          <>
-            <span style={{ fontSize: 9, color: '#d4944a', letterSpacing: '0.08em', marginLeft: 6 }}>
-              DEMO {demoElapsed}
-            </span>
-            <button
-              type="button"
-              onClick={requestDemo}
-              onMouseEnter={() => setHoveredBtn('clearDemo')}
-              onMouseLeave={() => setHoveredBtn(null)}
-              aria-label="Clear Demo"
-              style={{
-                marginLeft: 4,
-                padding: '1px 6px',
-                border: '1px solid #8a5a2a',
-                borderRadius: 2,
-                background: 'rgba(40,25,10,0.8)',
-                color: '#d4944a',
-                fontSize: 8,
-                fontFamily: 'Consolas, monospace',
-                fontWeight: 600,
-                cursor: 'pointer',
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-                lineHeight: 1.4,
-              }}
-            >
-              Clear
-            </button>
-          </>
-        )}
         {/* Separator ticks */}
         <div aria-hidden style={{ marginLeft: 4, display: 'flex', gap: 3, alignItems: 'center' }}>
           {[1, 0.5, 0.25].map((op, k) => (
             <div key={k} style={{ width: 2, height: 10, background: `rgba(40,120,60,${op})` }} />
           ))}
         </div>
+        {/* Demo mode indicator — right side, before header buttons */}
+        {demoMode && (
+          <button
+            type="button"
+            onClick={requestDemo}
+            onMouseEnter={() => setHoveredBtn('clearDemo')}
+            onMouseLeave={() => setHoveredBtn(null)}
+            aria-label="Clear Demo"
+            style={{
+              marginLeft: 'auto',
+              padding: '2px 8px',
+              border: '1px solid #8a5a2a',
+              borderRadius: 2,
+              background: 'rgba(40,25,10,0.8)',
+              color: '#d4944a',
+              fontSize: 9,
+              fontFamily: 'Consolas, monospace',
+              fontWeight: 600,
+              cursor: 'pointer',
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              lineHeight: 1.4,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+            }}
+          >
+            <span style={{ fontSize: 8, opacity: 0.7 }}>DEMO</span>
+            <span>{demoElapsed}</span>
+            <span style={{ fontSize: 8, opacity: 0.8 }}>&#x2715;</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => restartTour()}
@@ -269,7 +269,7 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
           onMouseLeave={() => setHoveredBtn(null)}
           aria-label="Guided Tour"
           style={{
-            marginLeft: 'auto',
+            marginLeft: demoMode ? 4 : 'auto',
             width: 20,
             height: 20,
             padding: 0,

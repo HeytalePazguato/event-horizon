@@ -212,6 +212,9 @@ export interface CommandCenterState {
   /** Whether the guided tour has been completed (persisted). */
   tourCompleted: boolean;
   setTourCompleted: (completed: boolean) => void;
+  /** Timestamp trigger to manually restart the guided tour. */
+  tourRequestedAt: number;
+  requestTour: () => void;
   /** Whether achievements and toasts are enabled. */
   achievementsEnabled: boolean;
   setAchievementsEnabled: (enabled: boolean) => void;
@@ -346,6 +349,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
   tourCompleted: false,
   setTourCompleted: (completed) => set({ tourCompleted: completed }),
+  tourRequestedAt: 0,
+  requestTour: () => set({ tourCompleted: false, tourRequestedAt: Date.now() }),
   achievementsEnabled: true,
   setAchievementsEnabled: (enabled) => set({ achievementsEnabled: enabled }),
   animationSpeed: 1.0,

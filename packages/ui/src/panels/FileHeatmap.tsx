@@ -6,8 +6,9 @@
 
 import type { FC } from 'react';
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useCommandCenterStore } from '../store.js';
-import type { FileActivity } from '../store.js';
+import type { FileAgentActivity } from '../store.js';
 
 /** Color for the agent type badge dot. */
 const AGENT_COLORS: Record<string, string> = {
@@ -18,58 +19,95 @@ const AGENT_COLORS: Record<string, string> = {
   unknown: '#aaccff',
 };
 
-const HeatBar: FC<{ ratio: number; hasErrors: boolean; multiAgent: boolean }> = ({ ratio, hasErrors, multiAgent }) => {
-  // Gradient from dim green → bright green → amber (multi) → red (errors)
+/** Heat bar — proportional width showing relative activity. */
+const HeatBar: FC<{ ratio: number; ops: number; hasErrors: boolean; multiAgent: boolean }> = ({ ratio, ops, hasErrors, multiAgent }) => {
   let color = '#2a6a3a';
   if (ratio > 0.7) color = '#4a9a5a';
   else if (ratio > 0.4) color = '#3a8a4a';
   if (multiAgent) color = '#d4944a';
   if (hasErrors) color = '#c04040';
   return (
-    <div style={{ width: 40, height: 4, background: '#0a1a10', borderRadius: 2, flexShrink: 0 }}>
-      <div style={{ width: `${Math.max(8, ratio * 100)}%`, height: '100%', background: color, borderRadius: 2, transition: 'width 0.3s' }} />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, width: 52 }}>
+      <div style={{ width: 34, height: 5, background: '#0a1a10', borderRadius: 2 }}>
+        <div style={{ width: `${Math.max(10, ratio * 100)}%`, height: '100%', background: color, borderRadius: 2, transition: 'width 0.3s' }} />
+      </div>
+      <span style={{ fontSize: 9, color: '#5a7a68', minWidth: 14, textAlign: 'right' }}>{ops}</span>
     </div>
   );
 };
 
-const AgentDots: FC<{ activity: FileActivity }> = ({ activity }) => (
-  <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-    {Object.values(activity.agents).map((a) => (
-      <div
-        key={a.agentId}
-        title={`${a.agentName}: ${a.reads}R ${a.writes}W${a.errors ? ` ${a.errors}E` : ''}`}
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          background: AGENT_COLORS[a.agentType ?? 'unknown'] ?? '#aaccff',
-          border: a.errors > 0 ? '1px solid #ff4444' : '1px solid rgba(255,255,255,0.1)',
-          flexShrink: 0,
-        }}
-      />
-    ))}
-  </div>
-);
+/** Portal tooltip — same style and position as CmdTooltip in AgentControls. */
+const FileTooltip: FC<{ agent: FileAgentActivity }> = ({ agent }) => {
+  const ccMinimized = useCommandCenterStore((s) => s.ccMinimized);
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        bottom: ccMinimized ? 75 : 212,
+        right: 12,
+        width: 190,
+        background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+        border: '1px solid #2a5a3c',
+        boxShadow: '0 -4px 16px rgba(0,0,0,0.75)',
+        padding: '7px 9px',
+        fontFamily: 'Consolas, monospace',
+        zIndex: 9999,
+        pointerEvents: 'none',
+        clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: AGENT_COLORS[agent.agentType] ?? '#aaccff', flexShrink: 0 }} />
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em' }}>
+          {agent.agentName}
+        </span>
+      </div>
+      <div style={{ fontSize: 10, color: '#6a9a78', lineHeight: 1.6 }}>
+        <span style={{ color: '#7aaa88' }}>{agent.reads}</span> reads
+        {' · '}
+        <span style={{ color: '#7aaa88' }}>{agent.writes}</span> writes
+        {agent.errors > 0 && (
+          <>
+            {' · '}
+            <span style={{ color: '#c06060' }}>{agent.errors}</span> errors
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+};
 
 type SortMode = 'activity' | 'agents' | 'recent';
+
+const sortBtnStyle = (active: boolean): React.CSSProperties => ({
+  background: active ? '#1a3828' : 'transparent',
+  border: `1px solid ${active ? '#25904a' : '#1e4030'}`,
+  borderRadius: 2,
+  color: active ? '#60d080' : '#4a7a58',
+  fontSize: 9,
+  fontFamily: 'Consolas, monospace',
+  cursor: 'pointer',
+  padding: '2px 6px',
+  fontWeight: active ? 600 : 400,
+});
 
 export const FileHeatmap: FC = () => {
   const fileActivity = useCommandCenterStore((s) => s.fileActivity);
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
   const [sortMode, setSortMode] = useState<SortMode>('activity');
   const [filterAgent, setFilterAgent] = useState(false);
+  const [hoveredAgent, setHoveredAgent] = useState<FileAgentActivity | null>(null);
 
   const files = useMemo(() => {
     let entries = Object.values(fileActivity);
-    // When an agent is selected and filter is on, only show that agent's files
     if (filterAgent && selectedAgentId) {
       entries = entries.filter((f) => f.agents[selectedAgentId]);
     }
-    // Sort
     if (sortMode === 'activity') entries.sort((a, b) => b.totalOps - a.totalOps);
     else if (sortMode === 'agents') entries.sort((a, b) => b.agentCount - a.agentCount || b.totalOps - a.totalOps);
     else entries.sort((a, b) => b.lastTs - a.lastTs);
-    return entries.slice(0, 50); // Cap display
+    return entries.slice(0, 50);
   }, [fileActivity, sortMode, filterAgent, selectedAgentId]);
 
   const maxOps = useMemo(() => Math.max(1, ...files.map((f) => f.totalOps)), [files]);
@@ -86,72 +124,45 @@ export const FileHeatmap: FC = () => {
   }
 
   return (
-    <div style={{ fontFamily: 'Consolas, monospace', fontSize: 9, display: 'flex', flexDirection: 'column', gap: 3, minHeight: 0 }}>
-      {/* Summary bar */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, color: '#5a8a6a', fontSize: 8 }}>
-        <span>{totalFiles} files</span>
+    <div style={{ fontFamily: 'Consolas, monospace', display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0 }}>
+      {/* Tooltip portal */}
+      {hoveredAgent && <FileTooltip agent={hoveredAgent} />}
+
+      {/* Summary + sort controls */}
+      <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, gap: 6 }}>
+        <span style={{ fontSize: 10, color: '#6a9a7a' }}>{totalFiles} files</span>
         {multiAgentCount > 0 && (
-          <span style={{ color: '#d4944a' }}>{multiAgentCount} contested</span>
+          <span style={{ fontSize: 10, color: '#d4944a' }}>{multiAgentCount} shared</span>
         )}
         {errorCount > 0 && (
-          <span style={{ color: '#c04040' }}>{errorCount} w/ errors</span>
+          <span style={{ fontSize: 10, color: '#c04040' }}>{errorCount} errors</span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>
           {selectedAgentId && (
-            <button
-              type="button"
-              onClick={() => setFilterAgent((f) => !f)}
-              style={{
-                background: filterAgent ? '#1a3828' : 'transparent',
-                border: `1px solid ${filterAgent ? '#25904a' : '#1e4030'}`,
-                borderRadius: 2,
-                color: filterAgent ? '#60d080' : '#3a6a48',
-                fontSize: 7,
-                fontFamily: 'Consolas, monospace',
-                cursor: 'pointer',
-                padding: '1px 4px',
-              }}
-            >
+            <button type="button" onClick={() => setFilterAgent((f) => !f)} style={sortBtnStyle(filterAgent)}>
               Agent
             </button>
           )}
-          {(['activity', 'agents', 'recent'] as SortMode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setSortMode(m)}
-              style={{
-                background: sortMode === m ? '#1a3828' : 'transparent',
-                border: `1px solid ${sortMode === m ? '#25904a' : '#1e4030'}`,
-                borderRadius: 2,
-                color: sortMode === m ? '#60d080' : '#3a6a48',
-                fontSize: 7,
-                fontFamily: 'Consolas, monospace',
-                cursor: 'pointer',
-                padding: '1px 4px',
-                textTransform: 'capitalize',
-              }}
-            >
-              {m === 'activity' ? 'Hot' : m === 'agents' ? 'Shared' : 'New'}
-            </button>
-          ))}
+          <button type="button" onClick={() => setSortMode('activity')} style={sortBtnStyle(sortMode === 'activity')}>Hot</button>
+          <button type="button" onClick={() => setSortMode('agents')} style={sortBtnStyle(sortMode === 'agents')}>Shared</button>
+          <button type="button" onClick={() => setSortMode('recent')} style={sortBtnStyle(sortMode === 'recent')}>New</button>
         </div>
       </div>
 
       {/* File list */}
-      <div style={{ overflowY: 'auto', maxHeight: 72, minHeight: 0 }}>
+      <div style={{ overflowY: 'auto', maxHeight: 74, minHeight: 0 }}>
         {files.map((f) => (
           <div
             key={f.path}
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 4,
-              padding: '1px 0',
+              gap: 5,
+              padding: '2px 0',
               borderBottom: '1px solid rgba(40,60,50,0.25)',
             }}
           >
-            <HeatBar ratio={f.totalOps / maxOps} hasErrors={f.hasErrors} multiAgent={f.agentCount > 1} />
+            <HeatBar ratio={f.totalOps / maxOps} ops={f.totalOps} hasErrors={f.hasErrors} multiAgent={f.agentCount > 1} />
             <span
               style={{
                 flex: 1,
@@ -159,16 +170,32 @@ export const FileHeatmap: FC = () => {
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
-                color: f.hasErrors ? '#c06060' : f.agentCount > 1 ? '#d4a44a' : '#7a9a82',
+                fontSize: 10,
+                color: f.hasErrors ? '#c06060' : f.agentCount > 1 ? '#d4a44a' : '#8aaa92',
               }}
               title={f.path}
             >
               {f.name}
             </span>
-            <span style={{ color: '#4a6a58', fontSize: 8, flexShrink: 0 }}>
-              {f.totalOps}
-            </span>
-            <AgentDots activity={f} />
+            {/* Agent dots */}
+            <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+              {Object.values(f.agents).map((a) => (
+                <div
+                  key={a.agentId}
+                  onMouseEnter={() => setHoveredAgent(a)}
+                  onMouseLeave={() => setHoveredAgent(null)}
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: AGENT_COLORS[a.agentType ?? 'unknown'] ?? '#aaccff',
+                    border: a.errors > 0 ? '1px solid #ff4444' : '1px solid rgba(255,255,255,0.15)',
+                    flexShrink: 0,
+                    cursor: 'default',
+                  }}
+                />
+              ))}
+            </div>
           </div>
         ))}
       </div>

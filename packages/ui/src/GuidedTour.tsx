@@ -240,17 +240,24 @@ export const GuidedTour: FC = () => {
   const setTourCompleted = useCommandCenterStore((s) => s.setTourCompleted);
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
   const ccMinimized = useCommandCenterStore((s) => s.ccMinimized);
+  const tourRequestedAt = useCommandCenterStore((s) => s.tourRequestedAt);
 
   const [tourStep, setTourStep] = useState<number | null>(null);
 
   // Auto-start tour the first time a planet is selected (user has an agent and interacted)
   useEffect(() => {
     if (!tourCompleted && selectedAgentId && tourStep === null && !ccMinimized) {
-      // Small delay so the CommandCenter is fully rendered with the selected agent
       const timer = setTimeout(() => setTourStep(0), 600);
       return () => clearTimeout(timer);
     }
   }, [tourCompleted, selectedAgentId, tourStep, ccMinimized]);
+
+  // Manual restart via "?" button — works regardless of planet selection
+  useEffect(() => {
+    if (tourRequestedAt > 0 && !ccMinimized) {
+      setTourStep(0);
+    }
+  }, [tourRequestedAt, ccMinimized]);
 
   const handleNext = useCallback(() => {
     setTourStep((prev) => {
@@ -275,5 +282,5 @@ export const GuidedTour: FC = () => {
 
 /** Restart the tour (called from the header "?" button). */
 export function restartTour(): void {
-  useCommandCenterStore.getState().setTourCompleted(false);
+  useCommandCenterStore.getState().requestTour();
 }
