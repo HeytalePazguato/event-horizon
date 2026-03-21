@@ -318,7 +318,8 @@ function App() {
         if (errFilePath) {
           const errNorm = errFilePath.replace(/\\/g, '/').toLowerCase();
           const errBase = errFilePath.split(/[/\\]/).pop() ?? errFilePath;
-          store.recordFileOp(errNorm, errBase, agentId, agentName, agentType, 'error');
+          const errCwd = agentMapRef.current[agentId]?.cwd;
+          store.recordFileOp(errNorm, errBase, agentId, agentName, agentType, 'error', errCwd);
         }
       }
       // agentsSeen is now tracked at upsert time (below) to catch all agent types
@@ -521,7 +522,8 @@ function App() {
         const normalized = filePath.replace(/\\/g, '/').toLowerCase();
         const fileBasename = filePath.split(/[/\\]/).pop() ?? filePath;
         const fileOp = (type === 'file.write' || type === 'tool.call') ? 'write' : 'read';
-        useCommandCenterStore.getState().recordFileOp(normalized, fileBasename, agentId, agentName, agentType, fileOp);
+        const fileCwd = agentMapRef.current[agentId]?.cwd ?? eventCwd;
+        useCommandCenterStore.getState().recordFileOp(normalized, fileBasename, agentId, agentName, agentType, fileOp, fileCwd);
 
         // ── File collision lightning — persistent arc while agents share a file ──
         // Skip config/context files that every agent reads on startup — these
@@ -1028,7 +1030,7 @@ function App() {
             const demoNorm = demoFile.toLowerCase();
             const demoBase = demoFile.split('/').pop() ?? demoFile;
             const demoOp = (t === 'Write' || t === 'Edit') ? 'write' : 'read';
-            useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp);
+            useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp, a.cwd);
           }
           next[a.id] = {
             ...m,

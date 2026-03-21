@@ -87,6 +87,8 @@ export interface FileAgentActivity {
   agentId: string;
   agentName: string;
   agentType: string;
+  /** Working directory folder name — helps distinguish multiple sessions of the same agent type. */
+  cwd?: string;
   reads: number;
   writes: number;
   errors: number;
@@ -247,7 +249,7 @@ export interface CommandCenterState {
   /** File activity heatmap data — keyed by normalized path. */
   fileActivity: Record<string, FileActivity>;
   /** Record a file operation for the heatmap. */
-  recordFileOp: (normalizedPath: string, basename: string, agentId: string, agentName: string, agentType: string, op: 'read' | 'write' | 'error') => void;
+  recordFileOp: (normalizedPath: string, basename: string, agentId: string, agentName: string, agentType: string, op: 'read' | 'write' | 'error', cwd?: string) => void;
   /** Clear all file activity data. */
   clearFileActivity: () => void;
   requestCenter: () => void;
@@ -301,7 +303,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   singularitySelected: false,
   singularityStats: { ...EMPTY_SINGULARITY_STATS },
   fileActivity: {},
-  recordFileOp: (normalizedPath, basename, agentId, agentName, agentType, op) =>
+  recordFileOp: (normalizedPath, basename, agentId, agentName, agentType, op, cwd) =>
     set((s) => {
       const prev = s.fileActivity[normalizedPath];
       const agentPrev = prev?.agents[agentId];
@@ -310,6 +312,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
         agentId,
         agentName,
         agentType,
+        cwd: cwd ?? agentPrev?.cwd,
         reads: (agentPrev?.reads ?? 0) + (op === 'read' ? 1 : 0),
         writes: (agentPrev?.writes ?? 0) + (op === 'write' ? 1 : 0),
         errors: (agentPrev?.errors ?? 0) + (op === 'error' ? 1 : 0),

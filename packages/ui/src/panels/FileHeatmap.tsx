@@ -36,9 +36,18 @@ const HeatBar: FC<{ ratio: number; ops: number; hasErrors: boolean; multiAgent: 
   );
 };
 
+/** Extract folder name from a cwd path. */
+function folderFromCwd(cwd?: string): string {
+  if (!cwd) return '';
+  let norm = cwd.replace(/\\/g, '/');
+  while (norm.endsWith('/')) norm = norm.slice(0, -1);
+  return norm.split('/').pop() || '';
+}
+
 /** Portal tooltip — same style and position as CmdTooltip in AgentControls. */
 const FileTooltip: FC<{ agent: FileAgentActivity }> = ({ agent }) => {
   const ccMinimized = useCommandCenterStore((s) => s.ccMinimized);
+  const folder = folderFromCwd(agent.cwd);
   return createPortal(
     <div
       style={{
@@ -56,12 +65,17 @@ const FileTooltip: FC<{ agent: FileAgentActivity }> = ({ agent }) => {
         clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
         <div style={{ width: 8, height: 8, borderRadius: '50%', background: AGENT_COLORS[agent.agentType] ?? '#aaccff', flexShrink: 0 }} />
         <span style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em' }}>
           {agent.agentName}
         </span>
       </div>
+      {folder && (
+        <div style={{ fontSize: 9, color: '#5a8a6a', marginBottom: 3, paddingLeft: 13 }}>
+          {folder}
+        </div>
+      )}
       <div style={{ fontSize: 10, color: '#6a9a78', lineHeight: 1.6 }}>
         <span style={{ color: '#7aaa88' }}>{agent.reads}</span> reads
         {' · '}
