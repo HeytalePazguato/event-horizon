@@ -311,7 +311,16 @@ function App() {
       const store = useCommandCenterStore.getState();
       if (!store.singularityStats.firstEventAt) store.incrementSingularityStat('firstEventAt');
       store.incrementSingularityStat('eventsWitnessed');
-      if (type === 'agent.error') store.incrementSingularityStat('errorsWitnessed');
+      if (type === 'agent.error') {
+        store.incrementSingularityStat('errorsWitnessed');
+        // Track file-level errors in heatmap
+        const errFilePath = raw.payload?.filePath as string | undefined;
+        if (errFilePath) {
+          const errNorm = errFilePath.replace(/\\/g, '/').toLowerCase();
+          const errBase = errFilePath.split(/[/\\]/).pop() ?? errFilePath;
+          store.recordFileOp(errNorm, errBase, agentId, agentName, agentType, 'error');
+        }
+      }
       // agentsSeen is now tracked at upsert time (below) to catch all agent types
 
       // agent.terminate: clean up all state for this agent — 2.4
@@ -506,10 +515,15 @@ function App() {
         }
       }
 
-      // ── File collision lightning — persistent arc while agents share a file ──
+      // ── File activity heatmap — track every file operation ──
       const filePath = raw.payload?.filePath as string | undefined;
       if (filePath && (type === 'tool.call' || type === 'tool.result' || type === 'file.write' || type === 'file.read')) {
         const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+        const fileBasename = filePath.split(/[/\\]/).pop() ?? filePath;
+        const fileOp = (type === 'file.write' || type === 'tool.call') ? 'write' : 'read';
+        useCommandCenterStore.getState().recordFileOp(normalized, fileBasename, agentId, agentName, agentType, fileOp);
+
+        // ── File collision lightning — persistent arc while agents share a file ──
         // Skip config/context files that every agent reads on startup — these
         // cause false collision lightning between co-located agents.
         const collisionBasename = normalized.split('/').pop() ?? '';
@@ -1006,7 +1020,16 @@ function App() {
           const toolInc = (timer?.phase === 'tool_use') ? 1 : 0;
           const tools = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
           const tb = { ...m.toolBreakdown };
-          if (toolInc) { const t = tools[Math.floor(Math.random() * tools.length)]; tb[t] = (tb[t] ?? 0) + 1; }
+          if (toolInc) {
+            const t = tools[Math.floor(Math.random() * tools.length)];
+            tb[t] = (tb[t] ?? 0) + 1;
+            // Record file activity for heatmap
+            const demoFile = DEMO_FILES[Math.floor(Math.random() * DEMO_FILES.length)];
+            const demoNorm = demoFile.toLowerCase();
+            const demoBase = demoFile.split('/').pop() ?? demoFile;
+            const demoOp = (t === 'Write' || t === 'Edit') ? 'write' : 'read';
+            useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp);
+          }
           next[a.id] = {
             ...m,
             load,
@@ -1100,6 +1123,7 @@ function App() {
     for (const id of Object.keys(agentLastSeenRef.current)) {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
     }
+    useCommandCenterStore.getState().clearFileActivity();
   }, []);
 
   // Sync demo simulation with store flag (placed after callbacks are defined)

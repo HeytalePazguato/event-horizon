@@ -82,6 +82,35 @@ export const DEFAULT_MARKETPLACES: MarketplaceEntry[] = [
   { name: 'MCP Market', url: 'https://mcpmarket.com/tools/skills', type: 'browse' },
 ];
 
+/** Per-agent activity on a single file. */
+export interface FileAgentActivity {
+  agentId: string;
+  agentName: string;
+  agentType: string;
+  reads: number;
+  writes: number;
+  errors: number;
+  lastTs: number;
+}
+
+/** Aggregated activity for a single file path. */
+export interface FileActivity {
+  /** Normalized file path (lowercase, forward slashes). */
+  path: string;
+  /** Display name (basename). */
+  name: string;
+  /** Per-agent breakdown. */
+  agents: Record<string, FileAgentActivity>;
+  /** Total operations across all agents. */
+  totalOps: number;
+  /** Number of distinct agents that touched this file. */
+  agentCount: number;
+  /** Whether any agent had an error on this file. */
+  hasErrors: boolean;
+  /** Timestamp of most recent operation. */
+  lastTs: number;
+}
+
 export interface ToastEntry {
   instanceId: string;
   achievementId: string;
@@ -212,6 +241,12 @@ export interface CommandCenterState {
   selectSingularity: () => void;
   incrementSingularityStat: (key: keyof SingularityStats, amount?: number) => void;
   setSingularityStats: (stats: SingularityStats) => void;
+  /** File activity heatmap data — keyed by normalized path. */
+  fileActivity: Record<string, FileActivity>;
+  /** Record a file operation for the heatmap. */
+  recordFileOp: (normalizedPath: string, basename: string, agentId: string, agentName: string, agentType: string, op: 'read' | 'write' | 'error') => void;
+  /** Clear all file activity data. */
+  clearFileActivity: () => void;
   requestCenter: () => void;
   /** Timestamp-based signal to trigger stats export from webview. */
   exportRequestedAt: number;
@@ -262,6 +297,29 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedMetrics: null,
   singularitySelected: false,
   singularityStats: { ...EMPTY_SINGULARITY_STATS },
+  fileActivity: {},
+  recordFileOp: (normalizedPath, basename, agentId, agentName, agentType, op) =>
+    set((s) => {
+      const prev = s.fileActivity[normalizedPath];
+      const agentPrev = prev?.agents[agentId];
+      const now = Date.now();
+      const agent: FileAgentActivity = {
+        agentId,
+        agentName,
+        agentType,
+        reads: (agentPrev?.reads ?? 0) + (op === 'read' ? 1 : 0),
+        writes: (agentPrev?.writes ?? 0) + (op === 'write' ? 1 : 0),
+        errors: (agentPrev?.errors ?? 0) + (op === 'error' ? 1 : 0),
+        lastTs: now,
+      };
+      const agents = { ...(prev?.agents ?? {}), [agentId]: agent };
+      const agentCount = Object.keys(agents).length;
+      const totalOps = Object.values(agents).reduce((sum, a) => sum + a.reads + a.writes, 0);
+      const hasErrors = Object.values(agents).some((a) => a.errors > 0);
+      const entry: FileActivity = { path: normalizedPath, name: basename, agents, totalOps, agentCount, hasErrors, lastTs: now };
+      return { fileActivity: { ...s.fileActivity, [normalizedPath]: entry } };
+    }),
+  clearFileActivity: () => set({ fileActivity: {} }),
   centerRequestedAt: 0,
   exportRequestedAt: 0,
   screenshotRequestedAt: 0,
