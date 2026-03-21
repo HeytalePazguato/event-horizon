@@ -19,7 +19,4 @@ apps/vscode/webview-dist/
 .claude/
 CLAUDE.md
 docs/AUDIT.md
-docs/IMPLEMENTATION_PLAN.md
-docs/MINIGAME_PLAN.md
-docs/SKILLS_INTEGRATION_PLAN.md
-docs/SETTINGS_PANEL_PLAN.md
+docs/secret/
