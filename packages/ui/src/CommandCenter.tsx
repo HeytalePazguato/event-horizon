@@ -14,6 +14,7 @@ import { AgentIdentity } from './panels/AgentIdentity.js';
 import { MetricsPanel } from './panels/MetricsPanel.js';
 import { AgentControls } from './panels/AgentControls.js';
 import { useCommandCenterStore } from './store.js';
+import { GuidedTour, restartTour } from './GuidedTour.js';
 
 const CHAMFER = 28;
 const STEP = 28; // how far the center dips below the side wings (128 − 108)
@@ -184,10 +185,10 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
           }}
         >
           <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em', marginBottom: 4 }}>
-            {hoveredBtn === 'settings' ? 'Settings' : (minimized ? 'Expand' : 'Minimize')}
+            {hoveredBtn === 'tour' ? 'Guided Tour' : hoveredBtn === 'settings' ? 'Settings' : (minimized ? 'Expand' : 'Minimize')}
           </div>
           <div style={{ fontSize: 9, color: '#4a7a58', lineHeight: 1.5 }}>
-            {hoveredBtn === 'settings' ? 'Customize agent colors, sizes, and preferences.' : (minimized ? 'Expand the Command Center.' : 'Collapse the Command Center.')}
+            {hoveredBtn === 'tour' ? 'Restart the 4-step walkthrough of the Command Center.' : hoveredBtn === 'settings' ? 'Customize agent colors, sizes, and preferences.' : (minimized ? 'Expand the Command Center.' : 'Collapse the Command Center.')}
           </div>
         </div>,
         document.body
@@ -214,12 +215,35 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
         </div>
         <button
           type="button"
+          onClick={() => restartTour()}
+          onMouseEnter={() => setHoveredBtn('tour')}
+          onMouseLeave={() => setHoveredBtn(null)}
+          aria-label="Guided Tour"
+          style={{
+            marginLeft: 'auto',
+            width: 20,
+            height: 20,
+            padding: 0,
+            border: '1px solid #1e4030',
+            background: 'rgba(12,28,20,0.95)',
+            color: '#3a8055',
+            fontSize: 10,
+            cursor: 'pointer',
+            lineHeight: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          ?
+        </button>
+        <button
+          type="button"
           onClick={toggleSettings}
           onMouseEnter={() => setHoveredBtn('settings')}
           onMouseLeave={() => setHoveredBtn(null)}
           aria-label="Settings"
           style={{
-            marginLeft: 'auto',
             width: 20,
             height: 20,
             padding: 0,
@@ -265,19 +289,19 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
       {!minimized && (
         <div style={layout}>
           {/* LEFT — portrait/identity panel */}
-          <div style={leftPanelStyle}>
+          <div data-tour="identity" style={leftPanelStyle}>
             <Led style={{ top: 6, right: 6, background: LED_ON, boxShadow: `0 0 5px ${LED_ON}` }} />
             <Led style={{ bottom: 6, right: 6, background: LED_DIM }} />
             <AgentIdentity />
           </div>
 
           {/* CENTER — metrics / info */}
-          <div style={centerPanelStyle}>
+          <div data-tour="metrics" style={centerPanelStyle}>
             <MetricsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />
           </div>
 
           {/* RIGHT — command grid */}
-          <div style={rightPanelStyle}>
+          <div data-tour="commands" style={rightPanelStyle}>
             <Led style={{ top: 6, left: 6, background: LED_ON, boxShadow: `0 0 5px ${LED_ON}` }} />
             <Led style={{ bottom: 6, left: 6, background: LED_DIM }} />
             <AgentControls />
@@ -285,6 +309,7 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
         </div>
       )}
       </div>
+      <GuidedTour />
     </div>
   );
 };

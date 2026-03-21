@@ -178,6 +178,9 @@ export interface CommandCenterState {
   setAgentSizeMult: (agentType: VisualAgentType, sizeMult: number) => void;
   resetVisualSettings: () => void;
   setVisualSettings: (settings: VisualSettings) => void;
+  /** Whether the guided tour has been completed (persisted). */
+  tourCompleted: boolean;
+  setTourCompleted: (completed: boolean) => void;
   /** Whether achievements and toasts are enabled. */
   achievementsEnabled: boolean;
   setAchievementsEnabled: (enabled: boolean) => void;
@@ -280,6 +283,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   visualSettings: { ...DEFAULT_VISUAL_SETTINGS },
   settingsOpen: false,
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
+  tourCompleted: false,
+  setTourCompleted: (completed) => set({ tourCompleted: completed }),
   achievementsEnabled: true,
   setAchievementsEnabled: (enabled) => set({ achievementsEnabled: enabled }),
   animationSpeed: 1.0,

@@ -267,6 +267,7 @@ function wireUniverseWebview(
         achievementsEnabled: msg.achievementsEnabled,
         animationSpeed: msg.animationSpeed,
         eventServerPort: msg.eventServerPort,
+        tourCompleted: msg.tourCompleted,
       });
       return;
     }

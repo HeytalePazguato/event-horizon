@@ -10,5 +10,6 @@ export type { SingularityStats, SkillInfo, MarketplaceEntry, MarketplaceSkillRes
 export { DEFAULT_VISUAL_SETTINGS } from './store.js';
 export { AgentIdentity, MetricsPanel, AgentControls, CreateSkillWizard, MarketplacePanel, SettingsModal } from './panels/index.js';
 export type { CreateSkillRequest, MarketplacePanelProps } from './panels/index.js';
+export { GuidedTour, restartTour } from './GuidedTour.js';
 export { AchievementToasts, AchievementsBar, ACHIEVEMENTS, TIER_LABELS, tierBorderColor, getMedal } from './achievements/index.js';
 export type { Achievement } from './achievements/index.js';

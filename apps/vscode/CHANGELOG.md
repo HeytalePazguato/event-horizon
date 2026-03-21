@@ -8,6 +8,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Lightning arc filename label**: file collision lightning now shows the contested filename at the midpoint of the arc (9px cyan monospace text), so you can immediately see which file two agents are fighting over
 - **Onboarding card (empty state)**: when no agents are running, the universe now shows a prominent welcome card with "Connect Your First Agent" and "Try Demo Mode" buttons instead of a dim hint. Includes a brief description and supported agents callout. The card disappears as soon as the first agent spawns, demo starts, or the user clicks Skip
 - **Branded screenshots**: the Screenshot button now adds a footer bar to exported PNGs with the Event Horizon name, live session stats (agent count, tokens, cost, events), and a timestamp. Makes shared screenshots recognizable and informative
+- **Guided tour**: 4-step walkthrough for first-time users — highlights Agent Identity, Metrics & Logs, Command Grid, and the Universe in sequence with a dimmed backdrop and green highlight ring. Auto-starts on first planet click, persisted so it never shows again. Restart anytime via the "?" button in the Command Center header
 
 ### Improved
 - **Extension description**: marketplace search description now emphasizes utility ("Real-time visual monitoring for Claude Code, OpenCode & Copilot") instead of aesthetics

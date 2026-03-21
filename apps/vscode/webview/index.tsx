@@ -250,12 +250,14 @@ function App() {
           achievementsEnabled?: boolean;
           animationSpeed?: number;
           eventServerPort?: number;
+          tourCompleted?: boolean;
         };
         const store = useCommandCenterStore.getState();
         if (data.settings) store.setVisualSettings(data.settings);
         if (data.achievementsEnabled !== undefined) store.setAchievementsEnabled(data.achievementsEnabled);
         if (data.animationSpeed !== undefined) store.setAnimationSpeed(data.animationSpeed);
         if (data.eventServerPort !== undefined) store.setEventServerPort(data.eventServerPort);
+        if (data.tourCompleted !== undefined) store.setTourCompleted(data.tourCompleted);
         return;
       }
 
@@ -594,6 +596,7 @@ function App() {
   // ── Persist all settings to extension host globalState (debounced) ──
   const achievementsEnabled  = useCommandCenterStore((s) => s.achievementsEnabled);
   const eventServerPort      = useCommandCenterStore((s) => s.eventServerPort);
+  const tourCompleted        = useCommandCenterStore((s) => s.tourCompleted);
   const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
@@ -604,10 +607,11 @@ function App() {
         achievementsEnabled,
         animationSpeed,
         eventServerPort,
+        tourCompleted,
       });
     }, 500);
     return () => { if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current); };
-  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort]);
+  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted]);
 
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
   // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).
@@ -1280,6 +1284,7 @@ function App() {
     >
       <div
         ref={panelSize.ref}
+        data-tour="universe"
         style={{ flex: 1, minHeight: 0, position: 'relative', background: 'transparent' }}
       >
         <RandomStarfield />
