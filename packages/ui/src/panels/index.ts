@@ -13,3 +13,5 @@ export { FileHeatmap } from './FileHeatmap.js';
 export { AgentSidebar } from './AgentSidebar.js';
 export { OverviewPanel } from './OverviewPanel.js';
 export { PlanetIcon, SingularityIcon } from './AgentIdentity.js';
+export { FileHeatmapFull } from './FileHeatmapFull.js';
+export { LogsPanel } from './LogsPanel.js';

@@ -10,7 +10,8 @@ import type { AgentState, AgentMetrics } from '@event-horizon/core';
 import { useCommandCenterStore } from './store.js';
 import { AgentSidebar } from './panels/AgentSidebar.js';
 import { OverviewPanel } from './panels/OverviewPanel.js';
-import { FileHeatmap } from './panels/FileHeatmap.js';
+import { FileHeatmapFull } from './panels/FileHeatmapFull.js';
+import { LogsPanel } from './panels/LogsPanel.js';
 
 type OpsTab = 'overview' | 'files' | 'logs' | 'timeline';
 
@@ -86,13 +87,13 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <OverviewPanel agentMap={agentMap} metricsMap={metricsMap} />
             )}
             {activeTab === 'files' && (
-              <div style={{ padding: 16 }}>
-                <FileHeatmap />
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                <FileHeatmapFull />
               </div>
             )}
             {activeTab === 'logs' && (
-              <div style={{ padding: 16, color: '#4a7a58', fontSize: 11 }}>
-                Logs panel — coming in Phase D
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                <LogsPanel />
               </div>
             )}
             {activeTab === 'timeline' && (
