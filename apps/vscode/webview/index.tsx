@@ -328,6 +328,20 @@ function App() {
           store.recordFileOp(errNorm, errBase, agentId, agentName, agentType, 'error', errCwd);
         }
       }
+      // ── Timeline recording ──
+      const tlBase = { ts: Date.now(), agentId, agentName, agentType };
+      if (type === 'agent.spawn') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'spawned' });
+      else if (type === 'agent.terminate') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'terminated' });
+      else if (type === 'agent.error') store.addTimelineEntry({ ...tlBase, kind: 'error', label: (raw.payload?.message as string)?.slice(0, 60) ?? 'error' });
+      else if (type === 'tool.call') {
+        const toolName = (raw.payload?.toolName as string) ?? 'unknown';
+        store.addTimelineEntry({ ...tlBase, kind: 'tool', label: toolName });
+      } else if (type === 'file.read' || type === 'file.write') {
+        const fp = (raw.payload?.filePath as string) ?? '';
+        const fn = fp.split(/[/\\]/).pop() ?? fp;
+        store.addTimelineEntry({ ...tlBase, kind: 'file', label: `${type === 'file.write' ? 'W' : 'R'} ${fn}` });
+      }
+
       // agentsSeen is now tracked at upsert time (below) to catch all agent types
 
       // agent.terminate: clean up all state for this agent — 2.4
@@ -1037,6 +1051,8 @@ function App() {
             const demoBase = demoFile.split('/').pop() ?? demoFile;
             const demoOp = (t === 'Write' || t === 'Edit') ? 'write' : 'read';
             useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp, a.cwd);
+            // Record timeline entry for demo
+            useCommandCenterStore.getState().addTimelineEntry({ ts: Date.now(), agentId: a.id, agentName: a.name, agentType: a.agentType, kind: 'tool', label: t });
           }
           next[a.id] = {
             ...m,
@@ -1132,6 +1148,7 @@ function App() {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
     }
     useCommandCenterStore.getState().clearFileActivity();
+    useCommandCenterStore.getState().clearTimeline();
   }, []);
 
   // Sync demo simulation with store flag (placed after callbacks are defined)

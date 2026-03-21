@@ -12,6 +12,7 @@ import { AgentSidebar } from './panels/AgentSidebar.js';
 import { OverviewPanel } from './panels/OverviewPanel.js';
 import { FileHeatmapFull } from './panels/FileHeatmapFull.js';
 import { LogsPanel } from './panels/LogsPanel.js';
+import { TimelinePanel } from './panels/TimelinePanel.js';
 
 type OpsTab = 'overview' | 'files' | 'logs' | 'timeline';
 
@@ -97,8 +98,8 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               </div>
             )}
             {activeTab === 'timeline' && (
-              <div style={{ padding: 16, color: '#4a7a58', fontSize: 11 }}>
-                Timeline panel — coming in Phase E
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                <TimelinePanel />
               </div>
             )}
           </div>
