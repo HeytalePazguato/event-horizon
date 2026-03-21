@@ -45,6 +45,11 @@
       {
         "command": "eventHorizon.setupClaudeCode",
         "title": "Event Horizon: Connect Claude Code"
+      },
+      {
+        "command": "eventHorizon.toggleView",
+        "title": "Event Horizon: Toggle Operations View",
+        "icon": "$(layout)"
       }
     ],
     "menus": {
@@ -52,6 +57,11 @@
         {
           "command": "eventHorizon.open",
           "group": "navigation"
+        },
+        {
+          "command": "eventHorizon.toggleView",
+          "group": "navigation",
+          "when": "activeWebviewPanelId == 'eventHorizon.universe'"
         }
       ]
     },
@@ -60,6 +70,11 @@
         "command": "eventHorizon.open",
         "key": "ctrl+shift+e h",
         "mac": "cmd+shift+e h"
+      },
+      {
+        "command": "eventHorizon.toggleView",
+        "key": "ctrl+shift+e o",
+        "mac": "cmd+shift+e o"
       }
     ],
     "configuration": {

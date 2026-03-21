@@ -370,6 +370,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('eventHorizon.setupClaudeCode', runSetupClaudeCodeHooks)
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('eventHorizon.toggleView', () => {
+      webviewRef.current?.postMessage({ type: 'toggle-view' });
+    })
+  );
+
 
   // Show one-time welcome notification on first install
   const hasShownWelcome = context.globalState.get<boolean>('welcomeShown');

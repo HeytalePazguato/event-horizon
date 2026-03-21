@@ -204,6 +204,12 @@ function App() {
     const handler = (e: MessageEvent<EventPayload>) => {
       const msg = e.data;
 
+      // toggle-view: switch between Universe and Operations modes
+      if (msg?.type === 'toggle-view') {
+        useCommandCenterStore.getState().toggleViewMode();
+        return;
+      }
+
       // connected-agents: update hook install state
       if (msg?.type === 'connected-agents') {
         setConnectedAgentTypes((msg as unknown as { agentTypes: string[] }).agentTypes ?? []);
@@ -1296,6 +1302,8 @@ function App() {
     })();
   }, [screenshotRequestedAt, agents.length]);
 
+  const viewMode = useCommandCenterStore((s) => s.viewMode);
+
   return (
     <div
       style={{
@@ -1308,6 +1316,8 @@ function App() {
         background: 'transparent',
       }}
     >
+      {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state */}
+      <div style={{ flex: 1, display: viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
       <div
         ref={panelSize.ref}
         data-tour="universe"
@@ -1351,6 +1361,7 @@ function App() {
           onKamikaze={handleKamikaze}
           onCowDrop={handleCowDrop}
           onShootingStarClicked={handleShootingStarClicked}
+          visible={viewMode === 'universe'}
         />
       </div>
       {showOnboarding && (
@@ -1478,6 +1489,56 @@ function App() {
         </div>
       )}
       <CommandCenter onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+      </div>{/* end: universe view wrapper */}
+
+      {/* Operations view — full-screen dashboard (rendered only when active) */}
+      {viewMode === 'operations' && (
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'linear-gradient(180deg, #080e0a 0%, #040806 100%)',
+          fontFamily: 'Consolas, monospace',
+          color: '#90b088',
+          minHeight: 0,
+        }}>
+          {/* Placeholder — will be replaced by OperationsView component in Phase C */}
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: 12,
+          }}>
+            <div style={{ fontSize: 14, color: '#78b890', fontWeight: 600, letterSpacing: '0.1em' }}>
+              OPERATIONS VIEW
+            </div>
+            <div style={{ fontSize: 11, color: '#4a7a5a' }}>
+              {agents.length} agent{agents.length !== 1 ? 's' : ''} connected
+            </div>
+            <button
+              type="button"
+              onClick={() => useCommandCenterStore.getState().toggleViewMode()}
+              style={{
+                marginTop: 8,
+                padding: '6px 16px',
+                border: '1px solid #25904a',
+                borderRadius: 3,
+                background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)',
+                color: '#60d080',
+                fontSize: 11,
+                fontFamily: 'Consolas, monospace',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Back to Universe
+            </button>
+          </div>
+        </div>
+      )}
+
       <AchievementToasts />
       {infoOpen && (
         <div

@@ -109,6 +109,8 @@ export interface UniverseProps {
   onCowDrop?: () => void;
   /** Called when the user clicks on a shooting star. */
   onShootingStarClicked?: () => void;
+  /** When false, the PixiJS ticker is paused to save CPU (e.g. Operations view is active). */
+  visible?: boolean;
 }
 
 // --- constants -----------------------------------------------------------
@@ -312,6 +314,7 @@ export const Universe: FC<UniverseProps> = ({
   onKamikaze,
   onCowDrop,
   onShootingStarClicked,
+  visible = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -722,6 +725,14 @@ export const Universe: FC<UniverseProps> = ({
       stars.y = -height / 2;
     }
   }, [width, height, canvasReady]);
+
+  // --- pause ticker when hidden (Operations view) --------------------------
+  useEffect(() => {
+    const app = appRef.current;
+    if (!app) return;
+    if (visible) { try { app.ticker.start(); } catch { /* ignore */ } }
+    else { try { app.ticker.stop(); } catch { /* ignore */ } }
+  }, [visible, canvasReady]);
 
   // --- re-center -----------------------------------------------------------
   useEffect(() => {
