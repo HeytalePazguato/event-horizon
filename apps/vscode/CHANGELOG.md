@@ -2,6 +2,27 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.0.9] — 2026-03-21
+
+### Added
+- **Lightning arc filename label**: file collision lightning now shows the contested filename at the midpoint of the arc (9px cyan monospace text), so you can immediately see which file two agents are fighting over
+- **Onboarding card (empty state)**: when no agents are running, the universe now shows a prominent welcome card with "Connect Your First Agent" and "Try Demo Mode" buttons instead of a dim hint. Includes a brief description and supported agents callout. The card disappears as soon as the first agent spawns, demo starts, or the user clicks Skip
+- **Branded screenshots**: the Screenshot button now adds a footer bar to exported PNGs with the Event Horizon name, live session stats (agent count, tokens, cost, events), and a timestamp. Makes shared screenshots recognizable and informative
+- **Guided tour**: 4-step walkthrough for first-time users — highlights Agent Identity, Metrics & Logs, Command Grid, and the Universe in sequence with a dimmed backdrop and green highlight ring. Auto-starts on first planet click, persisted so it never shows again. Restart anytime via the "?" button in the Command Center header
+- **File Activity Heatmap**: new "Files" tab in the Command Center tracks every file read/write per agent. Shows a sorted list of most-active files with heat intensity bars, colored agent dots (matching planet colors), and operation counts. Files touched by multiple agents are highlighted amber ("contested"), files with errors show red. Sort by activity (Hot), multi-agent contention (Shared), or recency (New). Filter to show only the selected agent's files. Works with real agents and demo simulation. This is the foundation for future multi-agent coordination features — file locking, intent broadcasting, and conflict prevention
+- **Native VS Code settings**: all settings now appear in `Preferences > Settings` under "Event Horizon" — port, animation speed, achievements toggle, and per-agent colors/sizes. Changes sync bidirectionally between the Settings UI, `settings.json`, and the in-app modal. The in-app Settings modal remains as a visual bonus
+
+### Improved
+- **Demo mode clarity**: demo agents are now labeled `[Demo] Claude`, `[Demo] OpenCode`, etc. — visible on planet labels and in the Command Center identity panel. An amber "DEMO 0:00" timer in the header bar shows elapsed time, and a "Clear" button lets you stop the demo instantly without hunting for the grid button
+- **Extension description**: marketplace search description now emphasizes utility ("Real-time visual monitoring for Claude Code, OpenCode & Copilot") instead of aesthetics
+- **Keywords**: replaced `cosmic` and `cursor` with `claude-code`, `opencode`, and `monitoring` for better marketplace discoverability
+
+### Fixed
+- **False collision lightning on startup**: CLAUDE.md, .clauderc, .cursorrules, .copilot-instructions.md, and files under `.claude/` / `.opencode/` directories are now excluded from file collision detection — these config files are read by every agent on init and were causing spurious lightning arcs between co-located Claude Code planets
+- **Stars vibration in small windows**: resizing the panel no longer causes the starfield to visibly flicker. The resize observer is debounced (100ms) and stars are only recreated when the canvas size changes by more than 20px — small adjustments just reposition the existing layer
+- **Tooltip/toast positioning when minimized**: command tooltips and achievement toasts now move down proportionally when the Command Center is minimized, maintaining the same relative gap instead of floating far above the collapsed header
+- **Demo simulation type error**: demo agents assigned `'tool_use'` to the runtime state, which only accepts `'idle' | 'thinking' | 'error' | 'waiting'`. Tool-use phase now correctly maps to `'thinking'`
+
 ## [0.0.8] — 2026-03-16
 
 ### Added

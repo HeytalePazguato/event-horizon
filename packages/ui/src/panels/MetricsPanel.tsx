@@ -10,6 +10,7 @@ import { useCommandCenterStore } from '../store.js';
 import type { LogEntry, SingularityStats } from '../store.js';
 import { ACHIEVEMENTS, getMedal, TIER_LABELS, tierBorderColor } from '../achievements/index.js';
 import { SkillsPanel } from './SkillsPanel.js';
+import { FileHeatmap } from './FileHeatmap.js';
 
 /** Renders a medal by achievement ID. */
 const MedalById: FC<{ id: string; size?: number }> = ({ id, size }) => {
@@ -258,7 +259,7 @@ const SingularityView: FC<{ stats: SingularityStats }> = ({ stats }) => {
   );
 };
 
-type View = 'info' | 'logs' | 'medals' | 'skills';
+type View = 'info' | 'logs' | 'medals' | 'skills' | 'files';
 
 export interface MetricsPanelProps {
   onOpenSkill?: (filePath: string) => void;
@@ -278,6 +279,7 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
   const allLogs         = useCommandCenterStore((s) => s.logs);
   const unlockedCount   = useCommandCenterStore((s) => s.unlockedAchievements.length);
   const skillsCount     = useCommandCenterStore((s) => s.skills.length);
+  const fileCount       = useCommandCenterStore((s) => Object.keys(s.fileActivity).length);
   const [view, setView] = useState<View>('info');
 
   const effectiveView: View = logsOpen ? 'logs' : view;
@@ -302,6 +304,9 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
       <button type="button" style={tabStyle(effectiveView === 'skills')} onClick={() => setEffectiveView('skills')}>
         Skills{skillsCount > 0 ? ` (${skillsCount})` : ''}
       </button>
+      <button type="button" style={tabStyle(effectiveView === 'files')} onClick={() => setEffectiveView('files')}>
+        Files{fileCount > 0 ? ` (${fileCount})` : ''}
+      </button>
     </div>
   );
 
@@ -312,6 +317,7 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
         {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
         {effectiveView === 'medals' && <MedalsView />}
         {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
+        {effectiveView === 'files' && <FileHeatmap />}
 
         {effectiveView === 'info' && singularitySelected && (
           <SingularityView stats={singularityStats} />
@@ -340,6 +346,7 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
       {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
       {effectiveView === 'medals' && <MedalsView />}
       {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
+      {effectiveView === 'files' && <FileHeatmap />}
       {effectiveView === 'info' && (
         <div style={gridStyle}>
           <div style={cellStyle}>

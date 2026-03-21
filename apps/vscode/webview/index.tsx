@@ -29,15 +29,25 @@ function usePanelSize() {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const update = () => {
-      const w = el.clientWidth || 640;
-      const h = el.clientHeight || 400;
-      if (w > 0 && h > 0) setSize({ width: w, height: h });
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const w = el.clientWidth || 640;
+        const h = el.clientHeight || 400;
+        if (w > 0 && h > 0) setSize((prev) => {
+          if (prev.width === w && prev.height === h) return prev;
+          return { width: w, height: h };
+        });
+      }, 100);
     };
-    update();
+    // Initial size without debounce
+    const w = el.clientWidth || 640;
+    const h = el.clientHeight || 400;
+    if (w > 0 && h > 0) setSize({ width: w, height: h });
     const ro = new ResizeObserver(update);
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
   }, []);
   return { ref, ...size };
 }
@@ -240,12 +250,14 @@ function App() {
           achievementsEnabled?: boolean;
           animationSpeed?: number;
           eventServerPort?: number;
+          tourCompleted?: boolean;
         };
         const store = useCommandCenterStore.getState();
         if (data.settings) store.setVisualSettings(data.settings);
         if (data.achievementsEnabled !== undefined) store.setAchievementsEnabled(data.achievementsEnabled);
         if (data.animationSpeed !== undefined) store.setAnimationSpeed(data.animationSpeed);
         if (data.eventServerPort !== undefined) store.setEventServerPort(data.eventServerPort);
+        if (data.tourCompleted !== undefined) store.setTourCompleted(data.tourCompleted);
         return;
       }
 
@@ -299,7 +311,17 @@ function App() {
       const store = useCommandCenterStore.getState();
       if (!store.singularityStats.firstEventAt) store.incrementSingularityStat('firstEventAt');
       store.incrementSingularityStat('eventsWitnessed');
-      if (type === 'agent.error') store.incrementSingularityStat('errorsWitnessed');
+      if (type === 'agent.error') {
+        store.incrementSingularityStat('errorsWitnessed');
+        // Track file-level errors in heatmap
+        const errFilePath = raw.payload?.filePath as string | undefined;
+        if (errFilePath) {
+          const errNorm = errFilePath.replace(/\\/g, '/').toLowerCase();
+          const errBase = errFilePath.split(/[/\\]/).pop() ?? errFilePath;
+          const errCwd = agentMapRef.current[agentId]?.cwd;
+          store.recordFileOp(errNorm, errBase, agentId, agentName, agentType, 'error', errCwd);
+        }
+      }
       // agentsSeen is now tracked at upsert time (below) to catch all agent types
 
       // agent.terminate: clean up all state for this agent — 2.4
@@ -494,45 +516,60 @@ function App() {
         }
       }
 
-      // ── File collision lightning — persistent arc while agents share a file ──
+      // ── File activity heatmap — track every file operation ──
       const filePath = raw.payload?.filePath as string | undefined;
       if (filePath && (type === 'tool.call' || type === 'tool.result' || type === 'file.write' || type === 'file.read')) {
         const normalized = filePath.replace(/\\/g, '/').toLowerCase();
-        const now = Date.now();
-        const FILE_WINDOW_MS = 10_000;
+        const fileBasename = filePath.split(/[/\\]/).pop() ?? filePath;
+        const fileOp = (type === 'file.write' || type === 'tool.call') ? 'write' : 'read';
+        const fileCwd = agentMapRef.current[agentId]?.cwd ?? eventCwd;
+        useCommandCenterStore.getState().recordFileOp(normalized, fileBasename, agentId, agentName, agentType, fileOp, fileCwd);
 
-        let entries = activeFilesRef.current.get(normalized);
-        if (!entries) { entries = []; activeFilesRef.current.set(normalized, entries); }
+        // ── File collision lightning — persistent arc while agents share a file ──
+        // Skip config/context files that every agent reads on startup — these
+        // cause false collision lightning between co-located agents.
+        const collisionBasename = normalized.split('/').pop() ?? '';
+        const IGNORED_FILES = ['claude.md', '.clauderc', '.cursorrules', '.copilot-instructions.md'];
+        const isIgnored = IGNORED_FILES.includes(collisionBasename)
+          || normalized.includes('/.claude/') || normalized.includes('/.opencode/');
 
-        // Prune stale entries and add current
-        const fresh = entries.filter((e) => now - e.ts < FILE_WINDOW_MS);
-        fresh.push({ agentId, ts: now });
-        activeFilesRef.current.set(normalized, fresh);
+        if (!isIgnored) {
+          const now = Date.now();
+          const FILE_WINDOW_MS = 10_000;
 
-        // Find other agents that also touched this file recently
-        const others = [...new Set(fresh.filter((e) => e.agentId !== agentId).map((e) => e.agentId))];
-        for (const otherId of others) {
-          const pairKey = [agentId, otherId].sort().join('::');
-          const sparkId = `collision-${pairKey}`;
-          const basename = filePath.split(/[/\\]/).pop() ?? filePath;
+          let entries = activeFilesRef.current.get(normalized);
+          if (!entries) { entries = []; activeFilesRef.current.set(normalized, entries); }
 
-          // Add or refresh the collision arc
-          setSparks((prev) => {
-            const existing = prev.find((s) => s.id === sparkId);
-            if (existing) return prev; // already active
-            return [...prev, { id: sparkId, agentIds: [agentId, otherId], filePath: basename }];
-          });
+          // Prune stale entries and add current
+          const fresh = entries.filter((e) => now - e.ts < FILE_WINDOW_MS);
+          fresh.push({ agentId, ts: now });
+          activeFilesRef.current.set(normalized, fresh);
 
-          // Reset the removal timer for this pair
-          const existingTimer = recentSparkPairsRef.current.get(pairKey);
-          if (existingTimer) { clearTimeout(existingTimer); shipTimerIdsRef.current.delete(existingTimer); }
-          const timerId = setTimeout(() => {
-            setSparks((prev) => prev.filter((s) => s.id !== sparkId));
-            recentSparkPairsRef.current.delete(pairKey);
-            shipTimerIdsRef.current.delete(timerId);
-          }, FILE_WINDOW_MS);
-          recentSparkPairsRef.current.set(pairKey, timerId as unknown as number);
-          shipTimerIdsRef.current.add(timerId);
+          // Find other agents that also touched this file recently
+          const others = [...new Set(fresh.filter((e) => e.agentId !== agentId).map((e) => e.agentId))];
+          for (const otherId of others) {
+            const pairKey = [agentId, otherId].sort().join('::');
+            const sparkId = `collision-${pairKey}`;
+            const sparkLabel = filePath.split(/[/\\]/).pop() ?? filePath;
+
+            // Add or refresh the collision arc
+            setSparks((prev) => {
+              const existing = prev.find((s) => s.id === sparkId);
+              if (existing) return prev; // already active
+              return [...prev, { id: sparkId, agentIds: [agentId, otherId], filePath: sparkLabel }];
+            });
+
+            // Reset the removal timer for this pair
+            const existingTimer = recentSparkPairsRef.current.get(pairKey);
+            if (existingTimer) { clearTimeout(existingTimer); shipTimerIdsRef.current.delete(existingTimer); }
+            const timerId = setTimeout(() => {
+              setSparks((prev) => prev.filter((s) => s.id !== sparkId));
+              recentSparkPairsRef.current.delete(pairKey);
+              shipTimerIdsRef.current.delete(timerId);
+            }, FILE_WINDOW_MS);
+            recentSparkPairsRef.current.set(pairKey, timerId as unknown as number);
+            shipTimerIdsRef.current.add(timerId);
+          }
         }
       }
     };
@@ -575,6 +612,7 @@ function App() {
   // ── Persist all settings to extension host globalState (debounced) ──
   const achievementsEnabled  = useCommandCenterStore((s) => s.achievementsEnabled);
   const eventServerPort      = useCommandCenterStore((s) => s.eventServerPort);
+  const tourCompleted        = useCommandCenterStore((s) => s.tourCompleted);
   const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
@@ -585,10 +623,11 @@ function App() {
         achievementsEnabled,
         animationSpeed,
         eventServerPort,
+        tourCompleted,
       });
     }, 500);
     return () => { if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current); };
-  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort]);
+  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted]);
 
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
   // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).
@@ -807,6 +846,7 @@ function App() {
   const panelSize = usePanelSize();
 
   const hasAgents = agents.length > 0;
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const agentStates = Object.fromEntries(
     Object.entries(agentMap).map(([k, v]) => [k, v.state ?? 'idle'])
   );
@@ -837,19 +877,20 @@ function App() {
 
   const [demoSimRunning, setDemoSimRunning] = useState(false);
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const showOnboarding = !hasAgents && !onboardingDismissed && !demoSimRunning;
 
   const runDemoSimulation = useCallback(() => {
     const DEMO_CWD_A = '/home/user/projects/event-horizon';
     const DEMO_CWD_B = '/home/user/projects/backend-api';
     const demoAgents = [
-      { id: 'demo-claude',   name: 'Claude',   agentType: 'claude-code', cwd: DEMO_CWD_A },
-      { id: 'demo-opencode', name: 'OpenCode', agentType: 'opencode',    cwd: DEMO_CWD_A },
-      { id: 'demo-copilot',  name: 'Copilot',  agentType: 'copilot',     cwd: DEMO_CWD_B },
-      { id: 'demo-cursor',   name: 'Cursor',   agentType: 'cursor',      cwd: DEMO_CWD_B },
-      { id: 'demo-gemini',   name: 'Gemini',   agentType: 'unknown',     cwd: DEMO_CWD_B },
-      { id: 'demo-solo-1',   name: 'Windsurf', agentType: 'unknown' },
-      { id: 'demo-solo-2',   name: 'Aider',    agentType: 'unknown' },
-      { id: 'demo-solo-3',   name: 'Devin',    agentType: 'unknown' },
+      { id: 'demo-claude',   name: '[Demo] Claude',   agentType: 'claude-code', cwd: DEMO_CWD_A },
+      { id: 'demo-opencode', name: '[Demo] OpenCode', agentType: 'opencode',    cwd: DEMO_CWD_A },
+      { id: 'demo-copilot',  name: '[Demo] Copilot',  agentType: 'copilot',     cwd: DEMO_CWD_B },
+      { id: 'demo-cursor',   name: '[Demo] Cursor',   agentType: 'cursor',      cwd: DEMO_CWD_B },
+      { id: 'demo-gemini',   name: '[Demo] Gemini',   agentType: 'unknown',     cwd: DEMO_CWD_B },
+      { id: 'demo-solo-1',   name: '[Demo] Windsurf', agentType: 'unknown' },
+      { id: 'demo-solo-2',   name: '[Demo] Aider',    agentType: 'unknown' },
+      { id: 'demo-solo-3',   name: '[Demo] Devin',    agentType: 'unknown' },
     ];
     const DEMO_WS_GROUPS: string[][] = [
       ['demo-claude', 'demo-opencode'],
@@ -925,7 +966,7 @@ function App() {
               // 70% → tool_use, 10% → error, 20% → complete
               { const roll = Math.random();
               if (roll < 0.7) {
-                newState = 'tool_use';
+                newState = 'thinking'; // tool_use is internal phase; runtime state stays 'thinking'
                 timer.phase = 'tool_use';
                 timer.nextTransition = now + 800 + Math.random() * 2000; // tool runs 0.8–2.8s
               } else if (roll < 0.8) {
@@ -981,7 +1022,16 @@ function App() {
           const toolInc = (timer?.phase === 'tool_use') ? 1 : 0;
           const tools = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
           const tb = { ...m.toolBreakdown };
-          if (toolInc) { const t = tools[Math.floor(Math.random() * tools.length)]; tb[t] = (tb[t] ?? 0) + 1; }
+          if (toolInc) {
+            const t = tools[Math.floor(Math.random() * tools.length)];
+            tb[t] = (tb[t] ?? 0) + 1;
+            // Record file activity for heatmap
+            const demoFile = DEMO_FILES[Math.floor(Math.random() * DEMO_FILES.length)];
+            const demoNorm = demoFile.toLowerCase();
+            const demoBase = demoFile.split('/').pop() ?? demoFile;
+            const demoOp = (t === 'Write' || t === 'Edit') ? 'write' : 'read';
+            useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp, a.cwd);
+          }
           next[a.id] = {
             ...m,
             load,
@@ -1075,6 +1125,7 @@ function App() {
     for (const id of Object.keys(agentLastSeenRef.current)) {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
     }
+    useCommandCenterStore.getState().clearFileActivity();
   }, []);
 
   // Sync demo simulation with store flag (placed after callbacks are defined)
@@ -1144,7 +1195,7 @@ function App() {
     URL.revokeObjectURL(url);
   }, [exportRequestedAt]);
 
-  // Screenshot — capture the full view (WebGL universe + HTML Command Center)
+  // Screenshot — capture the full view (WebGL universe + HTML Command Center) with branded footer
   useEffect(() => {
     if (!screenshotRequestedAt) return;
     void (async () => {
@@ -1175,14 +1226,75 @@ function App() {
           },
         });
 
-        const dataUrl = result.toDataURL('image/png');
+        // --- Branded footer ---
+        const stats = useCommandCenterStore.getState().singularityStats;
+        const agentCount = agents.length;
+        const dpr = window.devicePixelRatio || 1;
+        const footerH = Math.round(32 * dpr);
+        const srcW = result.width;
+        const srcH = result.height;
+
+        const final = document.createElement('canvas');
+        final.width = srcW;
+        final.height = srcH + footerH;
+        const ctx = final.getContext('2d')!;
+
+        // Draw captured screenshot
+        ctx.drawImage(result, 0, 0);
+
+        // Footer background
+        ctx.fillStyle = '#060a08';
+        ctx.fillRect(0, srcH, srcW, footerH);
+        // Subtle top border
+        ctx.fillStyle = 'rgba(50,120,70,0.4)';
+        ctx.fillRect(0, srcH, srcW, Math.round(1 * dpr));
+
+        const fontSize = Math.round(10 * dpr);
+        const smallFontSize = Math.round(8.5 * dpr);
+        ctx.textBaseline = 'middle';
+        const centerY = srcH + footerH / 2;
+        const pad = Math.round(12 * dpr);
+
+        // Left: branding
+        ctx.font = `600 ${fontSize}px Consolas, monospace`;
+        ctx.fillStyle = '#78b890';
+        ctx.fillText('EVENT HORIZON', pad, centerY);
+
+        const brandW = ctx.measureText('EVENT HORIZON').width;
+        ctx.font = `${smallFontSize}px Consolas, monospace`;
+        ctx.fillStyle = '#3a6a4a';
+        const sep = Math.round(8 * dpr);
+        ctx.fillText('|', pad + brandW + sep, centerY);
+        const pipeW = ctx.measureText('|').width;
+
+        // Stats line
+        const statsItems: string[] = [];
+        if (agentCount > 0) statsItems.push(`${agentCount} agent${agentCount !== 1 ? 's' : ''}`);
+        if (stats.totalTokens > 0) statsItems.push(`${(stats.totalTokens / 1000).toFixed(0)}k tokens`);
+        if (stats.totalCostUsd > 0) statsItems.push(`$${stats.totalCostUsd.toFixed(2)}`);
+        if (stats.eventsWitnessed > 0) statsItems.push(`${stats.eventsWitnessed} events`);
+        const statsText = statsItems.length > 0 ? statsItems.join('  ·  ') : 'AI agent monitor for VS Code';
+        ctx.fillStyle = '#4a7a5a';
+        ctx.fillText(statsText, pad + brandW + sep + pipeW + sep, centerY);
+
+        // Right: timestamp
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+        const timeStr = now.toTimeString().slice(0, 5);
+        const rightText = `${dateStr}  ${timeStr}`;
+        ctx.fillStyle = '#2a5040';
+        ctx.font = `${smallFontSize}px Consolas, monospace`;
+        const rightW = ctx.measureText(rightText).width;
+        ctx.fillText(rightText, srcW - pad - rightW, centerY);
+
+        const dataUrl = final.toDataURL('image/png');
         const a = document.createElement('a');
         a.href = dataUrl;
         a.download = `event-horizon-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
         a.click();
       } catch { /* capture failed */ }
     })();
-  }, [screenshotRequestedAt]);
+  }, [screenshotRequestedAt, agents.length]);
 
   return (
     <div
@@ -1198,6 +1310,7 @@ function App() {
     >
       <div
         ref={panelSize.ref}
+        data-tour="universe"
         style={{ flex: 1, minHeight: 0, position: 'relative', background: 'transparent' }}
       >
         <RandomStarfield />
@@ -1240,23 +1353,128 @@ function App() {
           onShootingStarClicked={handleShootingStarClicked}
         />
       </div>
-      {!hasAgents && (
+      {showOnboarding && (
         <div
           style={{
             position: 'absolute',
             left: '50%',
-            top: '40%',
+            top: '38%',
             transform: 'translate(-50%, -50%)',
             textAlign: 'center',
-            color: '#3a5a4a',
-            fontSize: 11,
             fontFamily: 'Consolas, monospace',
-            pointerEvents: 'none',
             zIndex: 5,
+            pointerEvents: 'auto',
           }}
         >
-          <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.3 }}>🌌</div>
-          <div>No agents yet — press Demo in the Command Center</div>
+          {/* Onboarding card */}
+          <div style={{
+            background: 'linear-gradient(180deg, rgba(8,18,12,0.92) 0%, rgba(4,10,6,0.95) 100%)',
+            border: '1px solid rgba(50,120,70,0.35)',
+            borderRadius: 6,
+            padding: '28px 36px 24px',
+            minWidth: 320,
+            maxWidth: 400,
+            boxShadow: '0 0 40px rgba(0,0,0,0.6), 0 0 8px rgba(50,180,80,0.08)',
+          }}>
+            <div style={{ fontSize: 13, color: '#78b890', fontWeight: 600, letterSpacing: 0.5, marginBottom: 6 }}>
+              EVENT HORIZON
+            </div>
+            <div style={{ fontSize: 11, color: '#4a7a5a', lineHeight: 1.5, marginBottom: 20 }}>
+              Visualize your AI coding agents in real time.
+              <br />
+              Connect an agent or explore with a demo.
+            </div>
+
+            {/* Primary CTA — Connect Agent */}
+            <button
+              type="button"
+              onClick={() => { setOnboardingDismissed(true); toggleConnect(); }}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '9px 16px',
+                marginBottom: 8,
+                border: '1px solid #25904a',
+                borderRadius: 3,
+                background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)',
+                color: '#60d080',
+                fontSize: 11,
+                fontFamily: 'Consolas, monospace',
+                fontWeight: 600,
+                cursor: 'pointer',
+                letterSpacing: 0.3,
+                transition: 'border-color 0.15s, box-shadow 0.15s',
+              }}
+              onMouseOver={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = '#40c868';
+                (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 8px rgba(60,200,100,0.25)';
+              }}
+              onMouseOut={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = '#25904a';
+                (e.currentTarget as HTMLButtonElement).style.boxShadow = 'none';
+              }}
+            >
+              Connect Your First Agent
+            </button>
+
+            {/* Secondary CTA — Demo */}
+            <button
+              type="button"
+              onClick={() => { setOnboardingDismissed(true); useCommandCenterStore.getState().requestDemo(); }}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '8px 16px',
+                border: '1px solid rgba(50,120,70,0.3)',
+                borderRadius: 3,
+                background: 'transparent',
+                color: '#4a8a5a',
+                fontSize: 10,
+                fontFamily: 'Consolas, monospace',
+                cursor: 'pointer',
+                letterSpacing: 0.3,
+                transition: 'border-color 0.15s, color 0.15s',
+              }}
+              onMouseOver={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = '#3a9a5a';
+                (e.currentTarget as HTMLButtonElement).style.color = '#60b870';
+              }}
+              onMouseOut={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(50,120,70,0.3)';
+                (e.currentTarget as HTMLButtonElement).style.color = '#4a8a5a';
+              }}
+            >
+              Try Demo Mode
+            </button>
+
+            {/* Hint */}
+            <div style={{ fontSize: 9, color: '#2a5040', marginTop: 14, lineHeight: 1.4 }}>
+              Supports Claude Code, OpenCode, and GitHub Copilot.
+              <br />
+              100% local — no data leaves your machine.
+            </div>
+
+            {/* Skip */}
+            <button
+              type="button"
+              onClick={() => setOnboardingDismissed(true)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#2a5040',
+                fontSize: 9,
+                fontFamily: 'Consolas, monospace',
+                cursor: 'pointer',
+                marginTop: 10,
+                padding: 0,
+                transition: 'color 0.15s',
+              }}
+              onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#4a8a5a'; }}
+              onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#2a5040'; }}
+            >
+              Skip
+            </button>
+          </div>
         </div>
       )}
       <CommandCenter onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />

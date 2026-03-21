@@ -82,6 +82,37 @@ export const DEFAULT_MARKETPLACES: MarketplaceEntry[] = [
   { name: 'MCP Market', url: 'https://mcpmarket.com/tools/skills', type: 'browse' },
 ];
 
+/** Per-agent activity on a single file. */
+export interface FileAgentActivity {
+  agentId: string;
+  agentName: string;
+  agentType: string;
+  /** Working directory folder name — helps distinguish multiple sessions of the same agent type. */
+  cwd?: string;
+  reads: number;
+  writes: number;
+  errors: number;
+  lastTs: number;
+}
+
+/** Aggregated activity for a single file path. */
+export interface FileActivity {
+  /** Normalized file path (lowercase, forward slashes). */
+  path: string;
+  /** Display name (basename). */
+  name: string;
+  /** Per-agent breakdown. */
+  agents: Record<string, FileAgentActivity>;
+  /** Total operations across all agents. */
+  totalOps: number;
+  /** Number of distinct agents that touched this file. */
+  agentCount: number;
+  /** Whether any agent had an error on this file. */
+  hasErrors: boolean;
+  /** Timestamp of most recent operation. */
+  lastTs: number;
+}
+
 export interface ToastEntry {
   instanceId: string;
   achievementId: string;
@@ -152,6 +183,8 @@ export interface CommandCenterState {
   demoRequested: boolean;
   /** True while demo simulation is active — guards achievements from firing. */
   demoMode: boolean;
+  /** Timestamp when demo simulation started (0 = not running). */
+  demoStartedAt: number;
   /** Active toast notifications. */
   activeToasts: ToastEntry[];
   /** Achievement IDs that have already been unlocked (one-shot). */
@@ -160,6 +193,9 @@ export interface CommandCenterState {
   achievementCounts: Record<string, number>;
   /** Current tier index for tiered achievements. */
   achievementTiers: Record<string, number>;
+  /** Whether the Command Center is minimized. */
+  ccMinimized: boolean;
+  setCcMinimized: (minimized: boolean) => void;
   /** Whether the "Connect Agent" dropdown is open. */
   connectOpen: boolean;
   /** Whether the "Spawn Agent" modal is open. */
@@ -175,6 +211,12 @@ export interface CommandCenterState {
   setAgentSizeMult: (agentType: VisualAgentType, sizeMult: number) => void;
   resetVisualSettings: () => void;
   setVisualSettings: (settings: VisualSettings) => void;
+  /** Whether the guided tour has been completed (persisted). */
+  tourCompleted: boolean;
+  setTourCompleted: (completed: boolean) => void;
+  /** Timestamp trigger to manually restart the guided tour. */
+  tourRequestedAt: number;
+  requestTour: () => void;
   /** Whether achievements and toasts are enabled. */
   achievementsEnabled: boolean;
   setAchievementsEnabled: (enabled: boolean) => void;
@@ -204,6 +246,12 @@ export interface CommandCenterState {
   selectSingularity: () => void;
   incrementSingularityStat: (key: keyof SingularityStats, amount?: number) => void;
   setSingularityStats: (stats: SingularityStats) => void;
+  /** File activity heatmap data — keyed by normalized path. */
+  fileActivity: Record<string, FileActivity>;
+  /** Record a file operation for the heatmap. */
+  recordFileOp: (normalizedPath: string, basename: string, agentId: string, agentName: string, agentType: string, op: 'read' | 'write' | 'error', cwd?: string) => void;
+  /** Clear all file activity data. */
+  clearFileActivity: () => void;
   requestCenter: () => void;
   /** Timestamp-based signal to trigger stats export from webview. */
   exportRequestedAt: number;
@@ -254,6 +302,30 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedMetrics: null,
   singularitySelected: false,
   singularityStats: { ...EMPTY_SINGULARITY_STATS },
+  fileActivity: {},
+  recordFileOp: (normalizedPath, basename, agentId, agentName, agentType, op, cwd) =>
+    set((s) => {
+      const prev = s.fileActivity[normalizedPath];
+      const agentPrev = prev?.agents[agentId];
+      const now = Date.now();
+      const agent: FileAgentActivity = {
+        agentId,
+        agentName,
+        agentType,
+        cwd: cwd ?? agentPrev?.cwd,
+        reads: (agentPrev?.reads ?? 0) + (op === 'read' ? 1 : 0),
+        writes: (agentPrev?.writes ?? 0) + (op === 'write' ? 1 : 0),
+        errors: (agentPrev?.errors ?? 0) + (op === 'error' ? 1 : 0),
+        lastTs: now,
+      };
+      const agents = { ...(prev?.agents ?? {}), [agentId]: agent };
+      const agentCount = Object.keys(agents).length;
+      const totalOps = Object.values(agents).reduce((sum, a) => sum + a.reads + a.writes, 0);
+      const hasErrors = Object.values(agents).some((a) => a.errors > 0);
+      const entry: FileActivity = { path: normalizedPath, name: basename, agents, totalOps, agentCount, hasErrors, lastTs: now };
+      return { fileActivity: { ...s.fileActivity, [normalizedPath]: entry } };
+    }),
+  clearFileActivity: () => set({ fileActivity: {} }),
   centerRequestedAt: 0,
   exportRequestedAt: 0,
   screenshotRequestedAt: 0,
@@ -265,16 +337,23 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   infoOpen: false,
   demoRequested: false,
   demoMode: false,
+  demoStartedAt: 0,
   activeToasts: [],
   unlockedAchievements: [],
   achievementCounts: {},
   achievementTiers: {},
+  ccMinimized: false,
+  setCcMinimized: (minimized) => set({ ccMinimized: minimized }),
   connectOpen: false,
   spawnOpen: false,
   pendingConnectAgent: null,
   visualSettings: { ...DEFAULT_VISUAL_SETTINGS },
   settingsOpen: false,
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
+  tourCompleted: false,
+  setTourCompleted: (completed) => set({ tourCompleted: completed }),
+  tourRequestedAt: 0,
+  requestTour: () => set({ tourCompleted: false, tourRequestedAt: Date.now() }),
   achievementsEnabled: true,
   setAchievementsEnabled: (enabled) => set({ achievementsEnabled: enabled }),
   animationSpeed: 1.0,
@@ -395,7 +474,7 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),
 
   requestDemo: () => set((s) => ({ demoRequested: !s.demoRequested })),
-  setDemoMode: (active) => set({ demoMode: active }),
+  setDemoMode: (active) => set({ demoMode: active, demoStartedAt: active ? Date.now() : 0 }),
 
   unlockAchievement: (id) => {
     // Achievements disabled guard
