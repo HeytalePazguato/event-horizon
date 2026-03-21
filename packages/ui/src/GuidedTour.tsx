@@ -16,7 +16,7 @@ interface TourStep {
   title: string;
   desc: string;
   /** Position of the tooltip relative to the highlighted element. */
-  position: 'above' | 'above-left' | 'above-right';
+  position: 'above' | 'above-left' | 'above-right' | 'center';
 }
 
 const STEPS: TourStep[] = [
@@ -42,7 +42,7 @@ const STEPS: TourStep[] = [
     selector: '[data-tour="universe"]',
     title: '4/4 — The Universe',
     desc: 'Click planets to select agents. Click the black hole for global stats. Drag to rearrange.',
-    position: 'above',
+    position: 'center',
   },
 ];
 
@@ -94,8 +94,16 @@ const GuidedTourOverlay: FC<{ step: number; onNext: () => void; onSkip: () => vo
       left: cutout.left,
       width: tooltipW,
     };
+  } else if (current.position === 'center') {
+    // Centered inside the highlighted element (for large elements like the universe)
+    tooltipStyle = {
+      position: 'fixed',
+      top: cutout.top + cutout.height / 2 - 60,
+      left: cutout.left + cutout.width / 2 - tooltipW / 2,
+      width: tooltipW,
+    };
   } else {
-    // 'above' — centered
+    // 'above' — centered above the element
     tooltipStyle = {
       position: 'fixed',
       bottom: window.innerHeight - cutout.top + 12,
@@ -115,7 +123,7 @@ const GuidedTourOverlay: FC<{ step: number; onNext: () => void; onSkip: () => vo
 
   return createPortal(
     <>
-      {/* Semi-transparent backdrop with cutout */}
+      {/* Semi-transparent backdrop with cutout — no click handler to prevent double-advance */}
       <div
         style={{
           position: 'fixed',
@@ -123,7 +131,6 @@ const GuidedTourOverlay: FC<{ step: number; onNext: () => void; onSkip: () => vo
           zIndex: BACKDROP_Z,
           pointerEvents: 'auto',
         }}
-        onClick={onNext}
       >
         <svg width="100%" height="100%" style={{ display: 'block' }}>
           <defs>
