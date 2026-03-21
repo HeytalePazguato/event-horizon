@@ -124,6 +124,7 @@ function ensureKeyframe() {
 export const AchievementToasts: FC = () => {
   const toasts = useCommandCenterStore((s) => s.activeToasts);
   const dismiss = useCommandCenterStore((s) => s.dismissToast);
+  const ccMinimized = useCommandCenterStore((s) => s.ccMinimized);
 
   /** Tracks the timestamp each toast was first promoted to the visible set. */
   const stagedRef = useRef<Map<string, number>>(new Map());
@@ -158,7 +159,7 @@ export const AchievementToasts: FC = () => {
       style={{
         position: 'fixed',
         right: 12,
-        bottom: 292,
+        bottom: ccMinimized ? 155 : 292,
         zIndex: 200,
         display: 'flex',
         flexDirection: 'column-reverse',

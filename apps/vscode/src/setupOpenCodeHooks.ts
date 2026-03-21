@@ -61,7 +61,11 @@ function sendExit(eventName, extra) {
 }
 
 export default async function EventHorizon({ project, directory, worktree, serverUrl }) {
-  const sessionId = String(project?.id ?? "opencode-1");
+  // Use project.id when available, but always append a unique suffix so
+  // multiple OpenCode instances in the same project get separate planets.
+  const base = project?.id ? String(project.id) : "opencode";
+  const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const sessionId = base + "-" + uid;
   const agentName = "OpenCode";
   const cwd = worktree || directory || undefined;
   // OpenCode's internal server URL — used by Event Horizon for SSE subagent tracking

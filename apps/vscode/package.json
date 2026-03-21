@@ -1,10 +1,10 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "private": true,
   "displayName": "Event Horizon",
-  "description": "Visualize AI coding agents as a living cosmic system — planets, black holes, ships and more.",
+  "description": "Real-time visual monitoring for Claude Code, OpenCode & Copilot — see agent activity, file collisions, token costs, and cooperation at a glance.",
   "license": "SEE LICENSE IN LICENSE",
   "main": "out/extension.js",
   "icon": "assets/icon.png",
@@ -22,11 +22,11 @@
   "keywords": [
     "ai",
     "agents",
-    "claude",
+    "claude-code",
+    "opencode",
     "copilot",
-    "cursor",
-    "visualization",
-    "cosmic"
+    "monitoring",
+    "visualization"
   ],
   "repository": {
     "type": "git",

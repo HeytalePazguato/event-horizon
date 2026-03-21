@@ -160,6 +160,9 @@ export interface CommandCenterState {
   achievementCounts: Record<string, number>;
   /** Current tier index for tiered achievements. */
   achievementTiers: Record<string, number>;
+  /** Whether the Command Center is minimized. */
+  ccMinimized: boolean;
+  setCcMinimized: (minimized: boolean) => void;
   /** Whether the "Connect Agent" dropdown is open. */
   connectOpen: boolean;
   /** Whether the "Spawn Agent" modal is open. */
@@ -269,6 +272,8 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   unlockedAchievements: [],
   achievementCounts: {},
   achievementTiers: {},
+  ccMinimized: false,
+  setCcMinimized: (minimized) => set({ ccMinimized: minimized }),
   connectOpen: false,
   spawnOpen: false,
   pendingConnectAgent: null,

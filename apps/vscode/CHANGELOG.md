@@ -2,6 +2,23 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.0.9] — Unreleased
+
+### Added
+- **Lightning arc filename label**: file collision lightning now shows the contested filename at the midpoint of the arc (9px cyan monospace text), so you can immediately see which file two agents are fighting over
+- **Onboarding card (empty state)**: when no agents are running, the universe now shows a prominent welcome card with "Connect Your First Agent" and "Try Demo Mode" buttons instead of a dim hint. Includes a brief description and supported agents callout. The card disappears as soon as the first agent spawns, demo starts, or the user clicks Skip
+- **Branded screenshots**: the Screenshot button now adds a footer bar to exported PNGs with the Event Horizon name, live session stats (agent count, tokens, cost, events), and a timestamp. Makes shared screenshots recognizable and informative
+
+### Improved
+- **Extension description**: marketplace search description now emphasizes utility ("Real-time visual monitoring for Claude Code, OpenCode & Copilot") instead of aesthetics
+- **Keywords**: replaced `cosmic` and `cursor` with `claude-code`, `opencode`, and `monitoring` for better marketplace discoverability
+
+### Fixed
+- **False collision lightning on startup**: CLAUDE.md, .clauderc, .cursorrules, .copilot-instructions.md, and files under `.claude/` / `.opencode/` directories are now excluded from file collision detection — these config files are read by every agent on init and were causing spurious lightning arcs between co-located Claude Code planets
+- **Stars vibration in small windows**: resizing the panel no longer causes the starfield to visibly flicker. The resize observer is debounced (100ms) and stars are only recreated when the canvas size changes by more than 20px — small adjustments just reposition the existing layer
+- **Tooltip/toast positioning when minimized**: command tooltips and achievement toasts now move down proportionally when the Command Center is minimized, maintaining the same relative gap instead of floating far above the collapsed header
+- **Demo simulation type error**: demo agents assigned `'tool_use'` to the runtime state, which only accepts `'idle' | 'thinking' | 'error' | 'waiting'`. Tool-use phase now correctly maps to `'thinking'`
+
 ## [0.0.8] — 2026-03-16
 
 ### Added

@@ -334,6 +334,8 @@ export const Universe: FC<UniverseProps> = ({
   const spawnedShipIdsRef = useRef<Set<string>>(new Set());
   /** Active lightning arcs — one Graphics per collision, redrawn each frame. */
   const lightningArcsRef = useRef<Map<string, Graphics>>(new Map());
+  /** Filename labels for lightning arcs — positioned at arc midpoint. */
+  const lightningLabelsRef = useRef<Map<string, Text>>(new Map());
   const planetPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   /** User-dragged positions override auto-layout. Cleared on reset. */
   const customPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -662,6 +664,8 @@ export const Universe: FC<UniverseProps> = ({
       spawnedShipIdsRef.current = new Set();
       for (const g of lightningArcsRef.current.values()) { try { g.destroy(); } catch { /* ignore */ } }
       lightningArcsRef.current = new Map();
+      for (const t of lightningLabelsRef.current.values()) { try { t.destroy(); } catch { /* ignore */ } }
+      lightningLabelsRef.current = new Map();
       for (const o of skillOrbitsRef.current.values()) { try { o.destroy({ children: true }); } catch { /* ignore */ } }
       skillOrbitsRef.current = new Map();
       planetPositionsRef.current = new Map();
@@ -697,14 +701,26 @@ export const Universe: FC<UniverseProps> = ({
     panContainer.x = cx + posRef.current.x;
     panContainer.y = cy + posRef.current.y;
 
-    if (stars) {
-      try { stars.destroy({ children: true }); } catch { /* ignore */ }
+    // Only recreate stars if the size changed significantly (avoids visible
+    // vibration when ResizeObserver fires repeatedly in small windows).
+    const oldW = stars ? (stars as unknown as { _ehW?: number })._ehW ?? 0 : 0;
+    const oldH = stars ? (stars as unknown as { _ehH?: number })._ehH ?? 0 : 0;
+    if (Math.abs(width - oldW) > 20 || Math.abs(height - oldH) > 20 || !stars) {
+      if (stars) {
+        try { stars.destroy({ children: true }); } catch { /* ignore */ }
+      }
+      const newStars = createStars(width * 2, height * 2);
+      newStars.x = -width / 2;
+      newStars.y = -height / 2;
+      (newStars as unknown as { _ehW: number })._ehW = width;
+      (newStars as unknown as { _ehH: number })._ehH = height;
+      app.stage.addChildAt(newStars, 0);
+      starsRef.current = newStars;
+    } else if (stars) {
+      // Just reposition the existing stars layer for small size changes.
+      stars.x = -width / 2;
+      stars.y = -height / 2;
     }
-    const newStars = createStars(width * 2, height * 2);
-    newStars.x = -width / 2;
-    newStars.y = -height / 2;
-    app.stage.addChildAt(newStars, 0);
-    starsRef.current = newStars;
   }, [width, height, canvasReady]);
 
   // --- re-center -----------------------------------------------------------
@@ -1057,27 +1073,44 @@ export const Universe: FC<UniverseProps> = ({
   }, [ships, canvasReady]);
 
   // --- file collision lightning arcs ----------------------------------------
-  // Sync Graphics objects with active sparks — add new, remove stale.
+  // Sync Graphics + Text objects with active sparks — add new, remove stale.
   useEffect(() => {
     if (!canvasReady) return;
     const container = shipsContainerRef.current;
     if (!container) return;
     const arcs = lightningArcsRef.current;
+    const labels = lightningLabelsRef.current;
     const activeIds = new Set(sparks.map((s) => s.id));
 
-    // Remove arcs that are no longer active
+    // Remove arcs/labels that are no longer active
     for (const [id, g] of arcs) {
       if (!activeIds.has(id)) {
         g.destroy();
         arcs.delete(id);
       }
     }
-    // Create Graphics for new sparks
+    for (const [id, t] of labels) {
+      if (!activeIds.has(id)) {
+        t.destroy();
+        labels.delete(id);
+      }
+    }
+    // Create Graphics + label for new sparks
     for (const spark of sparks) {
       if (!arcs.has(spark.id)) {
         const g = new Graphics();
         container.addChild(g);
         arcs.set(spark.id, g);
+      }
+      if (!labels.has(spark.id)) {
+        const t = new Text({
+          text: spark.filePath,
+          style: { fontSize: 9, fill: '#88ddff', fontFamily: 'Consolas, monospace', align: 'center' },
+        });
+        t.anchor.set(0.5, 0.5);
+        t.alpha = 0.85;
+        container.addChild(t);
+        labels.set(spark.id, t);
       }
     }
   }, [sparks, canvasReady]);
@@ -2020,6 +2053,13 @@ export const Universe: FC<UniverseProps> = ({
             g.circle(pos.x + offsetX, pos.y + offsetY, sparkSize);
             g.fill({ color: 0xaaeeff, alpha: 0.5 + Math.random() * 0.4 });
           }
+        }
+
+        // Position filename label at arc midpoint
+        const lbl = lightningLabelsRef.current.get(spark.id);
+        if (lbl) {
+          lbl.x = (posA.x + posB.x) / 2;
+          lbl.y = (posA.y + posB.y) / 2 - 10;
         }
       }
 

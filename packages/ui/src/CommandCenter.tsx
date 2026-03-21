@@ -159,7 +159,8 @@ export interface CommandCenterProps {
 }
 
 export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
-  const [minimized, setMinimized] = useState(false);
+  const minimized = useCommandCenterStore((s) => s.ccMinimized);
+  const setCcMinimized = useCommandCenterStore((s) => s.setCcMinimized);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
   const toggleSettings = useCommandCenterStore((s) => s.toggleSettings);
   return (
@@ -169,7 +170,7 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
         <div
           style={{
             position: 'fixed',
-            bottom: 212,
+            bottom: minimized ? 75 : 212,
             right: 12,
             width: 190,
             background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
@@ -237,7 +238,7 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
         </button>
         <button
           type="button"
-          onClick={() => setMinimized((m) => !m)}
+          onClick={() => setCcMinimized(!minimized)}
           onMouseEnter={() => setHoveredBtn('minimize')}
           onMouseLeave={() => setHoveredBtn(null)}
           aria-label={minimized ? 'Expand' : 'Minimize'}
