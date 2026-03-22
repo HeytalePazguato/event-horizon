@@ -57,7 +57,7 @@ async function checkLock(filePath, agentId, agentName) {
     });
     if (resp.status === 409) {
       const data = await resp.json();
-      throw new Error("File " + filePath + " is locked by " + (data.owner || "another agent") + ". Wait for them to finish or disable file locking in Event Horizon settings.");
+      throw new Error("[Event Horizon file lock] " + filePath + " is currently being edited by " + (data.owner || "another agent") + ". Do NOT attempt to write to this file right now. Work on a different file first, then retry this file in about 30 seconds when the other agent is done. This lock is managed by Event Horizon to prevent conflicting concurrent edits.");
     }
   } catch (e) {
     if (e && e.message && e.message.includes("is locked by")) throw e;
