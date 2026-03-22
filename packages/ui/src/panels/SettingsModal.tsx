@@ -161,6 +161,8 @@ export const SettingsModal: FC = () => {
   const setAnimationSpeed = useCommandCenterStore((s) => s.setAnimationSpeed);
   const eventServerPort   = useCommandCenterStore((s) => s.eventServerPort);
   const setEventServerPort = useCommandCenterStore((s) => s.setEventServerPort);
+  const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
+  const setFileLockingEnabled = useCommandCenterStore((s) => s.setFileLockingEnabled);
 
   if (!settingsOpen) return null;
 
@@ -326,6 +328,31 @@ export const SettingsModal: FC = () => {
             >
               {achievementsEnabled ? 'On' : 'Off'}
             </button>
+          </div>
+
+          {/* File locking toggle */}
+          <div style={rowStyle}>
+            <span style={{ ...labelStyle, color: '#8fc08a', fontSize: 9 }}>File Locking</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setFileLockingEnabled(!fileLockingEnabled)}
+                style={{
+                  padding: '2px 10px',
+                  fontSize: 9,
+                  color: fileLockingEnabled ? '#d4944a' : '#6a5a5a',
+                  background: fileLockingEnabled ? 'rgba(80,60,20,0.35)' : 'rgba(60,40,40,0.3)',
+                  border: `1px solid ${fileLockingEnabled ? '#8a6a2a' : '#3a2828'}`,
+                  cursor: 'pointer',
+                  fontFamily: 'Consolas, monospace',
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {fileLockingEnabled ? 'On' : 'Off'}
+              </button>
+              <span style={{ color: '#4a6a5a', fontSize: 7, fontStyle: 'italic' }}>reinstall hooks</span>
+            </div>
           </div>
 
           {/* Event server port */}

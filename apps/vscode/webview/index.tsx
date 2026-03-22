@@ -266,6 +266,7 @@ function App() {
         if (data.eventServerPort !== undefined) store.setEventServerPort(data.eventServerPort);
         if (data.tourCompleted !== undefined) store.setTourCompleted(data.tourCompleted);
         if (data.viewMode) store.setViewMode(data.viewMode);
+        if (data.fileLockingEnabled !== undefined) store.setFileLockingEnabled(data.fileLockingEnabled);
         return;
       }
 
@@ -636,6 +637,7 @@ function App() {
   const eventServerPort      = useCommandCenterStore((s) => s.eventServerPort);
   const tourCompleted        = useCommandCenterStore((s) => s.tourCompleted);
   const viewMode             = useCommandCenterStore((s) => s.viewMode);
+  const fileLockingEnabled   = useCommandCenterStore((s) => s.fileLockingEnabled);
   const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
@@ -648,10 +650,11 @@ function App() {
         eventServerPort,
         tourCompleted,
         viewMode,
+        fileLockingEnabled,
       });
     }, 500);
     return () => { if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current); };
-  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted, viewMode]);
+  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted, viewMode, fileLockingEnabled]);
 
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
   // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).

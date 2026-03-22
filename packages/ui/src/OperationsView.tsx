@@ -39,6 +39,8 @@ export interface OperationsViewProps {
 export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
+  const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
+  const setFileLockingEnabled = useCommandCenterStore((s) => s.setFileLockingEnabled);
   const demoMode = useCommandCenterStore((s) => s.demoMode);
   const demoStartedAt = useCommandCenterStore((s) => s.demoStartedAt);
   const requestDemo = useCommandCenterStore((s) => s.requestDemo);
@@ -127,6 +129,28 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
         <div style={{ width: 6, height: 6, borderRadius: 1, background: '#25904a', boxShadow: '0 0 5px #25904a', flexShrink: 0 }} />
         <span style={{ letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600 }}>Operations</span>
         <span>{agents.length} agent{agents.length !== 1 ? 's' : ''}</span>
+
+        <button
+          type="button"
+          onClick={() => setFileLockingEnabled(!fileLockingEnabled)}
+          style={{
+            padding: '2px 8px',
+            border: `1px solid ${fileLockingEnabled ? '#8a6a2a' : '#1a3020'}`,
+            borderRadius: 2,
+            background: fileLockingEnabled ? 'rgba(80,60,20,0.4)' : 'transparent',
+            color: fileLockingEnabled ? '#d4944a' : '#3a6a48',
+            fontSize: 11,
+            fontFamily: 'Consolas, monospace',
+            cursor: 'pointer',
+            fontWeight: 500,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+          title={fileLockingEnabled ? 'File locking is ON — agents are blocked from concurrent writes. Click to disable.' : 'File locking is OFF — agents can write to the same file simultaneously. Click to enable.'}
+        >
+          {fileLockingEnabled ? 'Locks ON' : 'Locks OFF'}
+        </button>
 
         {demoMode && (
           <button
