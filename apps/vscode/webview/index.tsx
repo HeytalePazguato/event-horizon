@@ -257,6 +257,7 @@ function App() {
           animationSpeed?: number;
           eventServerPort?: number;
           tourCompleted?: boolean;
+          viewMode?: 'universe' | 'operations';
         };
         const store = useCommandCenterStore.getState();
         if (data.settings) store.setVisualSettings(data.settings);
@@ -264,6 +265,7 @@ function App() {
         if (data.animationSpeed !== undefined) store.setAnimationSpeed(data.animationSpeed);
         if (data.eventServerPort !== undefined) store.setEventServerPort(data.eventServerPort);
         if (data.tourCompleted !== undefined) store.setTourCompleted(data.tourCompleted);
+        if (data.viewMode) store.setViewMode(data.viewMode);
         return;
       }
 
@@ -644,10 +646,11 @@ function App() {
         animationSpeed,
         eventServerPort,
         tourCompleted,
+        viewMode,
       });
     }, 500);
     return () => { if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current); };
-  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted]);
+  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted, viewMode]);
 
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
   // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).

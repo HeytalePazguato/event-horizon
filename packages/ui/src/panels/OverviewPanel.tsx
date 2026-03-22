@@ -196,9 +196,14 @@ const AllAgentsOverview: FC<{
                   const m = metricsMap[a.id];
                   return (
                     <tr key={a.id} style={{ borderBottom: '1px solid rgba(30,60,40,0.2)' }}>
-                      <td style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <PlanetIcon type={a.type} size={14} />
-                        <span style={{ color: '#8aaa92' }}>{a.name}</span>
+                      <td style={{ padding: '4px 8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <PlanetIcon type={a.type} size={14} />
+                          <div>
+                            <span style={{ color: '#8aaa92' }}>{a.name}</span>
+                            {a.cwd && <span style={{ color: '#4a7a5a', fontSize: 10, marginLeft: 6 }}>{folderName(a.cwd)}</span>}
+                          </div>
+                        </div>
                       </td>
                       <td style={{ padding: '4px 8px', color: stateColors[a.state] ?? '#7a8a82' }}>{a.state}</td>
                       <td style={{ padding: '4px 8px', color: '#7a9a82' }}>{m ? `${Math.round(m.load * 100)}%` : '-'}</td>

@@ -270,8 +270,9 @@ function wireUniverseWebview(
       void webview.postMessage({
         type: 'init-settings',
         ...cfg,
-        // Preserve non-config settings (tourCompleted) from globalState
+        // Preserve non-config settings from globalState
         tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
+        viewMode: (savedGeneral as Record<string, unknown> | undefined)?.viewMode,
       });
     }
   });
@@ -307,6 +308,7 @@ function wireUniverseWebview(
       ...vscodeSettings,
       // Preserve non-config settings from globalState
       tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
+      viewMode: (savedGeneral as Record<string, unknown> | undefined)?.viewMode,
     });
 
     const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
@@ -348,6 +350,7 @@ function wireUniverseWebview(
       // Write to globalState (non-config settings like tourCompleted)
       void context.globalState.update('generalSettings', {
         tourCompleted: msg.tourCompleted,
+        viewMode: msg.viewMode,
       });
       // Write to VS Code native settings — suppress echo to avoid feedback loop
       suppressConfigEcho = true;

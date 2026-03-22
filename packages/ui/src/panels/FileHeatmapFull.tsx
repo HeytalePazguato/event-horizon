@@ -84,6 +84,7 @@ export const FileHeatmapFull: FC = () => {
   const [showFullPaths, setShowFullPaths] = useState(false);
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [hoveredAgent, setHoveredAgent] = useState<FileAgentActivity | null>(null);
+  const [hoveredColumn, setHoveredColumn] = useState<SortKey | null>(null);
 
   const files = useMemo(() => {
     let entries = Object.values(fileActivity);
@@ -141,6 +142,17 @@ export const FileHeatmapFull: FC = () => {
   return (
     <div style={{ fontFamily: 'Consolas, monospace', display: 'flex', flexDirection: 'column', gap: 10, height: '100%' }}>
       {hoveredAgent && <AgentTooltip agent={hoveredAgent} />}
+      {hoveredColumn && !hoveredAgent && createPortal(
+        <div style={TOOLTIP_STYLE}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#90d898', marginBottom: 3 }}>
+            {hoveredColumn === 'ops' ? 'Total' : hoveredColumn === 'lastActive' ? 'Last Active' : hoveredColumn.charAt(0).toUpperCase() + hoveredColumn.slice(1)}
+          </div>
+          <div style={{ fontSize: 11, color: '#6a9a78', lineHeight: 1.5 }}>
+            {COL_TIPS[hoveredColumn]}
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* Controls bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
@@ -177,13 +189,13 @@ export const FileHeatmapFull: FC = () => {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid #1a3020', position: 'sticky', top: 0, background: '#080e0a', zIndex: 1 }}>
-              <th style={{ ...headerStyle('file'), width: '40%' }} onClick={() => toggleSort('file')} title={COL_TIPS.file}>File{arrow('file')}</th>
-              <th style={headerStyle('ops')} onClick={() => toggleSort('ops')} title={COL_TIPS.ops}>Total{arrow('ops')}</th>
-              <th style={headerStyle('reads')} onClick={() => toggleSort('reads')} title={COL_TIPS.reads}>Reads{arrow('reads')}</th>
-              <th style={headerStyle('writes')} onClick={() => toggleSort('writes')} title={COL_TIPS.writes}>Writes{arrow('writes')}</th>
-              <th style={headerStyle('errors')} onClick={() => toggleSort('errors')} title={COL_TIPS.errors}>Errors{arrow('errors')}</th>
-              <th style={headerStyle('agents')} onClick={() => toggleSort('agents')} title={COL_TIPS.agents}>Agents{arrow('agents')}</th>
-              <th style={headerStyle('lastActive')} onClick={() => toggleSort('lastActive')} title={COL_TIPS.lastActive}>Last{arrow('lastActive')}</th>
+              <th style={{ ...headerStyle('file'), width: '40%' }} onClick={() => toggleSort('file')} onMouseEnter={() => setHoveredColumn('file')} onMouseLeave={() => setHoveredColumn(null)}>File{arrow('file')}</th>
+              <th style={headerStyle('ops')} onClick={() => toggleSort('ops')} onMouseEnter={() => setHoveredColumn('ops')} onMouseLeave={() => setHoveredColumn(null)}>Total{arrow('ops')}</th>
+              <th style={headerStyle('reads')} onClick={() => toggleSort('reads')} onMouseEnter={() => setHoveredColumn('reads')} onMouseLeave={() => setHoveredColumn(null)}>Reads{arrow('reads')}</th>
+              <th style={headerStyle('writes')} onClick={() => toggleSort('writes')} onMouseEnter={() => setHoveredColumn('writes')} onMouseLeave={() => setHoveredColumn(null)}>Writes{arrow('writes')}</th>
+              <th style={headerStyle('errors')} onClick={() => toggleSort('errors')} onMouseEnter={() => setHoveredColumn('errors')} onMouseLeave={() => setHoveredColumn(null)}>Errors{arrow('errors')}</th>
+              <th style={headerStyle('agents')} onClick={() => toggleSort('agents')} onMouseEnter={() => setHoveredColumn('agents')} onMouseLeave={() => setHoveredColumn(null)}>Agents{arrow('agents')}</th>
+              <th style={headerStyle('lastActive')} onClick={() => toggleSort('lastActive')} onMouseEnter={() => setHoveredColumn('lastActive')} onMouseLeave={() => setHoveredColumn(null)}>Last{arrow('lastActive')}</th>
             </tr>
           </thead>
           <tbody>
