@@ -635,6 +635,7 @@ function App() {
   const achievementsEnabled  = useCommandCenterStore((s) => s.achievementsEnabled);
   const eventServerPort      = useCommandCenterStore((s) => s.eventServerPort);
   const tourCompleted        = useCommandCenterStore((s) => s.tourCompleted);
+  const viewMode             = useCommandCenterStore((s) => s.viewMode);
   const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
@@ -1321,8 +1322,6 @@ function App() {
       } catch { /* capture failed */ }
     })();
   }, [screenshotRequestedAt, agents.length]);
-
-  const viewMode = useCommandCenterStore((s) => s.viewMode);
 
   return (
     <div
