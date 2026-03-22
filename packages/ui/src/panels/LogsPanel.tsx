@@ -70,7 +70,7 @@ export const LogsPanel: FC = () => {
             borderRadius: 2,
             background: '#0a1810',
             color: '#90b088',
-            fontSize: 10,
+            fontSize: 12,
             fontFamily: 'Consolas, monospace',
             width: 160,
             outline: 'none',
@@ -93,7 +93,7 @@ export const LogsPanel: FC = () => {
                   borderRadius: 2,
                   background: active ? '#1a3828' : 'transparent',
                   color: active ? '#60d080' : '#3a6a48',
-                  fontSize: 8,
+                  fontSize: 12,
                   fontFamily: 'Consolas, monospace',
                   cursor: 'pointer',
                 }}
@@ -115,7 +115,7 @@ export const LogsPanel: FC = () => {
             borderRadius: 2,
             background: pinBottom ? '#1a3828' : 'transparent',
             color: pinBottom ? '#60d080' : '#3a6a48',
-            fontSize: 9,
+            fontSize: 12,
             fontFamily: 'Consolas, monospace',
             cursor: 'pointer',
           }}
@@ -123,7 +123,7 @@ export const LogsPanel: FC = () => {
           Auto-scroll
         </button>
 
-        <span style={{ fontSize: 9, color: '#4a6a58' }}>{filteredLogs.length} entries</span>
+        <span style={{ fontSize: 12, color: '#4a6a58' }}>{filteredLogs.length} entries</span>
       </div>
 
       {/* Log entries */}
@@ -136,10 +136,10 @@ export const LogsPanel: FC = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #1a3020', position: 'sticky', top: 0, background: '#080e0a', zIndex: 1 }}>
-                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 9, fontWeight: 600 }}>Time</th>
-                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 9, fontWeight: 600 }}>Agent</th>
-                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 9, fontWeight: 600 }}>Event</th>
-                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 9, fontWeight: 600 }}>Skill</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 12, fontWeight: 600 }}>Time</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 12, fontWeight: 600 }}>Agent</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 12, fontWeight: 600 }}>Event</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px', color: '#4a7a58', fontSize: 12, fontWeight: 600 }}>Skill</th>
               </tr>
             </thead>
             <tbody>
@@ -150,10 +150,10 @@ export const LogsPanel: FC = () => {
                   title="Click to copy"
                   style={{ borderBottom: '1px solid rgba(30,60,40,0.2)', cursor: 'pointer' }}
                 >
-                  <td style={{ padding: '3px 8px', fontSize: 9, color: '#4a8a6a', whiteSpace: 'nowrap' }}>{entry.ts}</td>
-                  <td style={{ padding: '3px 8px', fontSize: 10, color: '#8ab880' }}>{entry.agentName}</td>
-                  <td style={{ padding: '3px 8px', fontSize: 10, color: entry.skillName ? '#44ddff' : '#a0c090' }}>{entry.type}</td>
-                  <td style={{ padding: '3px 8px', fontSize: 9, color: '#44ddff' }}>{entry.skillName ?? ''}</td>
+                  <td style={{ padding: '3px 8px', fontSize: 12, color: '#4a8a6a', whiteSpace: 'nowrap' }}>{entry.ts}</td>
+                  <td style={{ padding: '3px 8px', fontSize: 12, color: '#8ab880' }}>{entry.agentName}</td>
+                  <td style={{ padding: '3px 8px', fontSize: 12, color: entry.skillName ? '#44ddff' : '#a0c090' }}>{entry.type}</td>
+                  <td style={{ padding: '3px 8px', fontSize: 12, color: '#44ddff' }}>{entry.skillName ?? ''}</td>
                 </tr>
               ))}
             </tbody>

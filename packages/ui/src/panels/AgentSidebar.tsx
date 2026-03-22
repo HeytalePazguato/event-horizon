@@ -49,7 +49,7 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates }) => 
       {/* Header */}
       <div style={{
         padding: '10px 12px 8px',
-        fontSize: 9,
+        fontSize: 12,
         color: '#3a7050',
         letterSpacing: '0.12em',
         textTransform: 'uppercase',
@@ -61,7 +61,7 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates }) => 
       }}>
         Agents
         <span style={{
-          fontSize: 8,
+          fontSize: 12,
           background: '#1a3020',
           color: '#50a068',
           padding: '1px 5px',
@@ -86,7 +86,7 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates }) => 
         }}
       >
         <SingularityIcon size={20} />
-        <span style={{ fontSize: 11, color: isAllSelected ? '#90d898' : '#6a9a78', fontWeight: isAllSelected ? 600 : 400 }}>
+        <span style={{ fontSize: 12, color: isAllSelected ? '#90d898' : '#6a9a78', fontWeight: isAllSelected ? 600 : 400 }}>
           All Agents
         </span>
       </div>
@@ -98,7 +98,7 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates }) => 
           {(groups.length > 1 || group.agents.length > 1) && group.workspace !== 'Solo' && (
             <div style={{
               padding: '6px 12px 2px',
-              fontSize: 8,
+              fontSize: 12,
               color: '#3a6048',
               letterSpacing: '0.08em',
               textTransform: 'uppercase',
@@ -126,7 +126,7 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates }) => 
                 <PlanetIcon type={a.agentType} size={18} />
                 <span style={{
                   flex: 1,
-                  fontSize: 10,
+                  fontSize: 12,
                   color: isSelected ? '#90d898' : '#7a9a82',
                   fontWeight: isSelected ? 600 : 400,
                   overflow: 'hidden',
@@ -149,7 +149,7 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates }) => 
       ))}
 
       {agents.length === 0 && (
-        <div style={{ padding: '16px 12px', fontSize: 10, color: '#3a5a48' }}>
+        <div style={{ padding: '16px 12px', fontSize: 12, color: '#3a5a48' }}>
           No agents connected.
         </div>
       )}

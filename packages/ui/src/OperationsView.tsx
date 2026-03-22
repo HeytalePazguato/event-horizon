@@ -18,7 +18,7 @@ type OpsTab = 'overview' | 'files' | 'logs' | 'timeline';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
-  fontSize: 11,
+  fontSize: 13,
   fontFamily: 'Consolas, monospace',
   border: 'none',
   borderBottom: active ? '2px solid #40a060' : '2px solid transparent',
@@ -114,7 +114,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
         padding: '5px 12px',
         borderTop: '1px solid #1a3020',
         background: 'rgba(6,12,8,0.9)',
-        fontSize: 9,
+        fontSize: 11,
         color: '#3a6a48',
         flexShrink: 0,
       }}>
@@ -132,7 +132,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               borderRadius: 2,
               background: 'rgba(40,25,10,0.8)',
               color: '#d4944a',
-              fontSize: 9,
+              fontSize: 11,
               fontFamily: 'Consolas, monospace',
               fontWeight: 600,
               cursor: 'pointer',
@@ -141,9 +141,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               gap: 5,
             }}
           >
-            <span style={{ fontSize: 8, opacity: 0.7 }}>DEMO</span>
+            <span style={{ fontSize: 10, opacity: 0.7 }}>DEMO</span>
             <span>{demoElapsed}</span>
-            <span style={{ fontSize: 8, opacity: 0.8 }}>&#x2715;</span>
+            <span style={{ fontSize: 10, opacity: 0.8 }}>&#x2715;</span>
           </button>
         )}
 
@@ -157,7 +157,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             borderRadius: 2,
             background: 'rgba(12,28,20,0.95)',
             color: '#50a068',
-            fontSize: 9,
+            fontSize: 11,
             fontFamily: 'Consolas, monospace',
             cursor: 'pointer',
             fontWeight: 500,

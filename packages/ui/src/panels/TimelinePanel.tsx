@@ -51,7 +51,7 @@ const BlockTooltip: FC<{ entry: TimelineEntry }> = ({ entry }) =>
       <div style={{ fontSize: 10, color: STATE_COLORS[entry.kind] ?? '#7a9a82', marginBottom: 2 }}>
         {STATE_LABELS[entry.kind] ?? entry.kind}: {entry.label}
       </div>
-      <div style={{ fontSize: 9, color: '#4a6a58' }}>
+      <div style={{ fontSize: 11, color: '#4a6a58' }}>
         {new Date(entry.ts).toLocaleTimeString()}
       </div>
     </div>,
@@ -114,10 +114,10 @@ export const TimelinePanel: FC = () => {
         {Object.entries(STATE_COLORS).map(([kind, color]) => (
           <div key={kind} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <div style={{ width: 10, height: 10, background: color, borderRadius: 2 }} />
-            <span style={{ fontSize: 9, color: '#5a8a6a' }}>{STATE_LABELS[kind]}</span>
+            <span style={{ fontSize: 11, color: '#5a8a6a' }}>{STATE_LABELS[kind]}</span>
           </div>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: 9, color: '#3a6a48' }}>{allEntries.length} events</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#3a6a48' }}>{allEntries.length} events</span>
       </div>
 
       {/* Swimlane area */}
@@ -135,7 +135,7 @@ export const TimelinePanel: FC = () => {
             }}>
               <PlanetIcon type={data.agentType} size={14} />
               <span style={{
-                fontSize: 9,
+                fontSize: 11,
                 color: '#7a9a82',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -157,7 +157,7 @@ export const TimelinePanel: FC = () => {
                   position: 'absolute',
                   left: tl.x,
                   top: 2,
-                  fontSize: 8,
+                  fontSize: 10,
                   color: '#3a6a48',
                   transform: 'translateX(-50%)',
                   whiteSpace: 'nowrap',

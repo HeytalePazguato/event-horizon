@@ -100,11 +100,11 @@ export const FileHeatmapFull: FC = () => {
   };
 
   const headerStyle = (key: SortKey): React.CSSProperties => ({
-    padding: '6px 8px',
+    padding: '8px 10px',
     textAlign: 'left' as const,
-    color: sortKey === key ? '#90d898' : '#4a7a58',
+    color: sortKey === key ? '#90d898' : '#5a8a68',
     fontWeight: 600,
-    fontSize: 10,
+    fontSize: 12,
     cursor: 'pointer',
     userSelect: 'none' as const,
     whiteSpace: 'nowrap' as const,
@@ -112,28 +112,39 @@ export const FileHeatmapFull: FC = () => {
 
   const arrow = (key: SortKey) => sortKey === key ? (sortDir === 'asc' ? ' ▴' : ' ▾') : '';
 
+  /** Column tooltip descriptions. */
+  const COL_TIPS: Record<SortKey, string> = {
+    file: 'File name (or full path). Click to sort alphabetically.',
+    ops: 'Total operations — reads + writes across all agents.',
+    reads: 'Total file reads across all agents.',
+    writes: 'Total file writes/edits across all agents.',
+    errors: 'Total errors encountered on this file.',
+    agents: 'Number of distinct agents that touched this file.',
+    lastActive: 'Time since the most recent operation on this file.',
+  };
+
   const totalFiles = Object.keys(fileActivity).length;
   const contested = files.filter((f) => f.agentCount > 1).length;
-  const errors = files.filter((f) => f.hasErrors).length;
+  const errorFiles = files.filter((f) => f.hasErrors).length;
 
   return (
-    <div style={{ fontFamily: 'Consolas, monospace', display: 'flex', flexDirection: 'column', gap: 8, height: '100%' }}>
+    <div style={{ fontFamily: 'Consolas, monospace', display: 'flex', flexDirection: 'column', gap: 10, height: '100%' }}>
       {hoveredAgent && <AgentTooltip agent={hoveredAgent} />}
 
       {/* Controls bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-        <span style={{ fontSize: 11, color: '#6a9a7a' }}>{totalFiles} files</span>
-        {contested > 0 && <span style={{ fontSize: 11, color: '#d4944a' }}>{contested} shared</span>}
-        {errors > 0 && <span style={{ fontSize: 11, color: '#c04040' }}>{errors} errors</span>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
+        <span style={{ fontSize: 13, color: '#6a9a7a' }}>{totalFiles} files</span>
+        {contested > 0 && <span style={{ fontSize: 13, color: '#d4944a' }}>{contested} shared</span>}
+        {errorFiles > 0 && <span style={{ fontSize: 13, color: '#c04040' }}>{errorFiles} errors</span>}
 
         {/* Heat legend */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
-          <div style={{ width: 10, height: 10, background: '#2a6a3a', borderRadius: 2 }} />
-          <span style={{ fontSize: 8, color: '#4a7a58' }}>Normal</span>
-          <div style={{ width: 10, height: 10, background: '#d4944a', borderRadius: 2, marginLeft: 4 }} />
-          <span style={{ fontSize: 8, color: '#4a7a58' }}>Shared</span>
-          <div style={{ width: 10, height: 10, background: '#c04040', borderRadius: 2, marginLeft: 4 }} />
-          <span style={{ fontSize: 8, color: '#4a7a58' }}>Error</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 8 }}>
+          <div style={{ width: 12, height: 12, background: '#2a6a3a', borderRadius: 2 }} />
+          <span style={{ fontSize: 10, color: '#5a8a68' }}>Normal</span>
+          <div style={{ width: 12, height: 12, background: '#d4944a', borderRadius: 2, marginLeft: 6 }} />
+          <span style={{ fontSize: 10, color: '#5a8a68' }}>Shared</span>
+          <div style={{ width: 12, height: 12, background: '#c04040', borderRadius: 2, marginLeft: 6 }} />
+          <span style={{ fontSize: 10, color: '#5a8a68' }}>Error</span>
         </div>
 
         <button
@@ -141,9 +152,9 @@ export const FileHeatmapFull: FC = () => {
           onClick={() => setShowFullPaths((p) => !p)}
           style={{
             marginLeft: 'auto',
-            padding: '3px 8px', border: `1px solid ${showFullPaths ? '#25904a' : '#1e4030'}`,
+            padding: '4px 10px', border: `1px solid ${showFullPaths ? '#25904a' : '#1e4030'}`,
             borderRadius: 2, background: showFullPaths ? '#1a3828' : 'transparent',
-            color: showFullPaths ? '#60d080' : '#4a7a58', fontSize: 9, fontFamily: 'Consolas, monospace', cursor: 'pointer',
+            color: showFullPaths ? '#60d080' : '#5a8a68', fontSize: 11, fontFamily: 'Consolas, monospace', cursor: 'pointer',
           }}
         >
           Full Paths
@@ -155,13 +166,13 @@ export const FileHeatmapFull: FC = () => {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid #1a3020', position: 'sticky', top: 0, background: '#080e0a', zIndex: 1 }}>
-              <th style={{ ...headerStyle('file'), width: '40%' }} onClick={() => toggleSort('file')}>File{arrow('file')}</th>
-              <th style={headerStyle('ops')} onClick={() => toggleSort('ops')}>Ops{arrow('ops')}</th>
-              <th style={headerStyle('reads')} onClick={() => toggleSort('reads')}>Reads{arrow('reads')}</th>
-              <th style={headerStyle('writes')} onClick={() => toggleSort('writes')}>Writes{arrow('writes')}</th>
-              <th style={headerStyle('errors')} onClick={() => toggleSort('errors')}>Errors{arrow('errors')}</th>
-              <th style={headerStyle('agents')} onClick={() => toggleSort('agents')}>Agents{arrow('agents')}</th>
-              <th style={headerStyle('lastActive')} onClick={() => toggleSort('lastActive')}>Last{arrow('lastActive')}</th>
+              <th style={{ ...headerStyle('file'), width: '40%' }} onClick={() => toggleSort('file')} title={COL_TIPS.file}>File{arrow('file')}</th>
+              <th style={headerStyle('ops')} onClick={() => toggleSort('ops')} title={COL_TIPS.ops}>Total{arrow('ops')}</th>
+              <th style={headerStyle('reads')} onClick={() => toggleSort('reads')} title={COL_TIPS.reads}>Reads{arrow('reads')}</th>
+              <th style={headerStyle('writes')} onClick={() => toggleSort('writes')} title={COL_TIPS.writes}>Writes{arrow('writes')}</th>
+              <th style={headerStyle('errors')} onClick={() => toggleSort('errors')} title={COL_TIPS.errors}>Errors{arrow('errors')}</th>
+              <th style={headerStyle('agents')} onClick={() => toggleSort('agents')} title={COL_TIPS.agents}>Agents{arrow('agents')}</th>
+              <th style={headerStyle('lastActive')} onClick={() => toggleSort('lastActive')} title={COL_TIPS.lastActive}>Last{arrow('lastActive')}</th>
             </tr>
           </thead>
           <tbody>
@@ -174,10 +185,10 @@ export const FileHeatmapFull: FC = () => {
 
               return (
                 <tr key={f.path} style={{ cursor: 'pointer' }} onClick={() => setExpandedFile(isExpanded ? null : f.path)}>
-                  <td style={{ padding: '5px 8px', fontSize: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <td style={{ padding: '6px 10px', fontSize: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {/* Heat bar */}
-                      <div style={{ width: 40, height: 5, background: '#0a1a10', borderRadius: 2, flexShrink: 0 }}>
+                      <div style={{ width: 44, height: 6, background: '#0a1a10', borderRadius: 2, flexShrink: 0 }}>
                         <div style={{ width: `${Math.max(8, ratio * 100)}%`, height: '100%', background: heatColor, borderRadius: 2 }} />
                       </div>
                       <span style={{
@@ -189,39 +200,39 @@ export const FileHeatmapFull: FC = () => {
                     </div>
                     {/* Expanded: per-agent breakdown */}
                     {isExpanded && (
-                      <div style={{ marginTop: 6, paddingLeft: 46 }}>
+                      <div style={{ marginTop: 8, paddingLeft: 52 }}>
                         {Object.values(f.agents).map((a) => (
                           <div
                             key={a.agentId}
-                            style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, fontSize: 9 }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 11 }}
                             onMouseEnter={() => setHoveredAgent(a)}
                             onMouseLeave={() => setHoveredAgent(null)}
                           >
-                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: AGENT_COLORS[a.agentType] ?? '#aaccff', flexShrink: 0 }} />
-                            <span style={{ color: '#7a9a82', width: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.agentName}</span>
-                            <span style={{ color: '#5a8a6a' }}>{a.reads}R {a.writes}W{a.errors ? ` ${a.errors}E` : ''}</span>
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: AGENT_COLORS[a.agentType] ?? '#aaccff', flexShrink: 0 }} />
+                            <span style={{ color: '#7a9a82', width: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.agentName}</span>
+                            <span style={{ color: '#5a8a6a' }}>{a.reads} reads  {a.writes} writes{a.errors ? `  ${a.errors} errors` : ''}</span>
                           </div>
                         ))}
                       </div>
                     )}
                   </td>
-                  <td style={{ padding: '5px 8px', fontSize: 10, color: '#7a9a82' }}>{f.totalOps}</td>
-                  <td style={{ padding: '5px 8px', fontSize: 10, color: '#7a9a82' }}>{totalReads(f)}</td>
-                  <td style={{ padding: '5px 8px', fontSize: 10, color: '#7a9a82' }}>{totalWrites(f)}</td>
-                  <td style={{ padding: '5px 8px', fontSize: 10, color: f.hasErrors ? '#c06060' : '#7a9a82' }}>{totalErrors(f)}</td>
-                  <td style={{ padding: '5px 8px', fontSize: 10 }}>
-                    <div style={{ display: 'flex', gap: 3 }}>
+                  <td style={{ padding: '6px 10px', fontSize: 12, color: '#7a9a82' }}>{f.totalOps}</td>
+                  <td style={{ padding: '6px 10px', fontSize: 12, color: '#7a9a82' }}>{totalReads(f)}</td>
+                  <td style={{ padding: '6px 10px', fontSize: 12, color: '#7a9a82' }}>{totalWrites(f)}</td>
+                  <td style={{ padding: '6px 10px', fontSize: 12, color: f.hasErrors ? '#c06060' : '#7a9a82' }}>{totalErrors(f)}</td>
+                  <td style={{ padding: '6px 10px', fontSize: 12 }}>
+                    <div style={{ display: 'flex', gap: 4 }}>
                       {Object.values(f.agents).map((a) => (
                         <div
                           key={a.agentId}
                           onMouseEnter={() => setHoveredAgent(a)}
                           onMouseLeave={() => setHoveredAgent(null)}
-                          style={{ width: 7, height: 7, borderRadius: '50%', background: AGENT_COLORS[a.agentType] ?? '#aaccff', cursor: 'default' }}
+                          style={{ width: 9, height: 9, borderRadius: '50%', background: AGENT_COLORS[a.agentType] ?? '#aaccff', cursor: 'default' }}
                         />
                       ))}
                     </div>
                   </td>
-                  <td style={{ padding: '5px 8px', fontSize: 9, color: '#5a8a6a', whiteSpace: 'nowrap' }}>{timeAgo(f.lastTs)}</td>
+                  <td style={{ padding: '6px 10px', fontSize: 11, color: '#5a8a6a', whiteSpace: 'nowrap' }}>{timeAgo(f.lastTs)}</td>
                 </tr>
               );
             })}

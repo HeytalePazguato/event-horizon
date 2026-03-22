@@ -51,7 +51,7 @@ const cellStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   color: '#4a7a58',
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
@@ -83,11 +83,11 @@ const ToolBreakdown: FC<{ breakdown: Record<string, number> }> = ({ breakdown })
       <div style={{ ...labelStyle, marginBottom: 4 }}>Tool Breakdown</div>
       {entries.map(([name, count]) => (
         <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-          <span style={{ width: 50, fontSize: 9, color: '#6a9a78', textAlign: 'right', flexShrink: 0 }}>{name}</span>
+          <span style={{ width: 50, fontSize: 11, color: '#6a9a78', textAlign: 'right', flexShrink: 0 }}>{name}</span>
           <div style={{ flex: 1, height: 6, background: '#0a1a10', borderRadius: 2 }}>
             <div style={{ width: `${(count / max) * 100}%`, height: '100%', background: '#2a7a4a', borderRadius: 2 }} />
           </div>
-          <span style={{ fontSize: 9, color: '#5a8a6a', width: 30, flexShrink: 0 }}>{count}</span>
+          <span style={{ fontSize: 11, color: '#5a8a6a', width: 30, flexShrink: 0 }}>{count}</span>
         </div>
       ))}
     </div>
@@ -113,10 +113,10 @@ const AgentOverview: FC<{ agent: AgentState; metrics: AgentMetrics }> = ({ agent
         <div>
           <div style={{ fontSize: 14, color: '#c8e4b0', fontWeight: 600 }}>{agent.name}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-            <span style={{ fontSize: 10, color: '#5a8a6a', textTransform: 'uppercase' }}>{agent.type}</span>
-            <span style={{ fontSize: 10, color: stateColors[agent.state] ?? '#7a8a82' }}>{agent.state}</span>
+            <span style={{ fontSize: 12, color: '#5a8a6a', textTransform: 'uppercase' }}>{agent.type}</span>
+            <span style={{ fontSize: 12, color: stateColors[agent.state] ?? '#7a8a82' }}>{agent.state}</span>
             {agent.cwd && (
-              <span style={{ fontSize: 10, color: '#4a7a5a' }}>{folderName(agent.cwd)}</span>
+              <span style={{ fontSize: 12, color: '#4a7a5a' }}>{folderName(agent.cwd)}</span>
             )}
           </div>
         </div>
@@ -160,7 +160,7 @@ const AllAgentsOverview: FC<{
         <SingularityIcon size={44} />
         <div>
           <div style={{ fontSize: 14, color: '#c8e4b0', fontWeight: 600 }}>All Agents</div>
-          <div style={{ fontSize: 10, color: '#5a8a6a', marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: '#5a8a6a', marginTop: 2 }}>
             {agents.length} connected · {stats.eventsWitnessed} events · {uptime} uptime
           </div>
         </div>
