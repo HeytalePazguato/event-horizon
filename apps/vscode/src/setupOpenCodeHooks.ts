@@ -57,7 +57,7 @@ async function checkLock(filePath, agentId, agentName) {
     });
     if (resp.status === 409) {
       const data = await resp.json();
-      throw new Error("[Event Horizon file lock] " + filePath + " is currently being edited by " + (data.owner || "another agent") + ". Do NOT attempt to write to this file right now. Work on a different file first, then retry this file in about 30 seconds when the other agent is done. This lock is managed by Event Horizon to prevent conflicting concurrent edits.");
+      throw new Error("[Event Horizon file lock] BLOCKED: " + filePath + " is locked by " + (data.owner || "another agent") + " who is actively editing it. You MUST NOT write to this file by ANY means — no Write, no Edit, no Bash echo/cat/sed, no workarounds. The lock will release automatically when they finish (within 30 seconds of their last write). Work on OTHER files first, then retry this file later.");
     }
   } catch (e) {
     if (e && e.message && e.message.includes("is locked by")) throw e;
@@ -136,10 +136,11 @@ export default async function EventHorizon({ project, directory, worktree, serve
         cwd,
         payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
       });
-      // Check file lock for write tools
-      const writeTool = ["write", "edit", "patch", "file_write", "file_edit"].includes(String(input?.tool || "").toLowerCase());
+      // Check file lock for any tool that accesses files
+      const toolName = String(input?.tool || "").toLowerCase();
+      const fileTool = ["read", "write", "edit", "patch", "file_read", "file_write", "file_edit"].includes(toolName);
       const fp = input?.input?.file_path || input?.input?.path;
-      if (writeTool && fp) {
+      if (fileTool && fp) {
         await checkLock(String(fp), sessionId, agentName);
       }
     },
@@ -150,10 +151,11 @@ export default async function EventHorizon({ project, directory, worktree, serve
         cwd,
         payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
       });
-      // Release file lock after write
-      const fp = input?.input?.file_path || input?.input?.path;
-      if (fp) {
-        await releaseLock(String(fp), sessionId);
+      // Locks NOT released here — auto-expire via 30s TTL.
+      // Each tool.execute.before refreshes the TTL.
+      if (false) { // keep releaseLock available for future use
+        const fp = input?.input?.file_path || input?.input?.path;
+        if (fp) await releaseLock(String(fp), sessionId);
       }
     },
     "permission.asked": async (input) => {

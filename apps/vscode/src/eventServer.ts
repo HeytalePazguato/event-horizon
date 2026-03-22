@@ -256,6 +256,8 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
         const action = b.action as string;
         const filePath = b.filePath as string;
         const agentId = b.agentId as string;
+        // DEBUG: log lock requests to VS Code output
+        console.log(`[EH-LOCK] action=${action} file=${filePath} agent=${agentId} enabled=${fileLockingEnabled}`);
         const agentName = (b.agentName as string) ?? agentId;
 
         if (!filePath || !agentId) {
@@ -269,7 +271,21 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
           return;
         }
 
-        // Default: check + acquire
+        // 'query' — check if locked by someone else, but don't acquire (for Read operations)
+        if (action === 'query') {
+          if (!fileLockingEnabled) { send(200, JSON.stringify({ allowed: true })); return; }
+          pruneExpiredLocks();
+          const norm = normalizeLockPath(filePath);
+          const existing = fileLocks.get(norm);
+          if (existing && existing.agentId !== agentId) {
+            send(409, JSON.stringify({ allowed: false, owner: existing.agentName, ownerAgent: existing.agentId }));
+          } else {
+            send(200, JSON.stringify({ allowed: true }));
+          }
+          return;
+        }
+
+        // Default: check + acquire (for Write operations)
         const result = checkAndAcquireLock(filePath, agentId, agentName);
         if (result.allowed) {
           send(200, JSON.stringify({ allowed: true }));
