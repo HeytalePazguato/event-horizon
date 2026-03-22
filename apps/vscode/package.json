@@ -88,6 +88,12 @@
           "description": "Port for the local event server that receives agent hooks. Requires extension restart.",
           "order": 1
         },
+        "eventHorizon.fileLockingEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable file locking to prevent multiple agents from writing to the same file simultaneously. When enabled, agents must acquire a lock before writing — conflicting writes are blocked. Requires reinstalling hooks.",
+          "order": 2
+        },
         "eventHorizon.animationSpeed": {
           "type": "number",
           "default": 1.0,

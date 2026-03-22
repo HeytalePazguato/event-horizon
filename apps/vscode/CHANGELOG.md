@@ -14,6 +14,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Timeline event recording**: agent.spawn, agent.terminate, agent.error, tool.call, file.read, file.write events all feed the timeline buffer. Demo simulation also records timeline entries
 - **View toggle command**: `eventHorizon.toggleView` registered as VS Code command with `$(layout)` icon in editor title bar and `Ctrl+Shift+E O` keybinding
 - **Agent grouping utility**: `groupAgentsByWorkspace()` groups agents by working directory folder name, sorts alphabetically, puts "Solo" agents last. Reused by sidebar and available for future features
+- **File locking — distributed lock manager for AI agents**: when enabled via `eventHorizon.fileLockingEnabled` setting, agents must acquire a lock before writing to a file. If another agent holds the lock, the write is **blocked** — Claude Code's PreToolUse hook returns non-zero and the agent sees "File X is locked by Y." OpenCode's plugin throws before tool execution. Locks auto-expire after 30 seconds (TTL) to prevent stale locks from crashed agents. Locks are released on PostToolUse and on agent termination. New `/lock` API route on the event server handles check/acquire/release. Disabled by default — toggle in VS Code Settings or the in-app modal. Requires reinstalling hooks after enabling
 - **15 new tests**: viewMode toggle (3), timeline buffer + cap (3), groupAgentsByWorkspace (6), folderName (3). Total: 254 → 269
 
 ### Improved

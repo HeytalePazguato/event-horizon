@@ -47,6 +47,35 @@ function send(eventName, extra) {
   }).catch(() => {});
 }
 
+async function checkLock(filePath, agentId, agentName) {
+  try {
+    const resp = await fetch("http://127.0.0.1:" + PORT + "/lock" + TOKEN_PARAM, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "check", filePath, agentId, agentName }),
+      signal: AbortSignal.timeout(2000),
+    });
+    if (resp.status === 409) {
+      const data = await resp.json();
+      throw new Error("File " + filePath + " is locked by " + (data.owner || "another agent") + ". Wait for them to finish or disable file locking in Event Horizon settings.");
+    }
+  } catch (e) {
+    if (e && e.message && e.message.includes("is locked by")) throw e;
+    // Ignore network errors — Event Horizon might not be running
+  }
+}
+
+async function releaseLock(filePath, agentId) {
+  try {
+    await fetch("http://127.0.0.1:" + PORT + "/lock" + TOKEN_PARAM, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "release", filePath, agentId }),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch {}
+}
+
 function sendExit(eventName, extra) {
   send(eventName, extra);
   try {
@@ -106,6 +135,12 @@ export default async function EventHorizon({ project, directory, worktree, serve
         cwd,
         payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
       });
+      // Check file lock for write tools
+      const writeTool = ["write", "edit", "patch", "file_write", "file_edit"].includes(String(input?.tool || "").toLowerCase());
+      const fp = input?.input?.file_path || input?.input?.path;
+      if (writeTool && fp) {
+        await checkLock(String(fp), sessionId, agentName);
+      }
     },
     "tool.execute.after": async (input) => {
       send("tool.execute.after", {
@@ -114,6 +149,11 @@ export default async function EventHorizon({ project, directory, worktree, serve
         cwd,
         payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
       });
+      // Release file lock after write
+      const fp = input?.input?.file_path || input?.input?.path;
+      if (fp) {
+        await releaseLock(String(fp), sessionId);
+      }
     },
     "permission.asked": async (input) => {
       send("permission.asked", {

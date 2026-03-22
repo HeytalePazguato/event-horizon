@@ -36,6 +36,87 @@ export function getAuthToken(): string | null {
   return authToken;
 }
 
+// ── File lock registry ──────────────────────────────────────────────────────
+// Distributed lock manager for AI agents. When enabled, PreToolUse hooks
+// check this registry before writing to a file. If another agent holds
+// the lock, the hook returns non-zero and the agent's tool call is blocked.
+
+interface FileLock {
+  agentId: string;
+  agentName: string;
+  acquiredAt: number;
+}
+
+/** File locks keyed by normalized path. */
+const fileLocks = new Map<string, FileLock>();
+/** Lock TTL — auto-expire after 30 seconds to prevent stale locks from crashed agents. */
+const LOCK_TTL_MS = 30_000;
+/** Whether file locking is enabled (read from VS Code settings). */
+let fileLockingEnabled = false;
+
+export function setFileLockingEnabled(enabled: boolean): void {
+  fileLockingEnabled = enabled;
+  if (!enabled) fileLocks.clear();
+}
+
+export function isFileLockingEnabled(): boolean {
+  return fileLockingEnabled;
+}
+
+/** Get all active locks (for UI display). */
+export function getActiveLocks(): Array<{ path: string; agentId: string; agentName: string; acquiredAt: number }> {
+  pruneExpiredLocks();
+  return [...fileLocks.entries()].map(([p, l]) => ({ path: p, ...l }));
+}
+
+function pruneExpiredLocks(): void {
+  const now = Date.now();
+  for (const [path, lock] of fileLocks) {
+    if (now - lock.acquiredAt > LOCK_TTL_MS) fileLocks.delete(path);
+  }
+}
+
+function normalizeLockPath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').toLowerCase();
+}
+
+/**
+ * Check if a file can be written by the given agent.
+ * Returns { allowed: true } or { allowed: false, owner: ... }.
+ */
+function checkAndAcquireLock(filePath: string, agentId: string, agentName: string): { allowed: boolean; owner?: string; ownerAgent?: string } {
+  if (!fileLockingEnabled) return { allowed: true };
+
+  pruneExpiredLocks();
+  const norm = normalizeLockPath(filePath);
+  const existing = fileLocks.get(norm);
+
+  if (existing && existing.agentId !== agentId) {
+    // Another agent holds the lock
+    return { allowed: false, owner: existing.agentName, ownerAgent: existing.agentId };
+  }
+
+  // Acquire or refresh the lock
+  fileLocks.set(norm, { agentId, agentName, acquiredAt: Date.now() });
+  return { allowed: true };
+}
+
+/** Release a lock held by the given agent. */
+function releaseLock(filePath: string, agentId: string): void {
+  const norm = normalizeLockPath(filePath);
+  const existing = fileLocks.get(norm);
+  if (existing && existing.agentId === agentId) {
+    fileLocks.delete(norm);
+  }
+}
+
+/** Release all locks held by a specific agent (on agent termination). */
+export function releaseAgentLocks(agentId: string): void {
+  for (const [path, lock] of fileLocks) {
+    if (lock.agentId === agentId) fileLocks.delete(path);
+  }
+}
+
 // Sliding-window rate limiter
 const rateCounts = new Map<string, { count: number; resetAt: number }>();
 
@@ -163,6 +244,44 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
       const cb = callbacks;
       if (!cb) {
         send(503, JSON.stringify({ error: 'Not ready' }));
+        return;
+      }
+
+      // ── Lock API ──────────────────────────────────────────────────────
+      // POST /lock — check/acquire a file lock before a write operation.
+      // Body: { action: 'check' | 'release', filePath, agentId, agentName }
+      // Response: { allowed: true } or { allowed: false, owner: '...' }
+      if (route === '/lock') {
+        const b = body as Record<string, unknown>;
+        const action = b.action as string;
+        const filePath = b.filePath as string;
+        const agentId = b.agentId as string;
+        const agentName = (b.agentName as string) ?? agentId;
+
+        if (!filePath || !agentId) {
+          send(400, JSON.stringify({ error: 'Missing filePath or agentId' }));
+          return;
+        }
+
+        if (action === 'release') {
+          releaseLock(filePath, agentId);
+          send(200, JSON.stringify({ released: true }));
+          return;
+        }
+
+        // Default: check + acquire
+        const result = checkAndAcquireLock(filePath, agentId, agentName);
+        if (result.allowed) {
+          send(200, JSON.stringify({ allowed: true }));
+        } else {
+          send(409, JSON.stringify({ allowed: false, owner: result.owner, ownerAgent: result.ownerAgent }));
+        }
+        return;
+      }
+
+      // GET /lock/status — list all active locks (for UI)
+      if (route === '/lock/status') {
+        send(200, JSON.stringify({ enabled: fileLockingEnabled, locks: getActiveLocks() }));
         return;
       }
 

@@ -268,6 +268,12 @@ export interface CommandCenterState {
   selectSingularity: () => void;
   incrementSingularityStat: (key: keyof SingularityStats, amount?: number) => void;
   setSingularityStats: (stats: SingularityStats) => void;
+  /** Whether file locking is enabled (mirrors VS Code setting). */
+  fileLockingEnabled: boolean;
+  setFileLockingEnabled: (enabled: boolean) => void;
+  /** Active file locks — keyed by normalized path. */
+  fileLocks: Record<string, { agentId: string; agentName: string; acquiredAt: number }>;
+  setFileLocks: (locks: Record<string, { agentId: string; agentName: string; acquiredAt: number }>) => void;
   /** File activity heatmap data — keyed by normalized path. */
   fileActivity: Record<string, FileActivity>;
   /** Record a file operation for the heatmap. */
@@ -333,6 +339,10 @@ export const useCommandCenterStore = create<CommandCenterState>((set, get) => ({
   selectedMetrics: null,
   singularitySelected: false,
   singularityStats: { ...EMPTY_SINGULARITY_STATS },
+  fileLockingEnabled: false,
+  setFileLockingEnabled: (enabled) => set({ fileLockingEnabled: enabled }),
+  fileLocks: {},
+  setFileLocks: (locks) => set({ fileLocks: locks }),
   fileActivity: {},
   recordFileOp: (normalizedPath, basename, agentId, agentName, agentType, op, cwd) =>
     set((s) => {

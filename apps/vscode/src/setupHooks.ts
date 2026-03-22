@@ -44,10 +44,45 @@ function buildEhCommand(): string {
   return `curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d @- ${url} > /dev/null 2>&1 || true`;
 }
 
+/**
+ * Build a PreToolUse command that checks file locks before allowing writes.
+ * The script: reads JSON from stdin, extracts file_path from tool_input,
+ * curls /lock to acquire the lock, and exits non-zero if blocked.
+ * Falls back to the normal report-only hook if Event Horizon is down.
+ */
+function buildPreToolUseCommand(): string {
+  const token = getAuthToken();
+  const tokenParam = token ? `?token=${token}` : '';
+  const lockUrl = `http://127.0.0.1:${PORT}/lock${tokenParam}`;
+  const claudeUrl = `http://127.0.0.1:${PORT}/claude${tokenParam}`;
+
+  // Bash script that:
+  // 1. Reads stdin into a variable (the hook JSON payload)
+  // 2. Sends the event to /claude (fire and forget)
+  // 3. Extracts file_path from tool_input using grep/sed (no jq dependency)
+  // 4. If a file_path is found AND the tool is a write tool, curls /lock
+  // 5. If /lock returns 409, prints the owner and exits 1 (blocks the tool)
+  // eslint-disable-next-line no-useless-escape
+  return `bash -c 'PAYLOAD=$(cat); echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d @- ${claudeUrl} > /dev/null 2>&1 || true; FP=$(echo "$PAYLOAD" | grep -oP "\"file_path\"\\s*:\\s*\"\\K[^\"]+"); TN=$(echo "$PAYLOAD" | grep -oP "\"tool_name\"\\s*:\\s*\"\\K[^\"]+"); if [ -n "$FP" ]; then case "$TN" in Write|Edit|MultiEdit|WriteFile) AGENT=$(echo "$PAYLOAD" | grep -oP "\"session_id\"\\s*:\\s*\"\\K[^\"]+"); RESP=$(curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d "{\"action\":\"check\",\"filePath\":\"$FP\",\"agentId\":\"$AGENT\",\"agentName\":\"Claude Code\"}" ${lockUrl} 2>/dev/null); if echo "$RESP" | grep -q "\"allowed\":false"; then OWNER=$(echo "$RESP" | grep -oP "\"owner\"\\s*:\\s*\"\\K[^\"]+"); echo "File $FP is locked by $OWNER. Wait for them to finish or disable file locking in Event Horizon settings." >&2; exit 1; fi;; esac; fi'`;
+}
+
+/**
+ * Build a PostToolUse command that releases file locks after writes complete.
+ */
+function buildPostToolUseCommand(): string {
+  const token = getAuthToken();
+  const tokenParam = token ? `?token=${token}` : '';
+  const lockUrl = `http://127.0.0.1:${PORT}/lock${tokenParam}`;
+  const claudeUrl = `http://127.0.0.1:${PORT}/claude${tokenParam}`;
+
+  // eslint-disable-next-line no-useless-escape
+  return `bash -c 'PAYLOAD=$(cat); echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d @- ${claudeUrl} > /dev/null 2>&1 || true; FP=$(echo "$PAYLOAD" | grep -oP "\"file_path\"\\s*:\\s*\"\\K[^\"]+"); if [ -n "$FP" ]; then AGENT=$(echo "$PAYLOAD" | grep -oP "\"session_id\"\\s*:\\s*\"\\K[^\"]+"); curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d "{\"action\":\"release\",\"filePath\":\"$FP\",\"agentId\":\"$AGENT\"}" ${lockUrl} > /dev/null 2>&1 || true; fi'`;
+}
+
 /** True if a hook entry is our Event Horizon hook (any version — command or http). */
 function isEhHook(h: Record<string, unknown>): boolean {
   // Legacy command-based hooks
-  if (typeof h.command === 'string' && h.command.includes(`127.0.0.1:${PORT}/claude`)) return true;
+  if (typeof h.command === 'string' && (h.command.includes(`127.0.0.1:${PORT}/claude`) || h.command.includes(`127.0.0.1:${PORT}/lock`))) return true;
   // New HTTP-based hooks
   if (typeof h.url === 'string' && h.url.includes(`127.0.0.1:${PORT}/claude`)) return true;
   return false;
@@ -57,6 +92,9 @@ function isEhHook(h: Record<string, unknown>): boolean {
 function isCurrentEhHook(h: Record<string, unknown>): boolean {
   // Current: command-based silent hook
   if (typeof h.command === 'string' && h.command === buildEhCommand()) return true;
+  // PreToolUse lock-checking command and PostToolUse lock-releasing command
+  if (typeof h.command === 'string' && h.command === buildPreToolUseCommand()) return true;
+  if (typeof h.command === 'string' && h.command === buildPostToolUseCommand()) return true;
   // Also match http-based (previous format) so we can migrate it
   if (h.type === 'http' && h.url === buildEhUrl()) return true;
   return false;
@@ -172,9 +210,14 @@ export async function setupClaudeCodeHooks(): Promise<void> {
       return hs.some((c) => typeof c.command === 'string' && c.command === buildEhCommand());
     });
 
+    // Use the lock-checking command for PreToolUse, lock-releasing for PostToolUse, normal for rest
+    let cmd: string;
+    if (hookEvent === 'PreToolUse') cmd = buildPreToolUseCommand();
+    else if (hookEvent === 'PostToolUse' || hookEvent === 'PostToolUseFailure') cmd = buildPostToolUseCommand();
+    else cmd = buildEhCommand();
     merged[hookEvent] = alreadyCurrent
       ? withoutStale
-      : [...withoutStale, { matcher: '', hooks: [{ type: 'command', command: buildEhCommand() }] }];
+      : [...withoutStale, { matcher: '', hooks: [{ type: 'command', command: cmd }] }];
   }
 
   settings.hooks = merged;

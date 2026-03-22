@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
@@ -298,6 +298,9 @@ export function activate(context: vscode.ExtensionContext): void {
         transcriptWatchers.delete(event.agentId);
       }
 
+      // Release any file locks held by the terminated agent
+      releaseAgentLocks(event.agentId);
+
       // Also clean up OpenCode SSE watcher
       const sseWatcher = openCodeSSEWatchers.get(event.agentId);
       if (sseWatcher) {
@@ -312,7 +315,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
-  const configuredPort = vscode.workspace.getConfiguration('eventHorizon').get<number>('port', 28765);
+  const ehConfig = vscode.workspace.getConfiguration('eventHorizon');
+  const configuredPort = ehConfig.get<number>('port', 28765);
+  setFileLockingEnabled(ehConfig.get<boolean>('fileLockingEnabled', false));
+
+  // Re-read file locking setting when changed
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('eventHorizon.fileLockingEnabled')) {
+        setFileLockingEnabled(
+          vscode.workspace.getConfiguration('eventHorizon').get<boolean>('fileLockingEnabled', false),
+        );
+      }
+    }),
+  );
+
   startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
     .then(async () => {
       // Refresh hooks only if the token changed (stale from a previous session)
