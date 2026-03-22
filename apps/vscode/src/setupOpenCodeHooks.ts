@@ -95,8 +95,9 @@ export default async function EventHorizon({ project, directory, worktree, serve
   const base = project?.id ? String(project.id) : "opencode";
   const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const sessionId = base + "-" + uid;
-  const agentName = "OpenCode";
   const cwd = worktree || directory || undefined;
+  const cwdFolder = cwd ? String(cwd).replace(/\\\\/g, "/").split("/").pop() : undefined;
+  const agentName = cwdFolder ? "OpenCode (" + cwdFolder + ")" : "OpenCode";
   // OpenCode's internal server URL — used by Event Horizon for SSE subagent tracking
   const opencodeServerUrl = typeof serverUrl === "object" && serverUrl?.href ? serverUrl.href : undefined;
 
