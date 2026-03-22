@@ -5,7 +5,7 @@
  */
 
 import type { FC } from 'react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 import { useCommandCenterStore } from './store.js';
 import { AgentSidebar } from './panels/AgentSidebar.js';
@@ -42,6 +42,12 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
   const demoMode = useCommandCenterStore((s) => s.demoMode);
   const demoStartedAt = useCommandCenterStore((s) => s.demoStartedAt);
   const requestDemo = useCommandCenterStore((s) => s.requestDemo);
+
+  // Agent cwd map for timeline labels
+  const agentCwds = useMemo(
+    () => Object.fromEntries(Object.entries(agentMap).map(([id, a]) => [id, a.cwd])),
+    [agentMap],
+  );
 
   // Demo elapsed timer
   const [demoElapsed, setDemoElapsed] = useState('');
@@ -99,7 +105,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             )}
             {activeTab === 'timeline' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                <TimelinePanel />
+                <TimelinePanel agentCwds={agentCwds} />
               </div>
             )}
           </div>

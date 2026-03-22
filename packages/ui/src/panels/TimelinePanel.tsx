@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom';
 import { useCommandCenterStore } from '../store.js';
 import type { TimelineEntry } from '../store.js';
 import { PlanetIcon } from './AgentIdentity.js';
+import { folderName } from '../utils.js';
 
 const STATE_COLORS: Record<string, string> = {
   state: '#3a8a5a',
@@ -25,57 +26,99 @@ const STATE_LABELS: Record<string, string> = {
   error: 'Error',
 };
 
+/** Shared tooltip container style for Operations view. */
+const TOOLTIP_STYLE: React.CSSProperties = {
+  position: 'fixed',
+  top: 8,
+  right: 12,
+  width: 220,
+  background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+  border: '1px solid #2a5a3c',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.75)',
+  padding: '8px 10px',
+  fontFamily: 'Consolas, monospace',
+  zIndex: 9999,
+  pointerEvents: 'none',
+  clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+};
+
+const AGENT_COLORS: Record<string, string> = {
+  'claude-code': '#88aaff',
+  copilot: '#cc88ff',
+  opencode: '#88ffaa',
+  cursor: '#44ddcc',
+  unknown: '#aaccff',
+};
+
+interface SwimlaneData {
+  agentName: string;
+  agentType: string;
+  cwd?: string;
+  entries: TimelineEntry[];
+}
+
 /** Group timeline entries by agent and compute time range. */
-function buildSwimlanes(entries: TimelineEntry[], selectedAgentId: string | null) {
-  const agentMap = new Map<string, { agentName: string; agentType: string; entries: TimelineEntry[] }>();
+function buildSwimlanes(
+  entries: TimelineEntry[],
+  selectedAgentId: string | null,
+  agentCwds: Record<string, string | undefined>,
+): Map<string, SwimlaneData> {
+  const agentMap = new Map<string, SwimlaneData>();
   for (const e of entries) {
     if (selectedAgentId && e.agentId !== selectedAgentId) continue;
     if (!agentMap.has(e.agentId)) {
-      agentMap.set(e.agentId, { agentName: e.agentName, agentType: e.agentType, entries: [] });
+      agentMap.set(e.agentId, { agentName: e.agentName, agentType: e.agentType, cwd: agentCwds[e.agentId], entries: [] });
     }
     agentMap.get(e.agentId)!.entries.push(e);
   }
   return agentMap;
 }
 
-/** Tooltip for hovering a timeline block. */
-const BlockTooltip: FC<{ entry: TimelineEntry }> = ({ entry }) =>
-  createPortal(
-    <div style={{
-      position: 'fixed', top: 8, right: 12, width: 210,
-      background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
-      border: '1px solid #2a5a3c', boxShadow: '0 4px 16px rgba(0,0,0,0.75)',
-      padding: '7px 9px', fontFamily: 'Consolas, monospace', zIndex: 9999, pointerEvents: 'none',
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', marginBottom: 3 }}>{entry.agentName}</div>
-      <div style={{ fontSize: 10, color: STATE_COLORS[entry.kind] ?? '#7a9a82', marginBottom: 2 }}>
+/** Tooltip for hovering a timeline block — unified style with Files tooltips. */
+const BlockTooltip: FC<{ entry: TimelineEntry; cwd?: string }> = ({ entry, cwd }) => {
+  const folder = cwd ? folderName(cwd) : '';
+  return createPortal(
+    <div style={TOOLTIP_STYLE}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: AGENT_COLORS[entry.agentType] ?? '#aaccff', flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#90d898' }}>{entry.agentName}</span>
+      </div>
+      {folder && <div style={{ fontSize: 10, color: '#5a8a6a', marginBottom: 3, paddingLeft: 14 }}>{folder}</div>}
+      <div style={{ fontSize: 11, color: STATE_COLORS[entry.kind] ?? '#7a9a82', marginBottom: 2 }}>
         {STATE_LABELS[entry.kind] ?? entry.kind}: {entry.label}
       </div>
-      <div style={{ fontSize: 11, color: '#4a6a58' }}>
+      <div style={{ fontSize: 10, color: '#4a6a58' }}>
         {new Date(entry.ts).toLocaleTimeString()}
       </div>
     </div>,
     document.body,
   );
+};
 
-const LANE_HEIGHT = 28;
-const LABEL_WIDTH = 120;
+const TIME_AXIS_HEIGHT = 22;
+const LANE_HEIGHT = 40;
+const LABEL_WIDTH = 160;
 const BLOCK_WIDTH = 6;
 
-export const TimelinePanel: FC = () => {
+export interface TimelinePanelProps {
+  /** Map of agentId → cwd for showing folder names. */
+  agentCwds?: Record<string, string | undefined>;
+}
+
+export const TimelinePanel: FC<TimelinePanelProps> = ({ agentCwds = {} }) => {
   const timeline = useCommandCenterStore((s) => s.timeline);
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
   const [hoveredEntry, setHoveredEntry] = useState<TimelineEntry | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const swimlanes = useMemo(() => buildSwimlanes(timeline, selectedAgentId), [timeline, selectedAgentId]);
+  const swimlanes = useMemo(() => buildSwimlanes(timeline, selectedAgentId, agentCwds), [timeline, selectedAgentId, agentCwds]);
 
   // Time range
   const allEntries = useMemo(() => timeline.filter((e) => !selectedAgentId || e.agentId === selectedAgentId), [timeline, selectedAgentId]);
   const minTs = allEntries.length > 0 ? allEntries[0].ts : Date.now();
   const maxTs = allEntries.length > 0 ? allEntries[allEntries.length - 1].ts : Date.now();
-  const timeSpan = Math.max(maxTs - minTs, 10000); // At least 10s
-  const pixelsPerMs = 0.05; // 50px per second
+  const timeSpan = Math.max(maxTs - minTs, 10000);
+  const pixelsPerMs = 0.05;
   const totalWidth = Math.max(400, timeSpan * pixelsPerMs);
 
   // Auto-scroll right
@@ -89,14 +132,14 @@ export const TimelinePanel: FC = () => {
 
   if (timeline.length === 0) {
     return (
-      <div style={{ padding: 20, textAlign: 'center', color: '#3a5a48', fontSize: 11, fontFamily: 'Consolas, monospace' }}>
+      <div style={{ padding: 20, textAlign: 'center', color: '#3a5a48', fontSize: 12, fontFamily: 'Consolas, monospace' }}>
         No timeline data yet. Agent events will build the timeline as they arrive.
       </div>
     );
   }
 
   // Time axis labels
-  const labelCount = Math.max(2, Math.floor(totalWidth / 100));
+  const labelCount = Math.max(2, Math.floor(totalWidth / 120));
   const timeLabels: Array<{ x: number; label: string }> = [];
   for (let i = 0; i <= labelCount; i++) {
     const ts = minTs + (timeSpan * i) / labelCount;
@@ -107,56 +150,78 @@ export const TimelinePanel: FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontFamily: 'Consolas, monospace' }}>
-      {hoveredEntry && <BlockTooltip entry={hoveredEntry} />}
+      {hoveredEntry && <BlockTooltip entry={hoveredEntry} cwd={agentCwds[hoveredEntry.agentId]} />}
 
       {/* Legend */}
-      <div style={{ display: 'flex', gap: 12, padding: '6px 0', flexShrink: 0, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 14, padding: '8px 0', flexShrink: 0, alignItems: 'center' }}>
         {Object.entries(STATE_COLORS).map(([kind, color]) => (
-          <div key={kind} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <div style={{ width: 10, height: 10, background: color, borderRadius: 2 }} />
-            <span style={{ fontSize: 11, color: '#5a8a6a' }}>{STATE_LABELS[kind]}</span>
+          <div key={kind} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 12, height: 12, background: color, borderRadius: 2 }} />
+            <span style={{ fontSize: 12, color: '#5a8a6a' }}>{STATE_LABELS[kind]}</span>
           </div>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#3a6a48' }}>{allEntries.length} events</span>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#3a6a48' }}>{allEntries.length} events</span>
       </div>
 
       {/* Swimlane area */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {/* Agent labels (fixed) */}
-        <div style={{ width: LABEL_WIDTH, flexShrink: 0, overflowY: 'auto' }}>
-          {agents.map(([agentId, data]) => (
-            <div key={agentId} style={{
-              height: LANE_HEIGHT,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '0 8px',
-              borderBottom: '1px solid rgba(30,60,40,0.2)',
-            }}>
-              <PlanetIcon type={data.agentType} size={14} />
-              <span style={{
-                fontSize: 11,
-                color: '#7a9a82',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}>
-                {data.agentName}
-              </span>
-            </div>
-          ))}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
+        {/* Agent labels (fixed left column) */}
+        <div style={{ width: LABEL_WIDTH, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+          {/* Spacer to align with time axis */}
+          <div style={{ height: TIME_AXIS_HEIGHT, flexShrink: 0 }} />
+          {/* Agent rows */}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {agents.map(([agentId, data]) => {
+              const folder = data.cwd ? folderName(data.cwd) : '';
+              return (
+                <div key={agentId} style={{
+                  height: LANE_HEIGHT,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '0 10px',
+                  borderBottom: '1px solid rgba(30,60,40,0.2)',
+                  boxSizing: 'border-box',
+                }}>
+                  <PlanetIcon type={data.agentType} size={18} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 12,
+                      color: '#8aaa92',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {data.agentName}
+                    </div>
+                    {folder && (
+                      <div style={{
+                        fontSize: 10,
+                        color: '#4a7a5a',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {folder}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Scrollable timeline */}
         <div ref={scrollRef} style={{ flex: 1, overflowX: 'auto', overflowY: 'auto', minWidth: 0 }}>
           <div style={{ width: totalWidth, position: 'relative' }}>
             {/* Time axis */}
-            <div style={{ height: 18, borderBottom: '1px solid #1a3020', position: 'relative' }}>
+            <div style={{ height: TIME_AXIS_HEIGHT, borderBottom: '1px solid #1a3020', position: 'relative' }}>
               {timeLabels.map((tl, i) => (
                 <span key={i} style={{
                   position: 'absolute',
                   left: tl.x,
-                  top: 2,
+                  top: 3,
                   fontSize: 10,
                   color: '#3a6a48',
                   transform: 'translateX(-50%)',
@@ -167,12 +232,13 @@ export const TimelinePanel: FC = () => {
               ))}
             </div>
 
-            {/* Swimlane rows */}
+            {/* Swimlane rows — aligned with left label rows */}
             {agents.map(([agentId, data]) => (
               <div key={agentId} style={{
                 height: LANE_HEIGHT,
                 position: 'relative',
                 borderBottom: '1px solid rgba(30,60,40,0.15)',
+                boxSizing: 'border-box',
               }}>
                 {data.entries.map((entry, i) => {
                   const x = ((entry.ts - minTs) / timeSpan) * totalWidth;
@@ -184,12 +250,12 @@ export const TimelinePanel: FC = () => {
                       style={{
                         position: 'absolute',
                         left: x,
-                        top: 4,
+                        top: (LANE_HEIGHT - 20) / 2,
                         width: BLOCK_WIDTH,
-                        height: LANE_HEIGHT - 8,
+                        height: 20,
                         background: STATE_COLORS[entry.kind] ?? '#4a7a58',
                         borderRadius: 1,
-                        opacity: 0.8,
+                        opacity: 0.85,
                         cursor: 'default',
                       }}
                     />

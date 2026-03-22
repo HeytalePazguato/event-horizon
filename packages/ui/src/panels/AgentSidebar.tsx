@@ -6,7 +6,7 @@
 
 import type { FC } from 'react';
 import { useCommandCenterStore } from '../store.js';
-import { groupAgentsByWorkspace } from '../utils.js';
+import { groupAgentsByWorkspace, folderName } from '../utils.js';
 import { PlanetIcon, SingularityIcon } from './AgentIdentity.js';
 
 const stateColors: Record<string, string> = {
@@ -124,20 +124,32 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates }) => 
                 }}
               >
                 <PlanetIcon type={a.agentType} size={18} />
-                <span style={{
-                  flex: 1,
-                  fontSize: 12,
-                  color: isSelected ? '#90d898' : '#7a9a82',
-                  fontWeight: isSelected ? 600 : 400,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {a.name}
-                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12,
+                    color: isSelected ? '#90d898' : '#7a9a82',
+                    fontWeight: isSelected ? 600 : 400,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {a.name}
+                  </div>
+                  {a.cwd && (
+                    <div style={{
+                      fontSize: 10,
+                      color: '#4a7a5a',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {folderName(a.cwd)}
+                    </div>
+                  )}
+                </div>
                 <div style={{
-                  width: 6,
-                  height: 6,
+                  width: 7,
+                  height: 7,
                   borderRadius: '50%',
                   background: stateColors[a.state] ?? '#4a8a5a',
                   flexShrink: 0,

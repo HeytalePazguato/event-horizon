@@ -36,22 +36,33 @@ function timeAgo(ts: number): string {
   return `${Math.floor(mins / 60)}h ago`;
 }
 
-/** Portal tooltip for agent dots — same style/position as compact heatmap. */
+/** Shared tooltip container style for Operations view. */
+const TOOLTIP_STYLE: React.CSSProperties = {
+  position: 'fixed',
+  top: 8,
+  right: 12,
+  width: 220,
+  background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+  border: '1px solid #2a5a3c',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.75)',
+  padding: '8px 10px',
+  fontFamily: 'Consolas, monospace',
+  zIndex: 9999,
+  pointerEvents: 'none',
+  clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+};
+
+/** Portal tooltip for agent dots — unified style with Timeline tooltips. */
 const AgentTooltip: FC<{ agent: FileAgentActivity }> = ({ agent }) => {
   const folder = folderFromCwd(agent.cwd);
   return createPortal(
-    <div style={{
-      position: 'fixed', top: 8, right: 12, width: 200,
-      background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
-      border: '1px solid #2a5a3c', boxShadow: '0 4px 16px rgba(0,0,0,0.75)',
-      padding: '7px 9px', fontFamily: 'Consolas, monospace', zIndex: 9999, pointerEvents: 'none',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: AGENT_COLORS[agent.agentType] ?? '#aaccff' }} />
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#90d898' }}>{agent.agentName}</span>
+    <div style={TOOLTIP_STYLE}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: AGENT_COLORS[agent.agentType] ?? '#aaccff', flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#90d898' }}>{agent.agentName}</span>
       </div>
-      {folder && <div style={{ fontSize: 9, color: '#5a8a6a', marginBottom: 3, paddingLeft: 13 }}>{folder}</div>}
-      <div style={{ fontSize: 10, color: '#6a9a78' }}>
+      {folder && <div style={{ fontSize: 10, color: '#5a8a6a', marginBottom: 3, paddingLeft: 14 }}>{folder}</div>}
+      <div style={{ fontSize: 11, color: '#6a9a78' }}>
         <span style={{ color: '#7aaa88' }}>{agent.reads}</span> reads
         {' · '}<span style={{ color: '#7aaa88' }}>{agent.writes}</span> writes
         {agent.errors > 0 && <>{' · '}<span style={{ color: '#c06060' }}>{agent.errors}</span> errors</>}
