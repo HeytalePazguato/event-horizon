@@ -38,8 +38,27 @@ export function getAuthToken(): string | null {
 
 // ── File lock manager (extracted to lockManager.ts) ─────────────────────────
 import { LockManager } from './lockManager.js';
+import { McpServer, FileActivityTracker } from './mcpServer.js';
 
 export const lockManager = new LockManager(30_000);
+export const fileActivityTracker = new FileActivityTracker();
+
+// MCP server — initialized lazily when agentStateManager is provided
+let mcpServer: McpServer | null = null;
+
+/** Initialize the MCP server with runtime dependencies. Must be called after extension activates. */
+export function initMcpServer(deps: { agentStateManager: import('@event-horizon/core').AgentStateManager }): void {
+  mcpServer = new McpServer({
+    lockManager,
+    agentStateManager: deps.agentStateManager,
+    fileActivityTracker,
+  });
+}
+
+/** @internal — exposed for testing only. */
+export function _getMcpServer(): McpServer | null { return mcpServer; }
+/** @internal — exposed for testing only. */
+export function _setMcpServer(s: McpServer | null): void { mcpServer = s; }
 
 // Backward-compat exports used by extension.ts
 export function setFileLockingEnabled(enabled: boolean): void { lockManager.setEnabled(enabled); }
@@ -174,6 +193,18 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
       const cb = callbacks;
       if (!cb) {
         send(503, JSON.stringify({ error: 'Not ready' }));
+        return;
+      }
+
+      // ── MCP endpoint (JSON-RPC 2.0) ────────────────────────────────────
+      if (route === '/mcp') {
+        if (!mcpServer) {
+          send(503, JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'MCP server not initialized' }, id: null }));
+          return;
+        }
+        mcpServer.handleRequest(body)
+          .then((response) => send(200, JSON.stringify(response)))
+          .catch(() => send(500, JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null })));
         return;
       }
 

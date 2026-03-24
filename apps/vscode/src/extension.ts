@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
@@ -95,6 +95,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
+
+  // Initialize MCP server with runtime dependencies
+  initMcpServer({ agentStateManager });
 
   // ── Status bar — live agent count ──────────────────────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -251,6 +254,21 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
+
+    // Track file activity for MCP eh_file_activity tool
+    if (event.type === 'tool.call' && event.payload?.filePath) {
+      const toolName = event.payload.toolName as string | undefined;
+      const action: 'read' | 'write' | 'edit' =
+        toolName === 'Write' || toolName === 'WriteFile' ? 'write' :
+        toolName === 'Edit' || toolName === 'MultiEdit' ? 'edit' : 'read';
+      fileActivityTracker.record({
+        filePath: event.payload.filePath as string,
+        agentId: event.agentId,
+        agentName: event.agentName,
+        action,
+        timestamp: event.timestamp,
+      });
+    }
 
     // Start transcript watcher for Claude Code agents when we first see a transcript path.
     // The watcher provides richer events (waiting ring, per-turn tokens, tool details)
