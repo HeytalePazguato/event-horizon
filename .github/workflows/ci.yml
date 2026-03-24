@@ -71,17 +71,17 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Stamp dev version
+        id: version
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           export DEV_VERSION="0.0.${RUN_NUMBER}"
           DISPLAY_VERSION="0.0.0.${RUN_NUMBER}-dev"
-          echo "VERSION=${DISPLAY_VERSION}" >> $GITHUB_ENV
-          echo "DEV_VERSION=${DEV_VERSION}" >> $GITHUB_ENV
+          echo "VERSION=${DISPLAY_VERSION}" >> $GITHUB_OUTPUT
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('./apps/vscode/package.json', 'utf8'));
-            pkg.version = process.env.DEV_VERSION;
+            pkg.version = '${DEV_VERSION}';
             fs.writeFileSync('./apps/vscode/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           echo "Stamped dev version: ${DEV_VERSION} (artifact: ${DISPLAY_VERSION})"
@@ -91,13 +91,13 @@ jobs:
 
       - name: Package VSIX
         run: |
-          cp LICENSE README.md apps/vscode/
+          cp LICENSE apps/vscode/
           cd apps/vscode && pnpm run build:ext:prod && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v5
         with:
-          name: event-horizon-${{ env.VERSION }}.vsix
+          name: event-horizon-${{ steps.version.outputs.VERSION }}.vsix
           path: apps/vscode/*.vsix
           retention-days: 30
 
@@ -158,6 +158,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Determine pre-release version
+        id: version
         run: |
           # Extract base version from branch name: release/0.1.0 → 0.1.0
           BRANCH="${GITHUB_REF#refs/heads/release/}"
@@ -189,9 +190,9 @@ jobs:
           VSCE_VERSION="${BASE_VERSION}"
           TAG="v${PRE_VERSION}"
 
-          echo "VERSION=${PRE_VERSION}" >> $GITHUB_ENV
-          echo "VSCE_VERSION=${VSCE_VERSION}" >> $GITHUB_ENV
-          echo "TAG=${TAG}" >> $GITHUB_ENV
+          echo "VERSION=${PRE_VERSION}" >> $GITHUB_OUTPUT
+          echo "VSCE_VERSION=${VSCE_VERSION}" >> $GITHUB_OUTPUT
+          echo "TAG=${TAG}" >> $GITHUB_OUTPUT
           echo "Pre-release: ${PRE_VERSION} (vsce: ${VSCE_VERSION}, tag: ${TAG})"
 
       - name: Stamp version in package.json
@@ -199,7 +200,7 @@ jobs:
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('./apps/vscode/package.json', 'utf8'));
-            pkg.version = process.env.VSCE_VERSION;
+            pkg.version = '${{ steps.version.outputs.VSCE_VERSION }}';
             fs.writeFileSync('./apps/vscode/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
@@ -208,13 +209,13 @@ jobs:
 
       - name: Package VSIX
         run: |
-          cp LICENSE README.md apps/vscode/
+          cp LICENSE apps/vscode/
           cd apps/vscode && pnpm run build:ext:prod && pnpm run build:webview:prod && npx @vscode/vsce package --no-dependencies --pre-release
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v5
         with:
-          name: event-horizon-${{ env.VERSION }}.vsix
+          name: event-horizon-${{ steps.version.outputs.VERSION }}.vsix
           path: apps/vscode/*.vsix
           retention-days: 90
 
@@ -222,14 +223,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ env.TAG }}"
-          git push origin "${{ env.TAG }}"
+          git tag "${{ steps.version.outputs.TAG }}"
+          git push origin "${{ steps.version.outputs.TAG }}"
 
       - name: Create GitHub Pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
-          name: ${{ env.VERSION }}
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: ${{ steps.version.outputs.VERSION }}
           files: apps/vscode/*.vsix
           prerelease: true
           generate_release_notes: true
@@ -302,9 +303,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Read version
+        id: version
         run: |
           VERSION=$(node -p "require('./apps/vscode/package.json').version")
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "Release version: ${VERSION}"
 
       - name: Build all packages
@@ -312,15 +314,17 @@ jobs:
 
       - name: Package VSIX
         run: |
-          cp LICENSE README.md apps/vscode/
+          cp LICENSE apps/vscode/
           cd apps/vscode && pnpm run package:vsix
 
       - name: Create git tag
+        id: tag
         run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
           git fetch --tags
           if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
             echo "Tag v${VERSION} already exists — skipping release"
-            echo "TAG_EXISTS=true" >> $GITHUB_ENV
+            echo "TAG_EXISTS=true" >> $GITHUB_OUTPUT
           else
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -329,16 +333,16 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        if: env.TAG_EXISTS != 'true'
+        if: steps.tag.outputs.TAG_EXISTS != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}
-          name: v${{ env.VERSION }}
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: v${{ steps.version.outputs.VERSION }}
           files: apps/vscode/*.vsix
           generate_release_notes: true
 
       - name: Publish to VS Code Marketplace
-        if: env.TAG_EXISTS != 'true'
+        if: steps.tag.outputs.TAG_EXISTS != 'true'
         run: cd apps/vscode && npx @vscode/vsce publish --no-dependencies --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

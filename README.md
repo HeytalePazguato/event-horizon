@@ -1,6 +1,8 @@
 # Event Horizon
 
-Event Horizon is a VS Code extension that visualizes AI coding agents as a living cosmic system. Instead of viewing logs, terminals, or raw agent output, developers observe agent behavior in real time through an interactive universe.
+Event Horizon is a VS Code extension that monitors, coordinates, and prevents file collisions across AI coding agents. It visualizes agent behavior as a cosmic system — but underneath the planets and lightning arcs is a **real multi-agent coordination framework** with file locking, activity tracking, and an operations dashboard.
+
+**The problem it solves:** When you run 2-6 AI agents simultaneously (Claude Code, OpenCode, Copilot), they can silently overwrite each other's work. Event Horizon is the first tool that **hard-blocks** an agent from accessing a file that another agent is actively editing.
 
 ## Demo
 
@@ -80,6 +82,53 @@ File paths are extracted from each agent's tool-use payloads:
 - **Copilot** — `file_path` from `read_file`, `write_file`, `edit_file`, `insert_edit_into_file` tool inputs
 
 Only the file path string is extracted — file content is never captured or transmitted.
+
+### File Locking — Distributed Lock Manager
+
+Event Horizon includes a **distributed file lock manager** that prevents concurrent file access between agents. This is the first implementation of its kind for AI coding agents.
+
+#### How It Works
+
+1. **Lock acquisition**: When an agent's `PreToolUse` hook fires for a Write/Edit/Read tool with a `file_path`, the hook script calls Event Horizon's `/lock` API to acquire or check the lock.
+2. **Hard blocking**: If another agent holds the lock, the hook returns **exit code 2** — Claude Code's hard-block mechanism that prevents the tool from executing entirely. The agent sees a stderr message explaining which agent holds the lock and when to retry.
+3. **TTL-based expiry**: Locks auto-expire after 30 seconds of inactivity. Each write operation refreshes the TTL, so locks persist across read-write cycles as long as the agent is actively editing.
+4. **Agent termination cleanup**: When an agent disconnects, all its locks are released immediately.
+
+#### Lock API
+
+The event server (`127.0.0.1:28765`) exposes:
+
+| Endpoint | Action | Description |
+|----------|--------|-------------|
+| `POST /lock` | `check` | Acquire lock for writes (returns 409 if held by another agent) |
+| `POST /lock` | `query` | Check if locked without acquiring (for reads) |
+| `POST /lock` | `release` | Release a specific lock |
+
+#### Agent Support
+
+| Agent | Can Block? | Mechanism | Status |
+|-------|-----------|-----------|--------|
+| **Claude Code** | **YES** | PreToolUse hook → exit code 2 hard-blocks | Working |
+| **OpenCode** | YES (untested) | Plugin `tool.execute.before` → throw blocks | Implemented |
+| **Copilot** | No | Hooks are read-only curl | Advisory only |
+
+#### Configuration
+
+- **VS Code Setting**: `eventHorizon.fileLockingEnabled` (boolean, default: false)
+- **In-app toggle**: Settings modal → General → File Locking, or Operations status bar → "Locks ON/OFF"
+- **Requires hook reinstall** after enabling (Connect → Claude Code)
+
+Lock scripts are written to `~/.event-horizon/eh-lock-check.sh` as proper bash files — no inline `bash -c` quoting issues.
+
+### Operations Dashboard
+
+A full-screen dashboard alternative to the cosmic visualization. Toggle with `Ctrl+Shift+E O` or the layout button in the editor title bar. The Universe view is preserved (not destroyed) when switching — the PixiJS ticker pauses to save CPU.
+
+- **Agent Sidebar** (left, 200px) — "All Agents" overview + per-agent rows grouped by workspace. Planet icons, state color dots, working directory labels.
+- **Overview tab** — 4×3 metrics grid (Load, Tools, Prompts, Errors, Success%, Subagents, Uptime, Last Active, Tokens, Cost, Tasks, Prompts/min), tool breakdown bar chart. "All Agents" mode shows singularity stats + agent summary table.
+- **Files tab** — Full-size file activity heatmap with sortable columns (File, Total, Reads, Writes, Errors, Agents, Last Active), heat color legend, Full Paths toggle, click-to-expand per-agent breakdown.
+- **Logs tab** — Full-height searchable event log with event type filter chips, auto-scroll toggle, click-to-copy.
+- **Timeline tab** — Horizontal swimlane visualization with one row per agent, colored blocks for state changes (green), tool calls (amber), file operations (blue), and errors (red).
 
 ### Skills
 
@@ -186,6 +235,7 @@ The table below shows which agent lifecycle events are supported and their visua
 | **Token Usage** | ✅ | — | ✅ | Displayed in Command Center |
 | **Estimated Cost** | ✅ | — | ✅ | USD estimate in Command Center |
 | **Error** | ✅ | — | ✅ | Red error glow |
+| **File Locking** | ✅ | — | 🔧 | Tool hard-blocked (exit 2) |
 
 ### Known Limitations
 

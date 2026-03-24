@@ -204,6 +204,7 @@ function readVscodeConfig(): {
   achievementsEnabled: boolean;
   animationSpeed: number;
   eventServerPort: number;
+  fileLockingEnabled: boolean;
 } {
   const cfg = vscode.workspace.getConfiguration('eventHorizon');
   const settings: Record<string, { color: string; sizeMult: number }> = {};
@@ -218,6 +219,7 @@ function readVscodeConfig(): {
     achievementsEnabled: cfg.get<boolean>('achievementsEnabled', true),
     animationSpeed: cfg.get<number>('animationSpeed', 1.0),
     eventServerPort: cfg.get<number>('port', 28765),
+    fileLockingEnabled: cfg.get<boolean>('fileLockingEnabled', false),
   };
 }
 
@@ -227,6 +229,7 @@ async function writeVscodeConfig(msg: {
   achievementsEnabled?: boolean;
   animationSpeed?: number;
   eventServerPort?: number;
+  fileLockingEnabled?: boolean;
 }): Promise<void> {
   const cfg = vscode.workspace.getConfiguration('eventHorizon');
   if (msg.achievementsEnabled !== undefined) {
@@ -237,6 +240,9 @@ async function writeVscodeConfig(msg: {
   }
   if (msg.eventServerPort !== undefined) {
     await cfg.update('port', msg.eventServerPort, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.fileLockingEnabled !== undefined) {
+    await cfg.update('fileLockingEnabled', msg.fileLockingEnabled, vscode.ConfigurationTarget.Global);
   }
   if (msg.settings) {
     for (const [cfgKey, storeKey] of Object.entries(AGENT_CONFIG_MAP)) {
@@ -270,8 +276,9 @@ function wireUniverseWebview(
       void webview.postMessage({
         type: 'init-settings',
         ...cfg,
-        // Preserve non-config settings (tourCompleted) from globalState
+        // Preserve non-config settings from globalState
         tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
+        viewMode: (savedGeneral as Record<string, unknown> | undefined)?.viewMode,
       });
     }
   });
@@ -307,6 +314,7 @@ function wireUniverseWebview(
       ...vscodeSettings,
       // Preserve non-config settings from globalState
       tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
+      viewMode: (savedGeneral as Record<string, unknown> | undefined)?.viewMode,
     });
 
     const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
@@ -348,6 +356,7 @@ function wireUniverseWebview(
       // Write to globalState (non-config settings like tourCompleted)
       void context.globalState.update('generalSettings', {
         tourCompleted: msg.tourCompleted,
+        viewMode: msg.viewMode,
       });
       // Write to VS Code native settings — suppress echo to avoid feedback loop
       suppressConfigEcho = true;
@@ -356,6 +365,7 @@ function wireUniverseWebview(
         achievementsEnabled: msg.achievementsEnabled as boolean | undefined,
         animationSpeed: msg.animationSpeed as number | undefined,
         eventServerPort: msg.eventServerPort as number | undefined,
+        fileLockingEnabled: msg.fileLockingEnabled as boolean | undefined,
       }).finally(() => {
         // Re-enable after a small delay to let all config change events flush
         setTimeout(() => { suppressConfigEcho = false; }, 200);

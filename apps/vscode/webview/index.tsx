@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
+import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { SkillInfo, CreateSkillRequest, MarketplaceSkillResult } from '@event-horizon/ui';
 import type { AgentState, AgentRuntimeState } from '@event-horizon/core';
 import type { AgentMetrics } from '@event-horizon/core';
@@ -204,6 +204,12 @@ function App() {
     const handler = (e: MessageEvent<EventPayload>) => {
       const msg = e.data;
 
+      // toggle-view: switch between Universe and Operations modes
+      if (msg?.type === 'toggle-view') {
+        useCommandCenterStore.getState().toggleViewMode();
+        return;
+      }
+
       // connected-agents: update hook install state
       if (msg?.type === 'connected-agents') {
         setConnectedAgentTypes((msg as unknown as { agentTypes: string[] }).agentTypes ?? []);
@@ -251,6 +257,7 @@ function App() {
           animationSpeed?: number;
           eventServerPort?: number;
           tourCompleted?: boolean;
+          viewMode?: 'universe' | 'operations';
         };
         const store = useCommandCenterStore.getState();
         if (data.settings) store.setVisualSettings(data.settings);
@@ -258,6 +265,8 @@ function App() {
         if (data.animationSpeed !== undefined) store.setAnimationSpeed(data.animationSpeed);
         if (data.eventServerPort !== undefined) store.setEventServerPort(data.eventServerPort);
         if (data.tourCompleted !== undefined) store.setTourCompleted(data.tourCompleted);
+        if (data.viewMode) store.setViewMode(data.viewMode);
+        if (data.fileLockingEnabled !== undefined) store.setFileLockingEnabled(data.fileLockingEnabled);
         return;
       }
 
@@ -322,6 +331,20 @@ function App() {
           store.recordFileOp(errNorm, errBase, agentId, agentName, agentType, 'error', errCwd);
         }
       }
+      // ── Timeline recording ──
+      const tlBase = { ts: Date.now(), agentId, agentName, agentType };
+      if (type === 'agent.spawn') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'spawned' });
+      else if (type === 'agent.terminate') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'terminated' });
+      else if (type === 'agent.error') store.addTimelineEntry({ ...tlBase, kind: 'error', label: (raw.payload?.message as string)?.slice(0, 60) ?? 'error' });
+      else if (type === 'tool.call') {
+        const toolName = (raw.payload?.toolName as string) ?? 'unknown';
+        store.addTimelineEntry({ ...tlBase, kind: 'tool', label: toolName });
+      } else if (type === 'file.read' || type === 'file.write') {
+        const fp = (raw.payload?.filePath as string) ?? '';
+        const fn = fp.split(/[/\\]/).pop() ?? fp;
+        store.addTimelineEntry({ ...tlBase, kind: 'file', label: `${type === 'file.write' ? 'W' : 'R'} ${fn}` });
+      }
+
       // agentsSeen is now tracked at upsert time (below) to catch all agent types
 
       // agent.terminate: clean up all state for this agent — 2.4
@@ -613,6 +636,8 @@ function App() {
   const achievementsEnabled  = useCommandCenterStore((s) => s.achievementsEnabled);
   const eventServerPort      = useCommandCenterStore((s) => s.eventServerPort);
   const tourCompleted        = useCommandCenterStore((s) => s.tourCompleted);
+  const viewMode             = useCommandCenterStore((s) => s.viewMode);
+  const fileLockingEnabled   = useCommandCenterStore((s) => s.fileLockingEnabled);
   const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
@@ -624,10 +649,12 @@ function App() {
         animationSpeed,
         eventServerPort,
         tourCompleted,
+        viewMode,
+        fileLockingEnabled,
       });
     }, 500);
     return () => { if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current); };
-  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted]);
+  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted, viewMode, fileLockingEnabled]);
 
   // ── Stale-agent safety net — fallback cleanup if exit signal was missed ──
   // Only reaps agents that lack a proper exit signal (e.g. Copilot passive listener).
@@ -1031,6 +1058,8 @@ function App() {
             const demoBase = demoFile.split('/').pop() ?? demoFile;
             const demoOp = (t === 'Write' || t === 'Edit') ? 'write' : 'read';
             useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp, a.cwd);
+            // Record timeline entry for demo
+            useCommandCenterStore.getState().addTimelineEntry({ ts: Date.now(), agentId: a.id, agentName: a.name, agentType: a.agentType, kind: 'tool', label: t });
           }
           next[a.id] = {
             ...m,
@@ -1126,6 +1155,7 @@ function App() {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
     }
     useCommandCenterStore.getState().clearFileActivity();
+    useCommandCenterStore.getState().clearTimeline();
   }, []);
 
   // Sync demo simulation with store flag (placed after callbacks are defined)
@@ -1308,6 +1338,8 @@ function App() {
         background: 'transparent',
       }}
     >
+      {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state */}
+      <div style={{ flex: 1, display: viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
       <div
         ref={panelSize.ref}
         data-tour="universe"
@@ -1351,6 +1383,7 @@ function App() {
           onKamikaze={handleKamikaze}
           onCowDrop={handleCowDrop}
           onShootingStarClicked={handleShootingStarClicked}
+          visible={viewMode === 'universe'}
         />
       </div>
       {showOnboarding && (
@@ -1478,6 +1511,23 @@ function App() {
         </div>
       )}
       <CommandCenter onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+      </div>{/* end: universe view wrapper */}
+
+      {/* Operations view — full-screen dashboard (rendered only when active) */}
+      {viewMode === 'operations' && (
+        <OperationsView
+          agents={agents}
+          agentMap={agentMap}
+          metricsMap={metricsMap}
+          agentStates={agentStates}
+          onOpenSkill={handleOpenSkill}
+          onCreateSkill={toggleCreateSkill}
+          onOpenMarketplace={toggleMarketplace}
+          onMoveSkill={handleMoveSkill}
+          onDuplicateSkill={handleDuplicateSkill}
+        />
+      )}
+
       <AchievementToasts />
       {infoOpen && (
         <div
@@ -1586,7 +1636,7 @@ function App() {
                     </div>
                   ) : c.status === 'available' ? (
                     <button type="button"
-                      onClick={() => { vscodeApi?.postMessage({ type: 'setup-agent', agentType: c.id }); toggleConnect(); }}
+                      onClick={() => { vscodeApi?.postMessage({ type: 'setup-agent', agentType: c.id }); }}
                       style={{ padding: '4px 10px', border: '1px solid #25904a', background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)', color: '#50c070', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
                       Install
                     </button>

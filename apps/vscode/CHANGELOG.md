@@ -2,6 +2,25 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [0.1.0] — 2026-03-21
+
+### Added
+- **Operations View**: full-screen dashboard alternative to the Universe. Toggle via the `$(layout)` button in the editor title bar, the `&#x2261;` button in the Command Center header, or `Ctrl+Shift+E O`. Same editor tab — the Universe is hidden (not destroyed) and the PixiJS ticker pauses to save CPU
+- **Agent Sidebar**: left navigation panel (200px) in Operations view showing "All Agents" (singularity stats) + per-agent rows grouped by workspace with planet icons and state color dots. Click to select/filter
+- **Overview tab**: full-width 4×3 metrics grid with 16px values, agent header (planet icon + name + type + state + cwd), horizontal tool breakdown bar chart. "All Agents" mode shows singularity stats + agent summary table with per-agent Load, Tools, Errors, Tokens, Cost columns
+- **Files tab (expanded)**: sortable columns (File, Ops, Reads, Writes, Errors, Agents, Last Active) with click-to-sort arrows. Full Paths toggle, heat color legend, click-to-expand rows showing per-agent breakdown with colored dots and portal tooltips
+- **Logs tab (expanded)**: full-height searchable event log with event type filter chips, auto-scroll toggle, click-to-copy entries, filtered by selected agent in sidebar
+- **Timeline tab**: horizontal swimlane visualization — one row per agent, colored blocks for state changes (green), tool calls (amber), file ops (blue), and errors (red). Auto-scrolls to "now" line, hover tooltips with event details. Rolling buffer of 500 entries
+- **Timeline event recording**: agent.spawn, agent.terminate, agent.error, tool.call, file.read, file.write events all feed the timeline buffer. Demo simulation also records timeline entries
+- **View toggle command**: `eventHorizon.toggleView` registered as VS Code command with `$(layout)` icon in editor title bar and `Ctrl+Shift+E O` keybinding
+- **Agent grouping utility**: `groupAgentsByWorkspace()` groups agents by working directory folder name, sorts alphabetically, puts "Solo" agents last. Reused by sidebar and available for future features
+- **File locking — distributed lock manager for AI agents**: when enabled via `eventHorizon.fileLockingEnabled` setting (or the toggle in Settings modal / Operations status bar), agents must acquire a lock before accessing a file. If another agent holds the lock, **both reads and writes are hard-blocked** (exit code 2) — the tool does not execute and the agent sees a clear message: "BLOCKED: file is locked by Agent X. Work on other files first, retry in 30 seconds." Locks auto-expire after 30 seconds (TTL) and refresh on each write, so they persist across read-write cycles. Locks are released on agent termination. Lock check scripts are written to `~/.event-horizon/eh-lock-check.sh` (no inline bash quoting issues). New `/lock` API route on the event server (check/acquire/query/release). **Currently supported: Claude Code** (PreToolUse exit code 2 hard-blocks). OpenCode plugin has lock checking but blocking behavior is untested. Copilot hooks not yet implemented. Disabled by default — requires reinstalling hooks after enabling
+- **15 new tests**: viewMode toggle (3), timeline buffer + cap (3), groupAgentsByWorkspace (6), folderName (3). Total: 254 → 269
+
+### Improved
+
+### Fixed
+
 ## [0.0.9] — 2026-03-21
 
 ### Added

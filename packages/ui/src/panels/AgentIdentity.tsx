@@ -17,7 +17,7 @@ const stateColors: Record<string, string> = {
 };
 
 // SVG planet icons keyed by agentType — each structurally distinct
-function PlanetIcon({ type, size = 52 }: { type: string; size?: number }) {
+export function PlanetIcon({ type, size = 52 }: { type: string; size?: number }) {
   const r = size / 2;
   const cx = r;
   const cy = r;
@@ -138,7 +138,7 @@ function PlanetIcon({ type, size = 52 }: { type: string; size?: number }) {
   );
 }
 
-function SingularityIcon({ size = 52 }: { size?: number }) {
+export function SingularityIcon({ size = 52 }: { size?: number }) {
   const r = size / 2;
   const cx = r;
   const cy = r;

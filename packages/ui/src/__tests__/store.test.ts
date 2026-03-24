@@ -9,6 +9,8 @@ import { useCommandCenterStore, clearAllBoostTimers, EMPTY_SINGULARITY_STATS, DE
 beforeEach(() => {
   clearAllBoostTimers();
   useCommandCenterStore.setState({
+    viewMode: 'universe',
+    timeline: [],
     selectedAgentId: null,
     selectedAgent: null,
     selectedMetrics: null,
@@ -317,5 +319,59 @@ describe('visual settings', () => {
     };
     useCommandCenterStore.getState().setVisualSettings(custom);
     expect(useCommandCenterStore.getState().visualSettings).toEqual(custom);
+  });
+});
+
+// ── View mode ────────────────────────────────────────────────────────────────
+
+describe('viewMode', () => {
+  it('defaults to universe', () => {
+    expect(useCommandCenterStore.getState().viewMode).toBe('universe');
+  });
+
+  it('toggleViewMode flips between universe and operations', () => {
+    useCommandCenterStore.getState().toggleViewMode();
+    expect(useCommandCenterStore.getState().viewMode).toBe('operations');
+    useCommandCenterStore.getState().toggleViewMode();
+    expect(useCommandCenterStore.getState().viewMode).toBe('universe');
+  });
+
+  it('setViewMode sets directly', () => {
+    useCommandCenterStore.getState().setViewMode('operations');
+    expect(useCommandCenterStore.getState().viewMode).toBe('operations');
+  });
+});
+
+// ── Timeline ─────────────────────────────────────────────────────────────────
+
+describe('timeline', () => {
+  const makeEntry = (i: number) => ({
+    ts: Date.now() + i,
+    agentId: `agent-${i}`,
+    agentName: `Agent ${i}`,
+    agentType: 'claude-code',
+    kind: 'tool' as const,
+    label: `tool-${i}`,
+  });
+
+  it('addTimelineEntry appends entries', () => {
+    useCommandCenterStore.getState().addTimelineEntry(makeEntry(1));
+    useCommandCenterStore.getState().addTimelineEntry(makeEntry(2));
+    expect(useCommandCenterStore.getState().timeline).toHaveLength(2);
+  });
+
+  it('caps at 500 entries', () => {
+    for (let i = 0; i < 510; i++) {
+      useCommandCenterStore.getState().addTimelineEntry(makeEntry(i));
+    }
+    expect(useCommandCenterStore.getState().timeline).toHaveLength(500);
+    // Oldest entries pruned — first entry should be entry 10
+    expect(useCommandCenterStore.getState().timeline[0].label).toBe('tool-10');
+  });
+
+  it('clearTimeline empties the buffer', () => {
+    useCommandCenterStore.getState().addTimelineEntry(makeEntry(1));
+    useCommandCenterStore.getState().clearTimeline();
+    expect(useCommandCenterStore.getState().timeline).toHaveLength(0);
   });
 });

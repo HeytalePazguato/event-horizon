@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Real-time visual monitoring for Claude Code, OpenCode & Copilot — see agent activity, file collisions, token costs, and cooperation at a glance.",
@@ -45,6 +45,11 @@
       {
         "command": "eventHorizon.setupClaudeCode",
         "title": "Event Horizon: Connect Claude Code"
+      },
+      {
+        "command": "eventHorizon.toggleView",
+        "title": "Event Horizon: Toggle Operations View",
+        "icon": "$(layout)"
       }
     ],
     "menus": {
@@ -52,6 +57,11 @@
         {
           "command": "eventHorizon.open",
           "group": "navigation"
+        },
+        {
+          "command": "eventHorizon.toggleView",
+          "group": "navigation",
+          "when": "activeWebviewPanelId == 'eventHorizon.universe'"
         }
       ]
     },
@@ -60,6 +70,11 @@
         "command": "eventHorizon.open",
         "key": "ctrl+shift+e h",
         "mac": "cmd+shift+e h"
+      },
+      {
+        "command": "eventHorizon.toggleView",
+        "key": "ctrl+shift+e o",
+        "mac": "cmd+shift+e o"
       }
     ],
     "configuration": {
@@ -72,6 +87,12 @@
           "maximum": 65535,
           "description": "Port for the local event server that receives agent hooks. Requires extension restart.",
           "order": 1
+        },
+        "eventHorizon.fileLockingEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable file locking to prevent multiple agents from writing to the same file simultaneously. When enabled, agents must acquire a lock before writing — conflicting writes are blocked. Requires reinstalling hooks.",
+          "order": 2
         },
         "eventHorizon.animationSpeed": {
           "type": "number",

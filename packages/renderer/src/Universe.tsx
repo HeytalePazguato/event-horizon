@@ -109,6 +109,8 @@ export interface UniverseProps {
   onCowDrop?: () => void;
   /** Called when the user clicks on a shooting star. */
   onShootingStarClicked?: () => void;
+  /** When false, the PixiJS ticker is paused to save CPU (e.g. Operations view is active). */
+  visible?: boolean;
 }
 
 // --- constants -----------------------------------------------------------
@@ -312,6 +314,7 @@ export const Universe: FC<UniverseProps> = ({
   onKamikaze,
   onCowDrop,
   onShootingStarClicked,
+  visible = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -393,6 +396,7 @@ export const Universe: FC<UniverseProps> = ({
   const visualSettingsRef = useRef(visualSettings);
   const settingsRevRef = useRef(0);
   const animationSpeedRef = useRef(animationSpeed);
+  const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
   const skillOrbitsRef = useRef<Map<string, ExtendedSkillOrbit>>(new Map());
@@ -466,6 +470,7 @@ export const Universe: FC<UniverseProps> = ({
     }
   }, [visualSettings]);
   useEffect(() => { animationSpeedRef.current = animationSpeed; }, [animationSpeed]);
+  useEffect(() => { visibleRef.current = visible; }, [visible]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
   useEffect(() => { sparksRef.current = sparks; }, [sparks]);
@@ -722,6 +727,14 @@ export const Universe: FC<UniverseProps> = ({
       stars.y = -height / 2;
     }
   }, [width, height, canvasReady]);
+
+  // --- pause ticker when hidden (Operations view) --------------------------
+  useEffect(() => {
+    const app = appRef.current;
+    if (!app) return;
+    if (visible) { try { app.ticker.start(); } catch { /* ignore */ } }
+    else { try { app.ticker.stop(); } catch { /* ignore */ } }
+  }, [visible, canvasReady]);
 
   // --- re-center -----------------------------------------------------------
   useEffect(() => {
@@ -1361,6 +1374,8 @@ export const Universe: FC<UniverseProps> = ({
     const scheduleUfo = () => {
       const delay = UFO_INTERVAL_MIN_MS + Math.random() * (UFO_INTERVAL_MAX_MS - UFO_INTERVAL_MIN_MS);
       ufoTimerRef.current = setTimeout(() => {
+        // Skip UFO spawn while hidden (Operations view or browser tab)
+        if (document.hidden || !visibleRef.current) { scheduleUfo(); return; }
         const kids = planetsContainer.children;
         const eufo = ufo as ExtendedUfo;
         const isFlyby = Math.random() < UFO_FLYBY_CHANCE || kids.length === 0;
@@ -1468,9 +1483,9 @@ export const Universe: FC<UniverseProps> = ({
     const spawnShootingStars = () => {
       const delay = SHOOTING_STAR_INTERVAL_MIN + Math.random() * (SHOOTING_STAR_INTERVAL_MAX - SHOOTING_STAR_INTERVAL_MIN);
       shootingStarTimerRef.current = setTimeout(() => {
-        // Don't spawn shooting stars while the panel is hidden — they accumulate
-        // and all appear at once when the panel becomes visible again.
-        if (document.hidden) { spawnShootingStars(); return; }
+        // Don't spawn shooting stars while hidden (browser tab or Operations view) —
+        // they accumulate and all appear at once when visible again.
+        if (document.hidden || !visibleRef.current) { spawnShootingStars(); return; }
         const sz = sizeRef.current;
         const scale = scaleRef.current;
         const pan = posRef.current;
