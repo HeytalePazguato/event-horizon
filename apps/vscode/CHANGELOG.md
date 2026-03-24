@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [0.1.0] — Unreleased
+## [0.1.0] — 2026-03-21
 
 ### Added
 - **Operations View**: full-screen dashboard alternative to the Universe. Toggle via the `$(layout)` button in the editor title bar, the `&#x2261;` button in the Command Center header, or `Ctrl+Shift+E O`. Same editor tab — the Universe is hidden (not destroyed) and the PixiJS ticker pauses to save CPU
