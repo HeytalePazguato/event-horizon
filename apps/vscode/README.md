@@ -1,6 +1,6 @@
 # Event Horizon
 
-**Real-time visual monitoring for AI coding agents.** See what Claude Code, OpenCode, and GitHub Copilot are doing, at a glance.
+**The multi-agent control plane for AI coding.** Monitor, coordinate, and prevent file collisions across Claude Code, OpenCode, and GitHub Copilot — all from one dashboard.
 
 ![Event Horizon Demo](https://raw.githubusercontent.com/HeytalePazguato/event-horizon/master/assets/demo.gif)
 
@@ -8,15 +8,14 @@
 
 ## Why Event Horizon?
 
-Running AI agents in your editor means trusting processes you can't easily see. Event Horizon gives you **instant situational awareness**:
+Running multiple AI agents means they can step on each other's work. Event Horizon is the first tool that **actually prevents it**:
 
-- **Which agents are running** and what state they're in (thinking, tool use, waiting for input, error)
-- **File collisions**: two agents editing the same file trigger a visible lightning arc between their planets
-- **Token burn & cost**: per-agent token usage and estimated USD cost, updated in real time
-- **Agent cooperation**: agents sharing a workspace show automatic data-transfer ships between them
-- **Subagent tracking**: spawned subagents appear as moons orbiting the parent planet
+- **File Locking** — When Agent A is editing a file, Agent B is **hard-blocked** from accessing it. Not a warning — the tool call is prevented. B sees a clear message and works on other files until A is done. No interleaved writes, no merge conflicts, no lost work.
+- **File Activity Heatmap** — See which files each agent touches, which are contested (multiple agents), and which have errors. Sort by activity, contention, or recency.
+- **Operations Dashboard** — Full-screen view with agent sidebar, sortable file table, searchable logs, and agent timeline. Toggle between the cosmic visualization and the ops dashboard.
+- **Live Monitoring** — Per-agent token usage, cost tracking, tool call counts, error rates. Lightning arcs when agents touch the same file. Asteroid belts around workspace groups.
 
-All of this runs **locally on your machine**, no data leaves localhost, no telemetry, no external calls.
+All of this runs **100% locally** on your machine. No data leaves localhost, no telemetry, no external calls.
 
 ## Get Started (30 seconds)
 
@@ -37,6 +36,29 @@ Each agent is a planet. Planet type reflects the agent ecosystem, gas giants for
 ### File Collision Detection
 
 When two agents edit the same file within 10 seconds, a **lightning arc crackles between their planets** with the filename displayed at the midpoint. Spot conflicts before they become merge headaches.
+
+### File Locking (Multi-Agent Collision Prevention)
+
+The first distributed lock manager for AI coding agents. When enabled:
+
+1. Agent A starts writing to `src/index.ts` → Event Horizon acquires a lock
+2. Agent B tries to read or write `src/index.ts` → **tool call is blocked** (hard-block, not a warning)
+3. Agent B sees: *"BLOCKED: src/index.ts is locked by Claude Code (project-a). Work on other files first, retry in 30 seconds."*
+4. Agent A finishes → lock auto-releases → Agent B retries successfully
+
+**Result:** clean sequential file access, zero interleaved writes.
+
+Enable in Settings (`eventHorizon.fileLockingEnabled`) or toggle "Locks ON/OFF" in the Operations dashboard. Currently supported for Claude Code. OpenCode support in progress.
+
+### Operations Dashboard
+
+A full-screen alternative to the cosmic view. Toggle with `Ctrl+Shift+E O` or the layout icon in the editor title bar.
+
+- **Agent Sidebar** — All connected agents grouped by workspace, with state indicators
+- **Overview** — Full-width metrics grid with tool breakdown charts
+- **Files** — Sortable heatmap table: Total ops, Reads, Writes, Errors, Agents, Last Active
+- **Logs** — Searchable event log with type filters and auto-scroll
+- **Timeline** — Horizontal swimlane showing each agent's activity over time
 
 ### Workspace Grouping
 

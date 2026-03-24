@@ -10,7 +10,7 @@ import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
 import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
-import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks } from './setupHooks';
+import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
 import { setupCopilotHooks, hasStaleCopilotHooks } from './setupCopilotHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
@@ -332,7 +332,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
     .then(async () => {
-      // Refresh hooks only if the token changed (stale from a previous session)
+      // Always regenerate lock scripts with the current session token
+      await ensureLockScripts();
+
+      // Refresh hooks if the token changed (stale from a previous session)
       const [staleClaude, staleOpenCode, staleCopilot] = await Promise.all([
         hasStaleClaudeCodeHooks(),
         hasStaleOpenCodeHooks(),

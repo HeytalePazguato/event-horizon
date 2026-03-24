@@ -49,7 +49,7 @@ function buildEhCommand(): string {
  * and return the path. Called once during hook setup.
  * The script is a proper file — no quoting issues, no inline bash -c nightmares.
  */
-async function ensureLockScripts(): Promise<{ checkScript: string; releaseScript: string }> {
+export async function ensureLockScripts(): Promise<{ checkScript: string; releaseScript: string }> {
   const dir = path.join(os.homedir(), '.event-horizon');
   await fsp.mkdir(dir, { recursive: true });
 

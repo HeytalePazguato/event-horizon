@@ -1520,6 +1520,11 @@ function App() {
           agentMap={agentMap}
           metricsMap={metricsMap}
           agentStates={agentStates}
+          onOpenSkill={handleOpenSkill}
+          onCreateSkill={toggleCreateSkill}
+          onOpenMarketplace={toggleMarketplace}
+          onMoveSkill={handleMoveSkill}
+          onDuplicateSkill={handleDuplicateSkill}
         />
       )}
 
@@ -1631,7 +1636,7 @@ function App() {
                     </div>
                   ) : c.status === 'available' ? (
                     <button type="button"
-                      onClick={() => { vscodeApi?.postMessage({ type: 'setup-agent', agentType: c.id }); toggleConnect(); }}
+                      onClick={() => { vscodeApi?.postMessage({ type: 'setup-agent', agentType: c.id }); }}
                       style={{ padding: '4px 10px', border: '1px solid #25904a', background: 'linear-gradient(180deg, #1a3828 0%, #0f2018 100%)', color: '#50c070', fontSize: 10, cursor: 'pointer', flexShrink: 0 }}>
                       Install
                     </button>

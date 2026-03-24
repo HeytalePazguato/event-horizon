@@ -13,8 +13,9 @@ import { OverviewPanel } from './panels/OverviewPanel.js';
 import { FileHeatmapFull } from './panels/FileHeatmapFull.js';
 import { LogsPanel } from './panels/LogsPanel.js';
 import { TimelinePanel } from './panels/TimelinePanel.js';
+import { SkillsPanel } from './panels/SkillsPanel.js';
 
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline';
+type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -34,9 +35,14 @@ export interface OperationsViewProps {
   agentMap: Record<string, AgentState>;
   metricsMap: Record<string, AgentMetrics>;
   agentStates: Record<string, string>;
+  onOpenSkill?: (filePath: string) => void;
+  onCreateSkill?: () => void;
+  onOpenMarketplace?: () => void;
+  onMoveSkill?: (filePath: string, newCategory: string) => void;
+  onDuplicateSkill?: (filePath: string, newName: string) => void;
 }
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
@@ -44,6 +50,13 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
   const demoMode = useCommandCenterStore((s) => s.demoMode);
   const demoStartedAt = useCommandCenterStore((s) => s.demoStartedAt);
   const requestDemo = useCommandCenterStore((s) => s.requestDemo);
+  const toggleConnect = useCommandCenterStore((s) => s.toggleConnect);
+  const toggleSpawn = useCommandCenterStore((s) => s.toggleSpawn);
+  const requestExport = useCommandCenterStore((s) => s.requestExport);
+  const requestScreenshot = useCommandCenterStore((s) => s.requestScreenshot);
+  const toggleInfo = useCommandCenterStore((s) => s.toggleInfo);
+  const toggleSettings = useCommandCenterStore((s) => s.toggleSettings);
+  const skillsCount = useCommandCenterStore((s) => s.skills.length);
 
   // Agent cwd map for timeline labels
   const agentCwds = useMemo(
@@ -77,9 +90,10 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
 
         {/* Right: tabs + content */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
-          {/* Tab bar */}
+          {/* Tab bar + command buttons */}
           <div style={{
             display: 'flex',
+            alignItems: 'center',
             borderBottom: '1px solid #1a3020',
             background: 'rgba(8,16,10,0.8)',
             flexShrink: 0,
@@ -88,6 +102,40 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             <button type="button" style={tabStyle(activeTab === 'files')} onClick={() => setActiveTab('files')}>Files</button>
             <button type="button" style={tabStyle(activeTab === 'logs')} onClick={() => setActiveTab('logs')}>Logs</button>
             <button type="button" style={tabStyle(activeTab === 'timeline')} onClick={() => setActiveTab('timeline')}>Timeline</button>
+            <button type="button" style={tabStyle(activeTab === 'skills')} onClick={() => setActiveTab('skills')}>
+              Skills{skillsCount > 0 ? ` (${skillsCount})` : ''}
+            </button>
+
+            {/* Command buttons — right-aligned */}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: '0 8px' }}>
+              {([
+                { label: 'Connect', action: toggleConnect },
+                { label: 'Spawn', action: toggleSpawn },
+                { label: 'Export', action: requestExport },
+                { label: 'Screenshot', action: requestScreenshot },
+                { label: 'Demo', action: requestDemo },
+                { label: 'Info', action: toggleInfo },
+                { label: 'Settings', action: toggleSettings },
+              ] as Array<{ label: string; action: () => void }>).map((cmd) => (
+                <button
+                  key={cmd.label}
+                  type="button"
+                  onClick={cmd.action}
+                  style={{
+                    padding: '3px 8px',
+                    border: '1px solid #1a3020',
+                    borderRadius: 2,
+                    background: 'transparent',
+                    color: '#4a7a58',
+                    fontSize: 10,
+                    fontFamily: 'Consolas, monospace',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {cmd.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Tab content */}
@@ -108,6 +156,11 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             {activeTab === 'timeline' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
                 <TimelinePanel agentCwds={agentCwds} />
+              </div>
+            )}
+            {activeTab === 'skills' && (
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />
               </div>
             )}
           </div>
