@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
@@ -170,6 +170,11 @@ export function activate(context: vscode.ExtensionContext): void {
   //   updateBadge(agentStateManager);
   // }
 
+  // ── Transcript-based smart lock release ────────────────────────────────────
+  // Track last locked file per agent for smart release: when an agent writes to
+  // a DIFFERENT file, release the previous lock automatically.
+  const lastLockedFileByAgent = new Map<string, string>();
+
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
     // Skip if hooks already emitted this type for this agent recently
@@ -178,6 +183,26 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
+
+    // Smart lock release: agent idle (end_turn) → release all locks
+    if (event.type === 'agent.idle') {
+      lockManager.releaseAll(event.agentId);
+      lastLockedFileByAgent.delete(event.agentId);
+    }
+
+    // Smart lock release: agent writes to a different file → release previous lock
+    if (event.type === 'tool.call' && event.payload?.filePath) {
+      const filePath = event.payload.filePath as string;
+      const toolName = event.payload.toolName as string | undefined;
+      const isWrite = toolName === 'Write' || toolName === 'WriteFile' || toolName === 'Edit' || toolName === 'MultiEdit';
+      if (isWrite) {
+        const lastFile = lastLockedFileByAgent.get(event.agentId);
+        if (lastFile && lastFile !== filePath) {
+          lockManager.release(lastFile, event.agentId);
+        }
+        lastLockedFileByAgent.set(event.agentId, filePath);
+      }
+    }
   }
 
   // ── Copilot subagent session tracking ──────────────────────────────────────
