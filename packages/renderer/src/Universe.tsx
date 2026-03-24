@@ -28,6 +28,11 @@ import {
 } from './math.js';
 import type { AgentView, WorkspaceGroup } from './math.js';
 export type { AgentView, WorkspaceGroup } from './math.js';
+import { updateShips } from './systems/ShipSystem.js';
+import { updateShootingStars } from './systems/ShootingStarSystem.js';
+import { updateUFO } from './systems/UFOSystem.js';
+import { updateAstronaut, updateJetSpray } from './systems/AstronautSystem.js';
+import type { PlanetInfo, ViewportBounds } from './systems/AstronautSystem.js';
 
 export interface MetricsView {
   load: number;
@@ -119,23 +124,14 @@ const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
 const INITIAL_W = 640;
 const INITIAL_H = 400;
-const GRAVITY_STRENGTH = 0.8;
-const SINGULARITY_PULL = 1.2;
-const ASTRONAUT_MAX_SPEED = 3;
-const ASTRONAUT_SUCK_RADIUS = 92;   // outer glow of singularity — suck-in starts here
-const ASTRONAUT_GRAZE_RADIUS = 120; // near-miss zone just outside the gravity well
-const ASTRONAUT_DESTROY_RADIUS = 30;
-const SHIP_PROGRESS_SPEED = 0.008;
-// SHIP_AVOID_RADIUS imported from math.ts
-const MAX_TRAIL_POINTS = 32;
+// Physics/ship constants moved to systems — keeping SHIP_AVOID_RADIUS import from math.ts
 const UFO_INTERVAL_MIN_MS = 25000;
 const UFO_INTERVAL_MAX_MS = 55000;
 const UFO_FLYBY_CHANCE = 0.4; // 40% of UFOs just fly by without abducting
 const SHOOTING_STAR_INTERVAL_MIN = 30000;  // ms between shooting stars
 const SHOOTING_STAR_INTERVAL_MAX = 90000;
 const SHOOTING_STAR_MAX_BURST = 3; // up to 3 shooting stars per event
-const ASTRONAUT_JET_MIN_MS = 45_000;      // 45 seconds minimum before jet fires
-const ASTRONAUT_JET_MAX_MS = 120_000;     // 2 minutes max
+// Astronaut jet constants moved to AstronautSystem
 
 // PLANET_MIN_RADIUS imported from math.ts
 
@@ -1746,259 +1742,83 @@ export const Universe: FC<UniverseProps> = ({
         }
       }
 
-      // Animate ships along bezier arcs
-      const activeShips = activeShipsRef.current;
-      for (let i = activeShips.length - 1; i >= 0; i--) {
-        const s = activeShips[i];
-        s.progress += SHIP_PROGRESS_SPEED;
+      // Animate ships along bezier arcs (delegated to ShipSystem)
+      updateShips(activeShipsRef.current, {
+        onShipRemoved: (id) => spawnedShipIdsRef.current.delete(id),
+      });
 
-        if (s.progress >= 1) {
-          s.c.destroy({ children: true });
-          try { s.trailG.destroy(); } catch { /* ignore */ }
-          try { s.routeG.destroy(); } catch { /* ignore */ }
-          activeShips.splice(i, 1);
-          spawnedShipIdsRef.current.delete(s.id);
-          continue;
-        }
-
-        const pos = bezierPoint(s.progress, s.fromX, s.fromY, s.cx, s.cy, s.toX, s.toY);
-        s.c.x = pos.x;
-        s.c.y = pos.y;
-
-        const ahead = bezierPoint(
-          Math.min(1, s.progress + 0.02),
-          s.fromX, s.fromY, s.cx, s.cy, s.toX, s.toY,
-        );
-        s.c.rotation = Math.atan2(ahead.y - pos.y, ahead.x - pos.x);
-
-        s.trailPoints.push({ x: pos.x, y: pos.y });
-        if (s.trailPoints.length > MAX_TRAIL_POINTS) s.trailPoints.shift();
-
-        s.trailG.clear();
-        const pts = s.trailPoints;
-        if (pts.length >= 2) {
-          for (let j = 1; j < pts.length; j++) {
-            const alpha = (j / pts.length) * 0.5;
-            const strokeWidth = 0.8 + (j / pts.length) * 0.6;
-            s.trailG
-              .moveTo(pts[j - 1].x, pts[j - 1].y)
-              .lineTo(pts[j].x, pts[j].y)
-              .stroke({ width: strokeWidth, color: s.trailColor, alpha });
-          }
-        }
-      }
-
-      // Astronaut physics
+      // Astronaut physics (delegated to AstronautSystem)
       const astros = astronautsRef.current;
       const planets = planetsContainer.children as ExtendedPlanet[];
+      const planetInfos: PlanetInfo[] = planets.map((p) => ({
+        x: p.x, y: p.y, radius: p.__radius ?? 15, agentId: p.__agentId,
+      }));
+      const sz = sizeRef.current;
+      const scale = scaleRef.current;
+      const pan = posRef.current;
+      const astroBounds: ViewportBounds = {
+        left:   -(sz.width  / 2 + pan.x) / scale,
+        right:   (sz.width  / 2 - pan.x) / scale,
+        top:    -(sz.height / 2 + pan.y) / scale,
+        bottom:  (sz.height / 2 - pan.y) / scale,
+      };
+      const astroCallbacks = {
+        onTrapped: () => onAstronautTrappedRef.current?.(),
+        onEscaped: () => onAstronautEscapedRef.current?.(),
+        onGrazed: () => onAstronautGrazedRef.current?.(),
+        onConsumed: () => onAstronautConsumedRef.current?.(),
+        onLanded: (agentId: string) => onAstronautLandedRef.current?.(agentId),
+        onBounced: (id: number, count: number, edges: Set<string>) => onAstronautBouncedRef.current?.(id, count, edges),
+        onRocketMan: () => onRocketManRef.current?.(),
+        onTrickShot: () => onTrickShotRef.current?.(),
+        onKamikaze: () => onKamikazeRef.current?.(),
+      };
       for (let i = astros.length - 1; i >= 0; i--) {
         const a = astros[i];
-
-        const dx = singPos.x - a.c.x;
-        const dy = singPos.y - a.c.y;
-        const r2 = dx * dx + dy * dy + 1;
-        const r = Math.sqrt(r2);
-
-        // Track gravity well entry/exit
-        if (!a.inGravityWell && r < ASTRONAUT_SUCK_RADIUS) {
-          a.inGravityWell = true;
-          onAstronautTrappedRef.current?.();
-        }
-        // Escaped the gravity well! (was inside, now outside)
-        if (a.inGravityWell && r >= ASTRONAUT_SUCK_RADIUS) {
-          a.inGravityWell = false;
-          a.escapeCount = (a.escapeCount ?? 0) + 1;
-          onAstronautEscapedRef.current?.();
-        }
-
-        // Graze zone — near-miss detection (close but didn't enter gravity well)
-        if (!a.inGravityWell && !a.inGrazeZone && r < ASTRONAUT_GRAZE_RADIUS) {
-          a.inGrazeZone = true;
-        }
-        if (a.inGrazeZone && r >= ASTRONAUT_GRAZE_RADIUS) {
-          a.inGrazeZone = false;
-          // Only count as a graze if they never entered the gravity well
-          if (!a.inGravityWell) {
-            onAstronautGrazedRef.current?.();
-          }
-        }
-
-        if (r < ASTRONAUT_DESTROY_RADIUS) {
-          // Check for trick_shot (bounced then fell in) or kamikaze (jetted straight in)
-          if (a.jetFiredAt > 0) {
-            if (a.hasBouncedSinceJet) {
-              onTrickShotRef.current?.();
-            } else {
-              onKamikazeRef.current?.();
-            }
-          }
+        const result = updateAstronaut(a, singPos.x, singPos.y, planetInfos, astroBounds, dt, astroCallbacks);
+        if (result.removed) {
           a.c.destroy({ children: true });
           astros.splice(i, 1);
-          onAstronautConsumedRef.current?.();
           continue;
         }
-
-        // Physics — acceleration = force / mass.
-        // Lighter astronauts are more responsive to gravity; heavier ones resist more.
-        const invMass = 1 / a.mass;
-        let ax: number;
-        let ay: number;
+        // Visual updates that depend on PixiJS container state
         if (a.inGravityWell) {
-          const inward = (0.10 + (ASTRONAUT_SUCK_RADIUS - r) * 0.003) * invMass;
-          ax = (dx / r) * inward;
-          ay = (dy / r) * inward;
-          // Visual: shrink and fade as astronaut approaches core
-          const shrink = Math.max(0.15, (r - ASTRONAUT_DESTROY_RADIUS) / (ASTRONAUT_SUCK_RADIUS - ASTRONAUT_DESTROY_RADIUS));
+          const r = Math.sqrt((singPos.x - a.c.x) ** 2 + (singPos.y - a.c.y) ** 2);
+          const shrink = Math.max(0.15, (r - 30) / (92 - 30));
           a.c.scale.set(shrink);
           a.c.alpha = shrink;
         } else {
-          ax = (dx / r) * (SINGULARITY_PULL * invMass / r2) * dt * 60;
-          ay = (dy / r) * (SINGULARITY_PULL * invMass / r2) * dt * 60;
-          // Visual: scale by mass (heavy = noticeably larger sprite)
-          const massScale = 0.6 + a.mass * 0.4;
-          a.c.scale.set(massScale);
+          a.c.scale.set(0.6 + a.mass * 0.4);
           a.c.alpha = 1;
         }
-
-        // Planet gravity — only within 2× planet radius (min 80px).
-        // Gentle enough that astronauts curve and can orbit, not get vacuumed in.
-        // Jetpack can escape the pull.
-        let removed = false;
-        for (const p of planets) {
-          const px = p.x - a.c.x;
-          const py = p.y - a.c.y;
-          const pr2 = px * px + py * py + 1;
-          const pr = Math.sqrt(pr2);
-          const pRadius = p.__radius ?? 15;
-          const influenceRadius = Math.max(80, pRadius * 3);
-          if (pr < influenceRadius) {
-            const planetMass = pRadius / 15;
-            // Exponential falloff: nearly zero at edge, ramps sharply near surface
-            // t=0 at edge, t=1 at surface. t^6 means at halfway (t=0.5) force is ~1.5%
-            const t = 1 - pr / influenceRadius;
-            const falloff = t * t * t * t * t * t; // t^6
-            ax += (px / pr) * (GRAVITY_STRENGTH * planetMass * invMass * falloff) * dt * 60;
-            ay += (py / pr) * (GRAVITY_STRENGTH * planetMass * invMass * falloff) * dt * 60;
-          }
-          if (pr < (p.__radius ?? 15) + 8) {
-            if (p.__agentId) onAstronautLandedRef.current?.(p.__agentId);
-            a.c.destroy({ children: true });
-            astros.splice(i, 1);
-            removed = true;
-            break;
-          }
-        }
-        if (removed) continue;
-
-        a.vx += ax;
-        a.vy += ay;
-        // Speed cap scales with mass — heavier astronauts have a lower max speed
-        const maxSpeed = ASTRONAUT_MAX_SPEED / Math.sqrt(a.mass);
-        if (!a.inGravityWell) {
-          const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
-          if (speed > maxSpeed) {
-            a.vx = (a.vx / speed) * maxSpeed;
-            a.vy = (a.vy / speed) * maxSpeed;
-          }
-        }
-        a.c.x += a.vx;
-        a.c.y += a.vy;
-
-        // Jet spray: fire on a timer. When trapped in gravity well, jets fire more often
-        // and with more power (desperate escape attempts).
-        const now = Date.now();
-        if (!a.nextJetTime) {
-          a.nextJetTime = now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
-        }
-        if (now >= a.nextJetTime) {
-          // In gravity well: stronger jets, biased AWAY from singularity, shorter cooldown
-          const inWell = !!a.inGravityWell;
-          const escapeAngle = Math.atan2(a.c.y, a.c.x); // angle away from singularity
-          const jetAngle = inWell
-            ? escapeAngle + (Math.random() - 0.5) * 1.2 // mostly outward ±~34°
-            : Math.random() * Math.PI * 2;               // random direction
-          const jetPower = inWell
-            ? 4.0 + Math.random() * 2.5   // stronger desperate burst
-            : 2.5 + Math.random() * 1.5;
-          a.vx += Math.cos(jetAngle) * jetPower;
-          a.vy += Math.sin(jetAngle) * jetPower;
-          a.jetFiredAt = now;
-          a.hasBouncedSinceJet = false;
-          onRocketManRef.current?.();
-          // Next jet sooner when trapped (15-30s) vs normal (45-120s)
-          a.nextJetTime = inWell
-            ? now + 15_000 + Math.random() * 15_000
-            : now + ASTRONAUT_JET_MIN_MS + Math.random() * (ASTRONAUT_JET_MAX_MS - ASTRONAUT_JET_MIN_MS);
-
-          // Spawn visible spray/exhaust in the OPPOSITE direction of thrust
-          const sprayAngle = jetAngle + Math.PI;
+        // Spawn jet spray particles if jet fired this tick
+        if (result.jetFired) {
+          const sprayAngle = result.jetAngle + Math.PI;
           const astroContainer = astronautsContainerRef.current;
           if (astroContainer) {
             const particleCount = 10 + Math.floor(Math.random() * 6);
             for (let pi = 0; pi < particleCount; pi++) {
-              const pAngle = sprayAngle + (Math.random() - 0.5) * 1.0; // ±~29° cone
+              const pAngle = sprayAngle + (Math.random() - 0.5) * 1.0;
               const pSpeed = 2 + Math.random() * 3;
               const pg = new Graphics();
               const pSize = 1.5 + Math.random() * 2.5;
-              // Mix of orange, yellow, and white-hot particles
               const pColors = [0xff6622, 0xff8822, 0xffaa33, 0xffcc44, 0xffeeaa];
               const pColor = pColors[Math.floor(Math.random() * pColors.length)];
               pg.circle(0, 0, pSize).fill({ color: pColor, alpha: 0.8 + Math.random() * 0.2 });
-              pg.x = a.c.x;
-              pg.y = a.c.y;
+              pg.x = a.c.x; pg.y = a.c.y;
               astroContainer.addChild(pg);
               jetSprayRef.current.push({
-                g: pg,
-                x: a.c.x,
-                y: a.c.y,
-                vx: Math.cos(pAngle) * pSpeed,
-                vy: Math.sin(pAngle) * pSpeed,
-                life: 0,
-                maxLife: 0.6 + Math.random() * 0.8,
+                g: pg, x: a.c.x, y: a.c.y,
+                vx: Math.cos(pAngle) * pSpeed, vy: Math.sin(pAngle) * pSpeed,
+                life: 0, maxLife: 0.6 + Math.random() * 0.8,
               });
             }
           }
         }
-
-        const sz = sizeRef.current;
-        const scale = scaleRef.current;
-        const pan = posRef.current;
-        const left   = -(sz.width  / 2 + pan.x) / scale;
-        const right  =  (sz.width  / 2 - pan.x) / scale;
-        const top    = -(sz.height / 2 + pan.y) / scale;
-        const bottom =  (sz.height / 2 - pan.y) / scale;
-        const margin = 8;
-        let bounced = false;
-        if (a.c.x < left + margin) { a.c.x = left + margin; a.vx = Math.abs(a.vx) * 0.6; bounced = true; a.edgesHit.add('left'); }
-        else if (a.c.x > right - margin) { a.c.x = right - margin; a.vx = -Math.abs(a.vx) * 0.6; bounced = true; a.edgesHit.add('right'); }
-        if (a.c.y < top + margin) { a.c.y = top + margin; a.vy = Math.abs(a.vy) * 0.6; bounced = true; a.edgesHit.add('top'); }
-        else if (a.c.y > bottom - margin) { a.c.y = bottom - margin; a.vy = -Math.abs(a.vy) * 0.6; bounced = true; a.edgesHit.add('bottom'); }
-        if (bounced) {
-          a.bounceCount++;
-          a.hasBouncedSinceJet = true;
-          onAstronautBouncedRef.current?.(a.id, a.bounceCount, a.edgesHit);
-        }
       }
 
-      // Jet spray particles
-      const jets = jetSprayRef.current;
-      for (let ji = jets.length - 1; ji >= 0; ji--) {
-        const jp = jets[ji];
-        jp.life += dt;
-        jp.x += jp.vx;
-        jp.y += jp.vy;
-        jp.vx *= 0.96; // decelerate
-        jp.vy *= 0.96;
-        jp.g.x = jp.x;
-        jp.g.y = jp.y;
-        const frac = jp.life / jp.maxLife;
-        jp.g.alpha = (1 - frac) * 0.8;
-        jp.g.scale.set(1 - frac * 0.5);
-        if (jp.life >= jp.maxLife) {
-          jp.g.destroy();
-          jets.splice(ji, 1);
-        }
-      }
+      // Jet spray particles (delegated to AstronautSystem)
+      updateJetSpray(jetSprayRef.current, dt);
 
       // File collision — lightning arcs between colliding planets
       const arcs = lightningArcsRef.current;
@@ -2078,172 +1898,15 @@ export const Universe: FC<UniverseProps> = ({
         }
       }
 
-      // Shooting stars
-      const sstars = shootingStarsRef.current;
-      for (let si = sstars.length - 1; si >= 0; si--) {
-        const ss = sstars[si];
-        ss.life += dt;
-        if (ss.life < 0) { ss.g.alpha = 0; continue; } // staggered start
-        ss.x += ss.vx;
-        ss.y += ss.vy;
-        ss.g.x = ss.x;
-        ss.g.y = ss.y;
-        const frac = ss.life / ss.maxLife;
-        const alpha = frac < 0.15 ? frac / 0.15 : 1 - (frac - 0.15) / 0.85;
-        ss.g.alpha = alpha * 0.7;
-        if (ss.life >= ss.maxLife) {
-          ss.g.destroy();
-          sstars.splice(si, 1);
-        }
-      }
+      // Shooting stars (delegated to ShootingStarSystem)
+      updateShootingStars(shootingStarsRef.current, dt);
 
-      // UFO behaviour
-      const ufoState = ufoStateRef.current;
-      if (ufoState.phase === 'fly') {
-        ufoState.t += dt;
-        ufo.rotation = 0; // always upright during abduction
-        const tv = Math.min(1, ufoState.t * 0.5);
-        const ease = tv * tv * (3 - 2 * tv);
-        const sx = ufoState.startX ?? -250;
-        const sy = ufoState.startY ?? -200;
-        ufo.x = sx + (ufoState.targetX - sx) * ease;
-        ufo.y = sy + (ufoState.targetY - sy) * ease;
-        if (tv >= 1) {
-          ufoState.phase = 'beam';
-          ufoState.t = 0;
-          if (ufoState.beam) ufoState.beam.visible = true;
-          if (ufoState.cow) {
-            ufoState.cow.visible = true;
-            ufoState.cow.y = ufoState.beamLen ?? 70; // start at planet surface
-          }
-        }
-      } else if (ufoState.phase === 'beam') {
-        ufoState.t += dt;
-        ufo.rotation = 0; // always upright during beam
-        const beamLen = ufoState.beamLen ?? 70;
-        // Cow travels from planet surface (beamLen) up into the saucer body (y=-2)
-        const beamT = Math.min(1, ufoState.t / 2.0);
-        const cow = ufoState.cow;
-        if (cow) cow.y = beamLen - beamT * (beamLen + 2);
-        if (ufoState.t > 2.4) {
-          if (ufoState.beam) ufoState.beam.visible = false;
-          if (cow) { cow.visible = false; cow.y = beamLen; }
-          onUfoAbductionRef.current?.();
-          const angle = Math.random() * Math.PI * 2;
-          const dist = 280 + Math.random() * 120;
-          ufoState.phase = 'flyaway';
-          ufoState.t = 0;
-          ufoState.startX = ufo.x;
-          ufoState.startY = ufo.y;
-          ufoState.targetX = ufo.x + Math.cos(angle) * dist;
-          ufoState.targetY = ufo.y + Math.sin(angle) * dist;
-        }
-      } else if (ufoState.phase === 'flyaway') {
-        ufoState.t += dt;
-        const tv = Math.min(1, ufoState.t * 0.6);
-        const ease = tv * tv * (3 - 2 * tv);
-        const sx = ufoState.startX ?? ufo.x;
-        const sy = ufoState.startY ?? ufo.y;
-        ufo.x = sx + (ufoState.targetX - sx) * ease;
-        ufo.y = sy + (ufoState.targetY - sy) * ease;
-        // Check if flyaway path crosses singularity
-        const flyDist = Math.sqrt(ufo.x * ufo.x + ufo.y * ufo.y);
-        if (flyDist < 55) {
-          ufoState.phase = 'sucked';
-          ufoState.t = 0;
-          ufoState.startX = ufo.x;
-          ufoState.startY = ufo.y;
-        } else if (tv >= 1) {
-          ufo.visible = false;
-          ufoState.phase = 'idle';
-          scheduleUfo();
-        }
-      } else if (ufoState.phase === 'flyby') {
-        // Curved path through waypoints — smooth interpolation between each segment
-        const wps = ufoState.waypoints;
-        let idx = ufoState.waypointIndex ?? 0;
-        let segT = (ufoState.segT ?? 0) + 0.012; // speed per segment
-        if (!wps || wps.length < 2) { ufo.visible = false; ufoState.phase = 'idle'; scheduleUfo(); }
-        else {
-          if (segT >= 1) {
-            segT = 0;
-            idx++;
-            ufoState.waypointIndex = idx;
-          }
-          if (idx >= wps.length - 1) {
-            ufo.visible = false;
-            ufoState.phase = 'idle';
-            scheduleUfo();
-          } else {
-            ufoState.segT = segT;
-            const from = wps[idx];
-            const to = wps[idx + 1];
-            // Smooth ease per segment
-            const ease = segT * segT * (3 - 2 * segT);
-            ufo.x = from.x + (to.x - from.x) * ease;
-            ufo.y = from.y + (to.y - from.y) * ease;
-            // Tilt UFO slightly in movement direction
-            ufo.rotation = Math.atan2(to.y - from.y, to.x - from.x) * 0.15;
-
-            // Check if UFO entered the singularity danger zone
-            const ufoDist = Math.sqrt(ufo.x * ufo.x + ufo.y * ufo.y);
-            if (ufoDist < 55) {
-              // Captured! Start spiral-in animation
-              ufoState.phase = 'sucked';
-              ufoState.t = 0;
-              ufoState.startX = ufo.x;
-              ufoState.startY = ufo.y;
-            }
-          }
-        }
-      } else if (ufoState.phase === 'sucked') {
-        // Spiral into singularity — shrink, spin, pull toward center
-        ufoState.t += dt;
-        const suckT = Math.min(1, ufoState.t * 0.6); // ~1.7s to consume
-        const startDist = Math.sqrt((ufoState.startX ?? 50) ** 2 + (ufoState.startY ?? 50) ** 2);
-        const currentDist = startDist * (1 - suckT);
-        const baseAngle = Math.atan2(ufoState.startY ?? 0, ufoState.startX ?? 0);
-        const spiralAngle = baseAngle + suckT * Math.PI * 4; // 2 full rotations
-        ufo.x = Math.cos(spiralAngle) * currentDist;
-        ufo.y = Math.sin(spiralAngle) * currentDist;
-        ufo.scale.set(1 - suckT * 0.9); // shrink to 10%
-        ufo.rotation = suckT * Math.PI * 6; // spin rapidly
-        ufo.alpha = 1 - suckT * 0.7;
-        if (suckT >= 1) {
-          ufo.visible = false;
-          ufo.scale.set(1);
-          ufo.alpha = 1;
-          ufo.rotation = 0;
-          ufoState.phase = 'idle';
-          onUfoConsumedRef.current?.();
-          scheduleUfo();
-        }
-      } else if (ufoState.phase === 'cow_falling') {
-        // Cow drops back to planet surface with gravity-like acceleration
-        ufoState.t += dt;
-        const fallDuration = 0.8;
-        const fallT = Math.min(1, ufoState.t / fallDuration);
-        const cow = ufoState.cow;
-        if (cow) {
-          const fromY = ufoState.cowFallFromY ?? 0;
-          const toY = ufoState.cowFallToY ?? 70;
-          const eased = fallT * fallT; // accelerating fall
-          cow.y = fromY + (toY - fromY) * eased;
-          cow.visible = true;
-        }
-        if (fallT >= 1) {
-          if (ufoState.cow) ufoState.cow.visible = false;
-          // UFO flies away after cow drops
-          const angle = Math.random() * Math.PI * 2;
-          const dist = 280 + Math.random() * 120;
-          ufoState.phase = 'flyaway';
-          ufoState.t = 0;
-          ufoState.startX = ufo.x;
-          ufoState.startY = ufo.y;
-          ufoState.targetX = ufo.x + Math.cos(angle) * dist;
-          ufoState.targetY = ufo.y + Math.sin(angle) * dist;
-        }
-      }
+      // UFO behaviour (delegated to UFOSystem)
+      updateUFO(ufo, ufoStateRef.current, dt, {
+        onAbduction: () => onUfoAbductionRef.current?.(),
+        onConsumed: () => onUfoConsumedRef.current?.(),
+        scheduleNext: scheduleUfo,
+      });
     };
 
     app.ticker.add(tick);
