@@ -40,10 +40,12 @@ export function getAuthToken(): string | null {
 import { LockManager } from './lockManager.js';
 import { McpServer, FileActivityTracker } from './mcpServer.js';
 import { PlanBoardManager } from './planBoard.js';
+import { MessageQueue } from './messageQueue.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
 export const planBoardManager = new PlanBoardManager();
+export const messageQueue = new MessageQueue();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -55,6 +57,7 @@ export function initMcpServer(deps: { agentStateManager: import('@event-horizon/
     agentStateManager: deps.agentStateManager,
     fileActivityTracker,
     planBoardManager,
+    messageQueue,
   });
 }
 

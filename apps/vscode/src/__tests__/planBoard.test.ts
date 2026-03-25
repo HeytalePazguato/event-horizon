@@ -7,6 +7,7 @@ import { parsePlanMarkdown, PlanBoardManager } from '../planBoard.js';
 import { McpServer, FileActivityTracker } from '../mcpServer.js';
 import { LockManager } from '../lockManager.js';
 import { AgentStateManager } from '@event-horizon/core';
+import { MessageQueue } from '../messageQueue.js';
 
 // ── Markdown Parser ─────────────────────────────────────────────────────────
 
@@ -309,7 +310,7 @@ describe('Plan MCP tools', () => {
     const agentStateManager = new AgentStateManager();
     const fileActivityTracker = new FileActivityTracker();
     planBoardManager = new PlanBoardManager();
-    mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager });
+    mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager, messageQueue: new MessageQueue() });
   });
 
   function rpc(method: string, params?: Record<string, unknown>, id: number | string = 1) {
@@ -333,7 +334,7 @@ describe('Plan MCP tools', () => {
     expect(names).toContain('eh_get_plan');
     expect(names).toContain('eh_claim_task');
     expect(names).toContain('eh_update_task');
-    expect(result.tools).toHaveLength(10); // 6 original + 4 plan
+    expect(result.tools).toHaveLength(12); // 6 lock + 4 plan + 2 messaging
   });
 
   describe('eh_load_plan', () => {

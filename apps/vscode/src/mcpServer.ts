@@ -9,6 +9,7 @@
 import type { AgentStateManager } from '@event-horizon/core';
 import type { LockManager } from './lockManager.js';
 import type { PlanBoardManager } from './planBoard.js';
+import type { MessageQueue } from './messageQueue.js';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -164,6 +165,32 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['task_id', 'agent_id', 'status'],
     },
   },
+  // ── Agent messaging tools ────────────────────────────────────────────────
+  {
+    name: 'eh_send_message',
+    description: 'Send a message to another agent or broadcast to all. Messages persist until read.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID (sender)' },
+        agent_name: { type: 'string', description: 'Human-readable sender name' },
+        to_agent_id: { type: 'string', description: 'Target agent ID, or \'*\' for broadcast' },
+        message: { type: 'string', description: 'Message content' },
+      },
+      required: ['agent_id', 'to_agent_id', 'message'],
+    },
+  },
+  {
+    name: 'eh_get_messages',
+    description: 'Get unread messages for your agent. Messages are marked as read after retrieval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['agent_id'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -208,6 +235,7 @@ export interface McpServerDeps {
   agentStateManager: AgentStateManager;
   fileActivityTracker: FileActivityTracker;
   planBoardManager: PlanBoardManager;
+  messageQueue: MessageQueue;
 }
 
 export class McpServer {
@@ -289,7 +317,7 @@ export class McpServer {
   }
 
   private async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const { lockManager, agentStateManager, fileActivityTracker, planBoardManager } = this.deps;
+    const { lockManager, agentStateManager, fileActivityTracker, planBoardManager, messageQueue } = this.deps;
 
     switch (name) {
       case 'eh_check_lock': {
@@ -445,6 +473,37 @@ export class McpServer {
           return { updated: false, error: result.error };
         }
         return { updated: true, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
+      }
+
+      // ── Agent messaging tools ──────────────────────────────────────────────
+
+      case 'eh_send_message': {
+        const agentId = args.agent_id as string;
+        const agentName = (args.agent_name as string) ?? agentId;
+        const toAgentId = args.to_agent_id as string;
+        const message = args.message as string;
+        const msg = messageQueue.send(agentId, agentName, toAgentId, message);
+        return {
+          sent: true,
+          messageId: msg.id,
+          to: toAgentId === '*' ? 'broadcast' : toAgentId,
+        };
+      }
+
+      case 'eh_get_messages': {
+        const agentId = args.agent_id as string;
+        const messages = messageQueue.getUnread(agentId);
+        return {
+          messages: messages.map((m) => ({
+            id: m.id,
+            from: m.fromAgentName,
+            fromAgentId: m.fromAgentId,
+            broadcast: m.toAgentId === '*',
+            message: m.message,
+            timestamp: m.timestamp,
+          })),
+          count: messages.length,
+        };
       }
 
       default:
