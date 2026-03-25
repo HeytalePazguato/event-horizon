@@ -8,7 +8,8 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue } from './eventServer';
+import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
@@ -99,8 +100,17 @@ export function activate(context: vscode.ExtensionContext): void {
   // Initialize MCP server with runtime dependencies
   initMcpServer({ agentStateManager });
 
-  // Forward plan changes to webview for visualization
+  // Restore plan from globalState (survives window reload)
+  const savedPlan = context.globalState.get<PlanBoard>('planBoard');
+  if (savedPlan && savedPlan.tasks?.length > 0) {
+    planBoardManager.restore(savedPlan);
+  }
+
+  // Forward plan changes to webview + persist to globalState
   planBoardManager.onChange((board) => {
+    // Persist to globalState so the plan survives VS Code reload
+    void context.globalState.update('planBoard', board ? planBoardManager.serialize() : undefined);
+
     if (!webviewRef.current) return;
     if (!board) {
       webviewRef.current.postMessage({ type: 'plan-update', plan: { loaded: false } });
@@ -306,6 +316,23 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
+
+    // Auto-discovery: notify newly joined agents about the active plan
+    if (event.type === 'agent.spawn') {
+      const plan = planBoardManager.getPlan();
+      if (plan) {
+        const pending = plan.tasks.filter((t) => t.status === 'pending').length;
+        const total = plan.tasks.length;
+        const done = plan.tasks.filter((t) => t.status === 'done').length;
+        messageQueue.send(
+          'event-horizon',
+          'Event Horizon',
+          event.agentId,
+          `A shared plan "${plan.name}" is active (${done}/${total} done, ${pending} pending). ` +
+          'Use eh_get_plan to see tasks and eh_claim_task to claim work.',
+        );
+      }
+    }
 
     // Track file activity for MCP eh_file_activity tool
     if (event.type === 'tool.call' && event.payload?.filePath) {

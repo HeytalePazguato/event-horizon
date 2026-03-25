@@ -11,6 +11,7 @@ import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHo
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import type { SkillInfo } from './skillScanner.js';
+import { planBoardManager } from './eventServer.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -332,6 +333,29 @@ function wireUniverseWebview(
           void webview.postMessage({ type: 'skills-update', skills });
         })
       );
+    }
+
+    // Hydrate plan board from persisted state
+    const board = planBoardManager.getPlan();
+    if (board) {
+      void webview.postMessage({
+        type: 'plan-update',
+        plan: {
+          loaded: true,
+          name: board.name,
+          sourceFile: board.sourceFile,
+          lastUpdatedAt: board.lastUpdatedAt,
+          tasks: board.tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            assignee: t.assigneeName ?? t.assignee,
+            assigneeId: t.assignee,
+            blockedBy: t.blockedBy,
+            notes: t.notes,
+          })),
+        },
+      });
     }
   }
 

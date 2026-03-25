@@ -350,4 +350,28 @@ export class PlanBoardManager {
     this.board = null;
     this.notifyChange();
   }
+
+  /**
+   * Serialize the current plan for persistence (e.g. VS Code globalState).
+   * Returns null if no plan is loaded.
+   */
+  serialize(): PlanBoard | null {
+    return this.board ? structuredClone(this.board) : null;
+  }
+
+  /**
+   * Restore a previously serialized plan. Does NOT trigger onChange
+   * (caller should broadcast separately if needed, e.g. after webview init).
+   */
+  restore(board: PlanBoard): void {
+    this.board = board;
+  }
+
+  /**
+   * Restore and notify listeners (used when restoring from globalState on activation).
+   */
+  restoreAndNotify(board: PlanBoard): void {
+    this.board = board;
+    this.notifyChange();
+  }
 }
