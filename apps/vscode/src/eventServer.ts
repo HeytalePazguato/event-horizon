@@ -39,9 +39,11 @@ export function getAuthToken(): string | null {
 // ── File lock manager (extracted to lockManager.ts) ─────────────────────────
 import { LockManager } from './lockManager.js';
 import { McpServer, FileActivityTracker } from './mcpServer.js';
+import { PlanBoardManager } from './planBoard.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
+export const planBoardManager = new PlanBoardManager();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -52,6 +54,7 @@ export function initMcpServer(deps: { agentStateManager: import('@event-horizon/
     lockManager,
     agentStateManager: deps.agentStateManager,
     fileActivityTracker,
+    planBoardManager,
   });
 }
 

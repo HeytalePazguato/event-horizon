@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { McpServer, FileActivityTracker } from '../mcpServer.js';
 import { LockManager } from '../lockManager.js';
 import { AgentStateManager } from '@event-horizon/core';
+import { PlanBoardManager } from '../planBoard.js';
 
 let lockManager: LockManager;
 let agentStateManager: AgentStateManager;
@@ -17,7 +18,7 @@ beforeEach(() => {
   lockManager.setEnabled(true);
   agentStateManager = new AgentStateManager();
   fileActivityTracker = new FileActivityTracker();
-  mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker });
+  mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager: new PlanBoardManager() });
 });
 
 function rpc(method: string, params?: Record<string, unknown>, id: number | string = 1) {
@@ -63,10 +64,10 @@ describe('initialize', () => {
 // ── tools/list ──────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 6 tools', async () => {
+  it('returns all 10 tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(6);
+    expect(result.tools).toHaveLength(10);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');
@@ -74,6 +75,10 @@ describe('tools/list', () => {
     expect(names).toContain('eh_list_agents');
     expect(names).toContain('eh_file_activity');
     expect(names).toContain('eh_wait_for_unlock');
+    expect(names).toContain('eh_load_plan');
+    expect(names).toContain('eh_get_plan');
+    expect(names).toContain('eh_claim_task');
+    expect(names).toContain('eh_update_task');
   });
 });
 

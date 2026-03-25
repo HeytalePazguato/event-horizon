@@ -8,6 +8,7 @@
 
 import type { AgentStateManager } from '@event-horizon/core';
 import type { LockManager } from './lockManager.js';
+import type { PlanBoardManager } from './planBoard.js';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -110,6 +111,59 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['file_path', 'agent_id'],
     },
   },
+  // ── Plan coordination tools ──────────────────────────────────────────────
+  {
+    name: 'eh_load_plan',
+    description: 'Load a plan from a markdown file. Parses task checklist into claimable tasks with dependencies.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: 'Path to plan markdown file' },
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        content: { type: 'string', description: 'Markdown content of the plan file (alternative to file_path for agents that already read the file)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_get_plan',
+    description: 'Get the current shared plan — all tasks with status, assignee, and dependencies.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_claim_task',
+    description: 'Atomically claim an unclaimed task. Fails if already claimed or blocked by dependencies.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID from the plan' },
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        agent_name: { type: 'string', description: 'Human-readable agent name' },
+      },
+      required: ['task_id', 'agent_id'],
+    },
+  },
+  {
+    name: 'eh_update_task',
+    description: 'Update a task you own — mark progress, done, or failed. Add notes visible to other agents.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID from the plan' },
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        agent_name: { type: 'string', description: 'Human-readable agent name' },
+        status: { type: 'string', enum: ['in_progress', 'done', 'failed', 'blocked'], description: 'New task status' },
+        note: { type: 'string', description: 'Optional note for other agents' },
+      },
+      required: ['task_id', 'agent_id', 'status'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -153,6 +207,7 @@ export interface McpServerDeps {
   lockManager: LockManager;
   agentStateManager: AgentStateManager;
   fileActivityTracker: FileActivityTracker;
+  planBoardManager: PlanBoardManager;
 }
 
 export class McpServer {
@@ -234,7 +289,7 @@ export class McpServer {
   }
 
   private async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const { lockManager, agentStateManager, fileActivityTracker } = this.deps;
+    const { lockManager, agentStateManager, fileActivityTracker, planBoardManager } = this.deps;
 
     switch (name) {
       case 'eh_check_lock': {
@@ -302,6 +357,94 @@ export class McpServer {
           acquired: result.allowed,
           ...(result.allowed ? {} : { owner: result.owner, ownerAgent: result.ownerAgent, reason: result.reason }),
         };
+      }
+
+      // ── Plan coordination tools ────────────────────────────────────────────
+
+      case 'eh_load_plan': {
+        const filePath = (args.file_path as string | undefined) ?? 'inline';
+        const content = args.content as string | undefined;
+
+        if (!content && !args.file_path) {
+          throw new Error('Either file_path or content must be provided');
+        }
+
+        // Content is passed directly — the agent already read the file
+        const markdown = content ?? '';
+        if (!markdown) {
+          throw new Error('No content provided. Pass the markdown content in the "content" parameter.');
+        }
+
+        const plan = planBoardManager.loadPlan(markdown, filePath);
+        return {
+          loaded: true,
+          name: plan.name,
+          taskCount: plan.tasks.length,
+          tasks: plan.tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            blockedBy: t.blockedBy,
+          })),
+        };
+      }
+
+      case 'eh_get_plan': {
+        const plan = planBoardManager.getPlan();
+        if (!plan) {
+          return { loaded: false, message: 'No plan loaded. Use eh_load_plan first.' };
+        }
+        return {
+          loaded: true,
+          name: plan.name,
+          sourceFile: plan.sourceFile,
+          lastUpdatedAt: plan.lastUpdatedAt,
+          tasks: plan.tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            assignee: t.assigneeName ?? t.assignee,
+            assigneeId: t.assignee,
+            blockedBy: t.blockedBy,
+            notes: t.notes,
+          })),
+        };
+      }
+
+      case 'eh_claim_task': {
+        const taskId = args.task_id as string;
+        const agentId = args.agent_id as string;
+        const agentName = (args.agent_name as string) ?? agentId;
+        const result = planBoardManager.claimTask(taskId, agentId, agentName);
+        if (!result.success) {
+          return { claimed: false, error: result.error, task: result.task ? { id: result.task.id, status: result.task.status, assignee: result.task.assigneeName } : undefined };
+        }
+        return { claimed: true, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
+      }
+
+      case 'eh_update_task': {
+        const taskId = args.task_id as string;
+        const agentId = args.agent_id as string;
+        const agentName = (args.agent_name as string) ?? agentId;
+        const status = args.status as string;
+        const note = args.note as string | undefined;
+
+        const validStatuses = ['in_progress', 'done', 'failed', 'blocked'];
+        if (!validStatuses.includes(status)) {
+          throw new Error(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
+        }
+
+        const result = planBoardManager.updateTask(
+          taskId,
+          agentId,
+          status as 'in_progress' | 'done' | 'failed' | 'blocked',
+          note,
+          agentName,
+        );
+        if (!result.success) {
+          return { updated: false, error: result.error };
+        }
+        return { updated: true, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
       }
 
       default:
