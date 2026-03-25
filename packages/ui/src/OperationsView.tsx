@@ -14,8 +14,10 @@ import { FileHeatmapFull } from './panels/FileHeatmapFull.js';
 import { LogsPanel } from './panels/LogsPanel.js';
 import { TimelinePanel } from './panels/TimelinePanel.js';
 import { SkillsPanel } from './panels/SkillsPanel.js';
+import { PlanPanel } from './panels/PlanPanel.js';
+import type { PlanView } from './panels/PlanPanel.js';
 
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills';
+type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -35,6 +37,7 @@ export interface OperationsViewProps {
   agentMap: Record<string, AgentState>;
   metricsMap: Record<string, AgentMetrics>;
   agentStates: Record<string, string>;
+  plan?: PlanView;
   onOpenSkill?: (filePath: string) => void;
   onCreateSkill?: () => void;
   onOpenMarketplace?: () => void;
@@ -42,7 +45,7 @@ export interface OperationsViewProps {
   onDuplicateSkill?: (filePath: string, newName: string) => void;
 }
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
@@ -105,6 +108,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             <button type="button" style={tabStyle(activeTab === 'skills')} onClick={() => setActiveTab('skills')}>
               Skills{skillsCount > 0 ? ` (${skillsCount})` : ''}
             </button>
+            <button type="button" style={tabStyle(activeTab === 'plan')} onClick={() => setActiveTab('plan')}>
+              Plan{plan?.tasks ? ` (${plan.tasks.filter((t) => t.status === 'done').length}/${plan.tasks.length})` : ''}
+            </button>
 
             {/* Command buttons — right-aligned */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: '0 8px' }}>
@@ -162,6 +168,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
                 <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />
               </div>
+            )}
+            {activeTab === 'plan' && (
+              <PlanPanel plan={plan ?? { loaded: false }} />
             )}
           </div>
         </div>

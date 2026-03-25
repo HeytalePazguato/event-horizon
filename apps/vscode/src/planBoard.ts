@@ -178,10 +178,21 @@ function resolveBlockedStatus(tasks: PlanTask[]): void {
 
 export class PlanBoardManager {
   private board: PlanBoard | null = null;
+  private changeListeners: Array<(board: PlanBoard | null) => void> = [];
+
+  /** Register a callback invoked whenever the plan changes. */
+  onChange(listener: (board: PlanBoard | null) => void): void {
+    this.changeListeners.push(listener);
+  }
+
+  private notifyChange(): void {
+    for (const fn of this.changeListeners) fn(this.board);
+  }
 
   /** Load a plan from parsed markdown. Replaces any existing plan. */
   loadPlan(markdown: string, sourceFile: string): PlanBoard {
     this.board = parsePlanMarkdown(markdown, sourceFile);
+    this.notifyChange();
     return this.board;
   }
 
@@ -253,6 +264,7 @@ export class PlanBoardManager {
     task.assigneeName = agentName ?? agentId;
     task.claimedAt = Date.now();
     this.board.lastUpdatedAt = Date.now();
+    this.notifyChange();
 
     return { success: true, task };
   }
@@ -312,6 +324,7 @@ export class PlanBoardManager {
     }
 
     this.board.lastUpdatedAt = Date.now();
+    this.notifyChange();
     return { success: true, task };
   }
 
@@ -335,5 +348,6 @@ export class PlanBoardManager {
   /** Clear the current plan. */
   clear(): void {
     this.board = null;
+    this.notifyChange();
   }
 }

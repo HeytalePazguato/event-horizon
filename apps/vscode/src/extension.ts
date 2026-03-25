@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager } from './eventServer';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
@@ -98,6 +98,33 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Initialize MCP server with runtime dependencies
   initMcpServer({ agentStateManager });
+
+  // Forward plan changes to webview for visualization
+  planBoardManager.onChange((board) => {
+    if (!webviewRef.current) return;
+    if (!board) {
+      webviewRef.current.postMessage({ type: 'plan-update', plan: { loaded: false } });
+      return;
+    }
+    webviewRef.current.postMessage({
+      type: 'plan-update',
+      plan: {
+        loaded: true,
+        name: board.name,
+        sourceFile: board.sourceFile,
+        lastUpdatedAt: board.lastUpdatedAt,
+        tasks: board.tasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          assignee: t.assigneeName ?? t.assignee,
+          assigneeId: t.assignee,
+          blockedBy: t.blockedBy,
+          notes: t.notes,
+        })),
+      },
+    });
+  });
 
   // ── Status bar — live agent count ──────────────────────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

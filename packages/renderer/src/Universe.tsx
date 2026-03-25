@@ -34,6 +34,8 @@ import { updateAstronaut, updateJetSpray } from './systems/AstronautSystem.js';
 import type { PlanetInfo, ViewportBounds } from './systems/AstronautSystem.js';
 import { animatePlanets } from './systems/PlanetAnimationSystem.js';
 import { updateMoons } from './systems/MoonSystem.js';
+import { updateDebris } from './systems/DebrisSystem.js';
+import type { DebrisPlan } from './systems/DebrisSystem.js';
 import { updateLightning } from './systems/LightningSystem.js';
 import { handleWheel, handlePointerDown, handlePointerMove, handlePointerUp } from './systems/InputHandler.js';
 import type { InputRefs } from './systems/InputHandler.js';
@@ -118,6 +120,8 @@ export interface UniverseProps {
   onCowDrop?: () => void;
   /** Called when the user clicks on a shooting star. */
   onShootingStarClicked?: () => void;
+  /** Plan task debris — orbital fragments encoding task status. */
+  planTasks?: DebrisPlan | null;
   /** When false, the PixiJS ticker is paused to save CPU (e.g. Operations view is active). */
   visible?: boolean;
 }
@@ -313,6 +317,7 @@ export const Universe: FC<UniverseProps> = ({
   onKamikaze,
   onCowDrop,
   onShootingStarClicked,
+  planTasks = null,
   visible = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -354,6 +359,9 @@ export const Universe: FC<UniverseProps> = ({
   const moonsContainerRef = useRef<Container | null>(null);
   /** Tracks current moon count per agent to avoid unnecessary rebuilds. */
   const moonCountsRef = useRef<Map<string, number>>(new Map());
+  const debrisContainerRef = useRef<Container | null>(null);
+  const debrisTaskIdsRef = useRef<Set<string>>(new Set());
+  const planTasksRef = useRef<DebrisPlan | null>(planTasks);
   const ufoRef = useRef<Container | null>(null);
   const ufoStateRef = useRef<{
     phase: 'idle' | 'fly' | 'beam' | 'flyaway' | 'flyby' | 'sucked' | 'cow_falling';
@@ -461,6 +469,7 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
   useEffect(() => { agentSkillCountsRef.current = agentSkillCounts; }, [agentSkillCounts]);
   useEffect(() => { activeSkillsRef.current = activeSkills; }, [activeSkills]);
+  useEffect(() => { planTasksRef.current = planTasks; }, [planTasks]);
   useEffect(() => {
     if (visualSettingsRef.current !== visualSettings) {
       visualSettingsRef.current = visualSettings;
@@ -568,6 +577,10 @@ export const Universe: FC<UniverseProps> = ({
         world.addChild(moonsContainer);
         moonsContainerRef.current = moonsContainer;
 
+        const debrisContainer = new Container();
+        world.addChild(debrisContainer);
+        debrisContainerRef.current = debrisContainer;
+
         const shipsContainer = new Container();
         world.addChild(shipsContainer);
         shipsContainerRef.current = shipsContainer;
@@ -650,6 +663,13 @@ export const Universe: FC<UniverseProps> = ({
       }
       moonsContainerRef.current = null;
       moonCountsRef.current = new Map();
+      if (debrisContainerRef.current) {
+        for (let i = debrisContainerRef.current.children.length - 1; i >= 0; i--) {
+          try { debrisContainerRef.current.children[i].destroy({ children: true }); } catch { /* ignore */ }
+        }
+      }
+      debrisContainerRef.current = null;
+      debrisTaskIdsRef.current = new Set();
       shipsContainerRef.current = null;
       spiralContainerRef.current = null;
       astronautsContainerRef.current = null;
@@ -1418,6 +1438,12 @@ export const Universe: FC<UniverseProps> = ({
       const moonsContainer = moonsContainerRef.current;
       if (moonsContainer) {
         updateMoons(moonsContainer, planetPositionsRef.current, activeSubagentsRef.current, moonCountsRef.current);
+      }
+
+      // Plan task debris (delegated to DebrisSystem)
+      const debrisContainer = debrisContainerRef.current;
+      if (debrisContainer) {
+        updateDebris(debrisContainer, planetPositionsRef.current, planTasksRef.current, debrisTaskIdsRef.current, t);
       }
 
       // Animate ships along bezier arcs (delegated to ShipSystem)

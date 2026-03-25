@@ -141,6 +141,7 @@ function App() {
   const [marketplaceSearchLoading, setMarketplaceSearchLoading] = useState(false);
   const [marketplaceSearchSource, setMarketplaceSearchSource] = useState<string>('');
   const [marketplaceSearchError, setMarketplaceSearchError] = useState<'timeout' | 'error' | null>(null);
+  const [plan, setPlan] = useState<import('@event-horizon/ui').PlanView>({ loaded: false });
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -192,7 +193,7 @@ function App() {
     setMarketplaceSearchResults, setMarketplaceSearchLoading, setMarketplaceSearchSource, setMarketplaceSearchError,
     agentMapRef, metricsMapRef, agentLastSeenRef,
     activeFilesRef, recentSparkPairsRef, activeSkillsRef, invokedSkillNamesRef,
-    shipTimerIdsRef, addLog, incrementTiered,
+    shipTimerIdsRef, addLog, incrementTiered, setPlan,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -370,6 +371,16 @@ function App() {
     })),
     [agents, skills],
   );
+  const planDebris = useMemo(() => {
+    if (!plan.loaded || !plan.tasks) return null;
+    return {
+      tasks: plan.tasks.map((t) => ({
+        id: t.id,
+        status: t.status as 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked',
+        assigneeId: t.assigneeId ?? null,
+      })),
+    };
+  }, [plan]);
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
   const hoveredMetrics = hoveredAgentId ? metricsMap[hoveredAgentId] : null;
   const panelSize = usePanelSize();
@@ -407,6 +418,7 @@ function App() {
             onKamikaze={achievementCallbacks.handleKamikaze}
             onCowDrop={achievementCallbacks.handleCowDrop}
             onShootingStarClicked={achievementCallbacks.handleShootingStarClicked}
+            planTasks={planDebris}
             visible={viewMode === 'universe'}
           />
         </div>
@@ -415,7 +427,7 @@ function App() {
       </div>
 
       {viewMode === 'operations' && (
-        <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
+        <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates} plan={plan}
           onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace}
           onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       )}
