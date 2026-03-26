@@ -2,6 +2,39 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.0.0] — 2026-03-26
+
+### Added
+- **MCP Server**: JSON-RPC 2.0 endpoint at `/mcp` on the existing event server. 12 tools for agent-to-agent coordination — no external SDK required
+- **File lock MCP tools**: `eh_check_lock`, `eh_acquire_lock`, `eh_release_lock`, `eh_wait_for_unlock` — agents can proactively check and acquire file locks instead of only learning about conflicts when blocked by hooks
+- **Agent discovery tool**: `eh_list_agents` returns all connected agents with name, type, state, working directory, and active file locks
+- **File activity tool**: `eh_file_activity` shows recent file reads/writes across all agents with optional file path filtering
+- **Lock Manager extraction**: dedicated `LockManager` class with TTL-based expiration, FIFO wait queues, and path normalization. Extracted from the event server for testability and reuse
+- **Transcript-based smart lock release**: locks are automatically released when an agent goes idle (`end_turn`) or writes to a different file. No manual release needed for typical workflows
+- **Auto-register MCP server**: when connecting Claude Code hooks, the MCP server entry is written to `~/.claude.json` so agents discover coordination tools automatically
+- **Plan Board — multi-agent task coordination**: agents can share, claim, and coordinate work through a plan loaded from any markdown checklist. In-memory board with atomic task claiming, dependency resolution, and automatic unblocking when dependencies complete
+- **Plan markdown parser**: parses standard `- [ ]` / `- [x]` checklists with numbered task IDs (e.g. `1.1`, `3.2a`), `- depends: id1, id2` annotations, and `# Heading` plan titles. Supports any markdown file format
+- **Plan MCP tools**: `eh_load_plan` (parse and register a plan), `eh_get_plan` (view all tasks with status/assignee), `eh_claim_task` (atomic, dependency-aware claiming), `eh_update_task` (mark progress/done/failed with notes)
+- **Agent messaging**: `eh_send_message` sends targeted or broadcast (`*`) messages between agents. `eh_get_messages` retrieves unread messages with mark-as-read semantics. Per-recipient broadcast tracking
+- **Plan Kanban board**: new "Plan" tab in Operations View showing tasks grouped by status (Blocked → Pending → Claimed → In Progress → Done → Failed) with progress bar, assignee badges, dependency annotations, and agent notes
+- **Plan orbital debris**: plan tasks rendered as orbital fragments around planets in the Universe view. Shape encodes status (diamonds for active, circles for done, X-crosses for failed). Color and animation match status (gold pulse for in-progress, red flash for failed, slow fade for done)
+- **Plan persistence**: plan board persisted to VS Code `globalState` — survives window reloads. Restored on activation and hydrated to the webview on panel open
+- **Plan auto-discovery**: newly spawned agents receive an automatic message notifying them about the active plan with task counts and instructions to call `eh_get_plan`
+- **Bundled coordination skills**: three skills ship with the extension, installed to `~/.agents/skills/event-horizon/` on activation so all agents (Claude Code, OpenCode, Copilot) discover them automatically:
+  - `/eh:create-plan` — generates a parallelism-optimized plan markdown and registers it with Event Horizon
+  - `/eh:work-on-plan [plan] [phase]` — claims tasks, marks progress, communicates breaking changes
+  - `/eh:plan-status` — shows plan progress, active agents, blocked/available tasks
+- **Shared formatters**: `formatTokens`, `formatCost`, `formatDuration`, `topTool`, `timeAgo` extracted from panels into `packages/ui/src/utils/formatters.ts`
+- **Design tokens**: centralized colors, fonts, sizes in `packages/ui/src/styles/tokens.ts` with `agentColor()` and `stateColor()` helpers
+- **Panel style objects**: reusable overlay, modal, grid, button, and table styles in `packages/ui/src/styles/panels.ts`
+- **138 new tests**: MCP server (23), lock manager (17), plan board (46), message queue (23), physics (18), input handler (8), skill scanner (3). Total: 389 → 527+
+
+### Improved
+- **Webview decomposition**: 1,813-line `index.tsx` split into focused modules — `useWebviewMessages`, `useAchievementTriggers`, `useDemoSimulation`, `useSettingsPersistence` hooks + `ConnectModal`, `InfoOverlay`, `OnboardingCard` components. Index reduced to ~465 lines
+- **Store split**: monolithic Zustand store split into domain stores (universe, settings, achievement, activity) with backward-compatible re-export
+- **Universe ECS refactor**: 2,323-line renderer split into 8 extracted systems (AstronautSystem, ShipSystem, UFOSystem, ShootingStarSystem, MoonSystem, LightningSystem, PlanetAnimationSystem, InputHandler) + physics module. Universe reduced by 32% (734 lines extracted). All animation systems are pure functions operating on PixiJS containers
+- **Entity base system**: `EntitySystem<T>` generic class for managing entity lifecycle (add/remove/update/destroyAll)
+
 ## [0.1.0] — 2026-03-21
 
 ### Added
