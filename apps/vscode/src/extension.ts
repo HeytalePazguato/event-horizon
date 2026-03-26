@@ -18,6 +18,7 @@ import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
 import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
+import { ensureBundledSkills } from './bundledSkills';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -441,6 +442,9 @@ export function activate(context: vscode.ExtensionContext): void {
       if (staleClaude) await setupClaudeCodeHooks();
       if (staleOpenCode) await setupOpenCodeHooks();
       if (staleCopilot) await setupCopilotHooks();
+
+      // Write bundled skills to ~/.agents/skills/event-horizon/
+      await ensureBundledSkills();
 
       // Nudge running agents to announce themselves by touching their config
       // files. This triggers ConfigChange hooks so each running session sends
