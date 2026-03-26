@@ -28,7 +28,7 @@ description: "Create a multi-agent coordination plan and register it with Event 
 user-invocable: true
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Write, Edit
-argument-hint: "[feature or goal description]"
+argument-hint: "[feature or goal description] [optional: output folder path]"
 metadata:
   category: coordination
   tags: planning, multi-agent, coordination
@@ -78,7 +78,7 @@ The plan MUST use this checklist structure in its completion section, as this is
 - **Use numbered IDs** (1.1, 1.2, 2.1) — These become the task IDs agents use to claim work.
 - **Include file paths** — Always specify which files each task modifies or creates.
 - **Mark completed work** — Use \`- [x]\` for tasks that are already done.
-- **Write the plan to docs/** — Save as \`docs/[PLAN_NAME]_PLAN.md\`.
+- **Write the plan file** — If the user specified an output folder, save the plan there. Otherwise, ask where they'd like it saved. Use the pattern \`[PLAN_NAME]_PLAN.md\` for the filename.
 - **Register the plan** — After writing the file, call \`eh_load_plan\` with the markdown content. This is critical — it makes the plan visible to all agents in Event Horizon.
 `,
   },
