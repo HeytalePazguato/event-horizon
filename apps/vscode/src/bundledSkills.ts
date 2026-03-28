@@ -1,17 +1,18 @@
 /**
  * Bundled skills — shipped with the Event Horizon extension.
- * Written to ~/.agents/skills/event-horizon/ on activation so ALL agents
+ * Written to ~/.agents/skills/ on activation so ALL agents
  * (Claude Code, OpenCode, Copilot) discover them automatically.
+ * Each skill is a direct child: ~/.agents/skills/<skill-name>/SKILL.md
  */
 
 import * as os from 'os';
 import * as path from 'path';
 import * as fsp from 'fs/promises';
 
-const SKILLS_DIR = path.join(os.homedir(), '.agents', 'skills', 'event-horizon');
+const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
 
 interface BundledSkill {
-  /** Directory name under event-horizon/. */
+  /** Directory name under ~/.agents/skills/. */
   dirName: string;
   /** SKILL.md content. */
   content: string;
@@ -192,7 +193,7 @@ Show the current status of the active coordination plan in Event Horizon.
 // ── Installer ───────────────────────────────────────────────────────────────
 
 /**
- * Write bundled skills to ~/.agents/skills/event-horizon/.
+ * Write bundled skills to ~/.agents/skills/<skill-name>/.
  * Overwrites existing files (they're auto-generated, not user-edited).
  */
 export async function ensureBundledSkills(): Promise<void> {

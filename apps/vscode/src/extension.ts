@@ -11,9 +11,9 @@ import { openUniversePanel } from './webviewProvider';
 import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
-import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks, ensureLockScripts } from './setupHooks';
-import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
-import { setupCopilotHooks, hasStaleCopilotHooks } from './setupCopilotHooks';
+import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
+import { setupOpenCodeHooks, isOpenCodeHooksInstalled, registerOpenCodeMcpServer } from './setupOpenCodeHooks';
+import { setupCopilotHooks, isCopilotHooksInstalled } from './setupCopilotHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
@@ -433,17 +433,19 @@ export function activate(context: vscode.ExtensionContext): void {
       // Always regenerate lock scripts with the current session token
       await ensureLockScripts();
 
-      // Refresh hooks if the token changed (stale from a previous session)
-      const [staleClaude, staleOpenCode, staleCopilot] = await Promise.all([
-        hasStaleClaudeCodeHooks(),
-        hasStaleOpenCodeHooks(),
-        hasStaleCopilotHooks(),
+      // Auto-update all installed hooks/plugins/MCP configs on every activation.
+      // This ensures hooks stay current when the extension upgrades, the auth
+      // token rotates, or new features are added — no manual reinstall needed.
+      const [hasClaude, hasOpenCode, hasCopilot] = await Promise.all([
+        isClaudeCodeHooksInstalled(),
+        isOpenCodeHooksInstalled(),
+        isCopilotHooksInstalled(),
       ]);
-      if (staleClaude) await setupClaudeCodeHooks();
-      if (staleOpenCode) await setupOpenCodeHooks();
-      if (staleCopilot) await setupCopilotHooks();
+      if (hasClaude) { await setupClaudeCodeHooks(); await registerMcpServer(); }
+      if (hasOpenCode) { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
+      if (hasCopilot) await setupCopilotHooks();
 
-      // Write bundled skills to ~/.agents/skills/event-horizon/
+      // Write bundled skills to ~/.claude/skills/
       await ensureBundledSkills();
 
       // Nudge running agents to announce themselves by touching their config

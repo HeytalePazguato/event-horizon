@@ -474,14 +474,14 @@ let universePanel: vscode.WebviewPanel | null = null;
  * Open or focus the full universe in the main editor area as a WebviewPanel.
  * Returns the webview reference so the extension can forward events to it.
  */
-export function openUniversePanel(
+export async function openUniversePanel(
   context: vscode.ExtensionContext,
   webviewRef: { current: vscode.Webview | null },
   agentStateManager: AgentStateManager,
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
-): void {
+): Promise<void> {
   // If already open, just reveal it
   if (universePanel) {
     universePanel.reveal(vscode.ViewColumn.One);
@@ -508,7 +508,8 @@ export function openUniversePanel(
     vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js'),
   );
 
-  panel.webview.html = getUniverseHtml(panel.webview, scriptUri, version);
+  const connectedAgents = await getConnectedAgentTypes();
+  panel.webview.html = getUniverseHtml(panel.webview, scriptUri, version, connectedAgents);
 
   wireUniverseWebview(panel.webview, context, agentStateManager, metricsEngine, getSkills, rescanSkills);
 
@@ -559,6 +560,7 @@ function getUniverseHtml(
   webview: vscode.Webview,
   scriptUri: vscode.Uri,
   version: string,
+  connectedAgents: string[] = [],
 ): string {
   const csp = [
     "default-src 'none'",
@@ -568,7 +570,7 @@ function getUniverseHtml(
   ].join('; ');
 
   const scriptSrc = scriptUri.toString() + '?v=' + version;
-  const initData = JSON.stringify({ connectedAgents: [], version });
+  const initData = JSON.stringify({ connectedAgents, version });
 
   return `<!DOCTYPE html>
 <html>

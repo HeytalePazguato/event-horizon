@@ -358,7 +358,8 @@ function App() {
 
   // ── Derived state ──
   const hasAgents = agents.length > 0;
-  const showOnboarding = !hasAgents && !onboardingDismissed && !demoSimRunning;
+  const hasInstalledHooks = connectedAgentTypes.length > 0;
+  const showOnboarding = !hasAgents && !hasInstalledHooks && !onboardingDismissed && !demoSimRunning;
   const agentStates = Object.fromEntries(Object.entries(agentMap).map(([k, v]) => [k, v.state ?? 'idle']));
   const metricsView = useMemo(() => Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, { load: v.load }])), [metricsMap]);
   const activeSubagentsView = useMemo(() => Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, v.activeSubagents ?? 0])), [metricsMap]);
