@@ -345,6 +345,19 @@ export class PlanBoardManager {
     }
   }
 
+  /**
+   * Get the source file path and a map of task ID → done status.
+   * Used to write back checkbox updates to the plan markdown file.
+   */
+  getSourceFileSync(): { sourceFile: string; taskStatuses: Map<string, boolean> } | null {
+    if (!this.board) return null;
+    const taskStatuses = new Map<string, boolean>();
+    for (const task of this.board.tasks) {
+      taskStatuses.set(task.id, task.status === 'done');
+    }
+    return { sourceFile: this.board.sourceFile, taskStatuses };
+  }
+
   /** Clear the current plan. */
   clear(): void {
     this.board = null;

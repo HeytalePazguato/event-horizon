@@ -284,7 +284,7 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
         {tabs}
         {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
         {effectiveView === 'medals' && <MedalsView />}
-        {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
+        {effectiveView === 'skills' && <SkillsPanel compact onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
         {effectiveView === 'files' && <FileHeatmap />}
 
         {effectiveView === 'info' && singularitySelected && (
@@ -313,7 +313,7 @@ export const MetricsPanel: FC<MetricsPanelProps> = ({ onOpenSkill, onCreateSkill
       {tabs}
       {effectiveView === 'logs' && <LogsView entries={agentLogs} />}
       {effectiveView === 'medals' && <MedalsView />}
-      {effectiveView === 'skills' && <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
+      {effectiveView === 'skills' && <SkillsPanel compact onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />}
       {effectiveView === 'files' && <FileHeatmap />}
       {effectiveView === 'info' && (
         <div style={gridStyle}>

@@ -107,10 +107,27 @@ export function activate(context: vscode.ExtensionContext): void {
     planBoardManager.restore(savedPlan);
   }
 
-  // Forward plan changes to webview + persist to globalState
+  // Forward plan changes to webview + persist to globalState + sync checkboxes to file
   planBoardManager.onChange((board) => {
     // Persist to globalState so the plan survives VS Code reload
     void context.globalState.update('planBoard', board ? planBoardManager.serialize() : undefined);
+
+    // Write back checkbox status to the source markdown file
+    const sync = planBoardManager.getSourceFileSync();
+    if (sync && sync.sourceFile !== 'inline') {
+      void fsp.readFile(sync.sourceFile, 'utf8').then((content) => {
+        let updated = content;
+        for (const [taskId, isDone] of sync.taskStatuses) {
+          // Match "- [ ] <taskId> " or "- [x] <taskId> " and set the checkbox
+          const escapedId = taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const re = new RegExp(`^(\\s*- \\[)[ xX](\\]\\s+${escapedId}\\s)`, 'gm');
+          updated = updated.replace(re, `$1${isDone ? 'x' : ' '}$2`);
+        }
+        if (updated !== content) {
+          return fsp.writeFile(sync.sourceFile, updated, 'utf8');
+        }
+      }).catch(() => { /* file may not exist or not writable */ });
+    }
 
     if (!webviewRef.current) return;
     if (!board) {

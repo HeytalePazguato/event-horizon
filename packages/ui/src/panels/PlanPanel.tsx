@@ -5,7 +5,7 @@
  */
 
 import type { FC } from 'react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { colors, fonts, sizes } from '../styles/tokens.js';
 
 // ── Task status → visual mapping ────────────────────────────────────────────
@@ -105,8 +105,11 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
     return COLUMNS.map((col) => ({
       ...col,
       tasks: grouped.get(col.status) ?? [],
-    })).filter((col) => col.tasks.length > 0); // hide empty columns
+    }));
   }, [plan.tasks]);
+
+  const [showAllColumns, setShowAllColumns] = useState(false);
+  const visibleColumns = showAllColumns ? columns : columns.filter((col) => col.tasks.length > 0);
 
   const totalTasks = plan.tasks!.length;
   const doneTasks = plan.tasks!.filter((t) => t.status === 'done').length;
@@ -119,12 +122,26 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         <div style={{ fontSize: sizes.text.xl, color: colors.text.primary, fontWeight: 600 }}>
           {plan.name}
         </div>
-        <div style={{
-          fontSize: sizes.text.sm,
-          color: colors.text.dim,
-          marginLeft: 'auto',
-        }}>
-          {doneTasks}/{totalTasks} tasks
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: sizes.spacing.sm }}>
+          <span style={{ fontSize: sizes.text.sm, color: colors.text.dim }}>
+            {doneTasks}/{totalTasks} tasks
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAllColumns((v) => !v)}
+            style={{
+              padding: '2px 7px',
+              border: `1px solid ${colors.border.primary}`,
+              borderRadius: sizes.radius.sm,
+              background: showAllColumns ? 'rgba(30,70,45,0.3)' : 'transparent',
+              color: showAllColumns ? colors.text.secondary : colors.text.dim,
+              fontSize: sizes.text.xs,
+              fontFamily: fonts.mono,
+              cursor: 'pointer',
+            }}
+          >
+            {showAllColumns ? 'Active Only' : 'All Columns'}
+          </button>
         </div>
       </div>
 
@@ -152,7 +169,7 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         overflowX: 'auto',
         minHeight: 200,
       }}>
-        {columns.map((col) => (
+        {visibleColumns.map((col) => (
           <div key={col.status} style={{
             flex: '1 1 180px',
             minWidth: 160,

@@ -216,27 +216,8 @@ function App() {
     if (agent || metric) setSelectedAgentData(agent ?? null, metric ?? null);
   }, [selectedAgentId, agentMap, metricsMap, setSelectedAgentData]);
 
-  // ── Stale-agent safety net ──
-  const AGENTS_WITH_EXIT_SIGNAL = new Set(['claude-code', 'opencode']);
-  useEffect(() => {
-    const STALE_TIMEOUT_MS = 300_000;
-    const CHECK_INTERVAL_MS = 30_000;
-    const iv = setInterval(() => {
-      const now = Date.now();
-      for (const [agentId, lastSeen] of Object.entries(agentLastSeenRef.current)) {
-        const agent = agentMapRef.current[agentId];
-        if (!agent) continue;
-        if (AGENTS_WITH_EXIT_SIGNAL.has(agent.type)) continue;
-        if (now - lastSeen > STALE_TIMEOUT_MS) {
-          setAgents((prev) => prev.filter((a) => a.id !== agentId));
-          setAgentMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
-          setMetricsMap((prev) => { const n = { ...prev }; delete n[agentId]; return n; });
-          delete agentLastSeenRef.current[agentId];
-        }
-      }
-    }, CHECK_INTERVAL_MS);
-    return () => clearInterval(iv);
-  }, []);
+  // Planets are only removed by explicit agent.terminate events.
+  // No automatic stale-agent cleanup — idle agents stay visible indefinitely.
 
   // ── Clean up ship timers on unmount ──
   useEffect(() => () => { for (const id of shipTimerIdsRef.current) clearTimeout(id); }, []);

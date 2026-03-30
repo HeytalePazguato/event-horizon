@@ -41,17 +41,26 @@ You are a software architect creating a plan for multi-agent parallel execution.
 
 1. **Understand the request** — Read the argument carefully. If it references existing code, explore the codebase to understand current architecture, patterns, and conventions.
 
-2. **Identify parallelism** — Determine which work streams can run independently (e.g. frontend, backend, database, tests). These become phases or tracks that different agents can claim.
+2. **Scope check** — Before planning, assess scope. If the request spans multiple independent subsystems (e.g. a new API + a new UI + a CLI tool), suggest breaking it into separate plans — one per subsystem. Each plan should produce working, testable software on its own. Ask the user before proceeding if you think the scope should be split.
 
-3. **Design the plan** — Break the work into tasks with clear dependencies. Tasks within the same phase should be parallelizable. Tasks across phases should have explicit \`depends:\` annotations.
+3. **Map the file structure** — Before defining tasks, list every file that will be created or modified and what each one is responsible for. This is where decomposition decisions get locked in. Present it as a "File Map" section at the top of the plan. This helps agents spot conflicts before claiming tasks.
 
-4. **Write the plan** — Output a Markdown document following the structure below.
+4. **Identify parallelism** — Determine which work streams can run independently (e.g. frontend, backend, database, tests). These become phases or tracks that different agents can claim.
 
-5. **Register with Event Horizon** — After writing the plan file, call the \`eh_load_plan\` MCP tool with the plan's markdown content so agents can discover and claim tasks.
+5. **Design the plan** — Break the work into tasks with clear dependencies. Tasks within the same phase should be parallelizable. Tasks across phases should have explicit \`depends:\` annotations.
+
+6. **Write the plan** — Output a Markdown document following the structure below.
+
+7. **Self-review** — Before saving, review your own plan:
+   - **Coverage**: Re-read the user's request. Can you point to a task for every requirement? List any gaps and add missing tasks.
+   - **Placeholder scan**: Search for vague language — "add appropriate handling", "similar to task N", "TBD", "implement as needed". Replace with concrete details.
+   - **Consistency**: Do file paths, function names, and type signatures match across tasks? A function called \`createTheme()\` in task 1.1 but \`buildTheme()\` in task 2.3 is a bug. Fix inline.
+
+8. **Register with Event Horizon** — After writing the plan file, call the \`eh_load_plan\` MCP tool. You MUST pass the full markdown text in the \`content\` parameter (the server cannot read files). Also pass \`file_path\` for reference and your \`agent_id\`.
 
 ## Output format
 
-The plan MUST use this checklist structure in its completion section, as this is what Event Horizon parses:
+The plan MUST use this structure, as this is what Event Horizon parses:
 
 \`\`\`markdown
 # [Plan Name]
@@ -59,28 +68,48 @@ The plan MUST use this checklist structure in its completion section, as this is
 ## Overview
 [2-3 sentences explaining what this plan achieves.]
 
+## File Map
+| File | Action | Responsibility |
+|------|--------|----------------|
+| \`src/path/to/file.ts\` | Create | [what this file does] |
+| \`src/path/to/existing.ts\` | Modify | [what changes and why] |
+| \`tests/path/to/test.ts\` | Create | [what it tests] |
+
 ## Phases
 
 ### Phase A — [Name] (parallel track: [track name])
-- [ ] 1.1 [Task title — self-contained description]
+- [ ] 1.1 [Task title]
+  - **Files**: \`src/foo.ts\` (create), \`src/bar.ts\` (modify lines ~20-35)
+  - **Do**: [Concrete description — exact function signatures, expected behavior]
+  - **Verify**: [How to confirm this task is done — a command to run, a test to pass, or an observable result]
 - [ ] 1.2 [Task title]
   - depends: 1.1
+  - **Files**: \`src/baz.ts\` (create)
+  - **Do**: [Concrete description]
+  - **Verify**: [Verification step]
 
 ### Phase B — [Name]
 - [ ] 2.1 [Task title]
   - depends: 1.1, 1.2
+  - **Files**: \`src/qux.ts\` (modify)
+  - **Do**: [Concrete description]
+  - **Verify**: [Verification step]
 - [ ] 2.2 [Task title — can run parallel to 2.1]
+  - **Files**: \`tests/qux.test.ts\` (create)
+  - **Do**: [Concrete description]
+  - **Verify**: [Verification step]
 \`\`\`
 
 ## Rules
 
 - **Optimize for parallelism** — Group independent tasks so multiple agents can work simultaneously. Mark dependencies explicitly with \`- depends: id1, id2\` lines.
-- **Every task must be self-contained** — An agent reading just that task should know exactly what to build, which files to touch, and what the expected behavior is.
+- **Every task must be concrete** — No placeholders. Never write "add appropriate error handling", "similar to task N", "TBD", or "implement as needed". Every task must specify exact file paths, function signatures, and expected behavior. An agent reading just that task should be able to implement it without guessing.
+- **Every task must have a Verify step** — How does the agent confirm the task is done? This can be a test command (\`pnpm test -- --grep "theme"\`), a build check (\`pnpm build\`), or an observable result ("the file should contain 40 lines"). No task is complete without verification.
 - **Use numbered IDs** (1.1, 1.2, 2.1) — These become the task IDs agents use to claim work.
-- **Include file paths** — Always specify which files each task modifies or creates.
+- **Include file paths per task** — Every task must list which files it creates or modifies in its **Files** line. This is how Event Horizon detects potential conflicts.
 - **Mark completed work** — Use \`- [x]\` for tasks that are already done.
 - **Write the plan file** — If the user specified an output folder, save the plan there. Otherwise, ask where they'd like it saved. Use the pattern \`[PLAN_NAME]_PLAN.md\` for the filename.
-- **Register the plan** — After writing the file, call \`eh_load_plan\` with the markdown content. This is critical — it makes the plan visible to all agents in Event Horizon.
+- **Register the plan** — After writing the file, call \`eh_load_plan\` with the \`content\` parameter set to the full markdown text (not just the file path — the server cannot read files from disk). This is critical — it makes the plan visible to all agents in Event Horizon.
 `,
   },
   {

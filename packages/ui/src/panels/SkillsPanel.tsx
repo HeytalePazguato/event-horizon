@@ -42,11 +42,12 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
 const SkillCard: FC<{
   skill: SkillInfo;
   expanded: boolean;
+  compact?: boolean;
   onToggle: () => void;
   onOpen?: (filePath: string) => void;
   onMove?: (filePath: string, newCategory: string) => void;
   onDuplicate?: (filePath: string, newName: string) => void;
-}> = ({ skill, expanded, onToggle, onOpen, onMove, onDuplicate }) => {
+}> = ({ skill, expanded, compact = false, onToggle, onOpen, onMove, onDuplicate }) => {
   const scopeColor = SCOPE_COLORS[skill.scope] ?? '#6a7a72';
   const [duplicating, setDuplicating] = useState(false);
   const [dupName, setDupName] = useState('');
@@ -59,17 +60,17 @@ const SkillCard: FC<{
     <div
       onClick={onToggle}
       style={{
-        padding: '4px 6px',
+        padding: compact ? '4px 6px' : '8px 12px',
         background: expanded ? 'rgba(50,90,60,0.25)' : 'rgba(0,0,0,0.25)',
         border: `1px solid ${expanded ? '#3a6a4a' : '#1e3328'}`,
         boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
         cursor: 'pointer',
-        marginBottom: 2,
+        marginBottom: compact ? 2 : 4,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: compact ? 6 : 8, flexWrap: 'wrap' }}>
         {/* Skill name — with category prefix when present */}
-        <span style={{ fontFamily: 'Consolas, monospace', fontSize: 10, fontWeight: 600 }}>
+        <span style={{ fontFamily: 'Consolas, monospace', fontSize: compact ? 10 : 13, fontWeight: 600 }}>
           {skill.category && (
             <span style={{ color: '#6a8a5a' }}>/{skill.category}</span>
           )}
@@ -77,8 +78,8 @@ const SkillCard: FC<{
         </span>
         {/* Scope badge */}
         <span style={{
-          fontSize: 8,
-          padding: '1px 4px',
+          fontSize: compact ? 8 : 10,
+          padding: compact ? '1px 4px' : '2px 6px',
           background: `${scopeColor}22`,
           border: `1px solid ${scopeColor}44`,
           color: scopeColor,
@@ -91,8 +92,8 @@ const SkillCard: FC<{
         {/* Agent type badges */}
         {skill.agentTypes.map((at) => (
           <span key={at} style={{
-            fontSize: 7,
-            padding: '1px 3px',
+            fontSize: compact ? 7 : 9,
+            padding: compact ? '1px 3px' : '2px 5px',
             background: `${getAgentTypeColor(at)}18`,
             border: `1px solid ${getAgentTypeColor(at)}44`,
             color: getAgentTypeColor(at),
@@ -111,8 +112,8 @@ const SkillCard: FC<{
         {/* Metadata category badge */}
         {skill.metadataCategory && (
           <span style={{
-            fontSize: 7,
-            padding: '1px 3px',
+            fontSize: compact ? 7 : 9,
+            padding: compact ? '1px 3px' : '2px 5px',
             background: 'rgba(180,140,60,0.15)',
             border: '1px solid rgba(180,140,60,0.35)',
             color: '#c8a848',
@@ -124,8 +125,8 @@ const SkillCard: FC<{
         {/* Tags */}
         {skill.tags?.map((tag) => (
           <span key={tag} style={{
-            fontSize: 7,
-            padding: '1px 3px',
+            fontSize: compact ? 7 : 9,
+            padding: compact ? '1px 3px' : '2px 5px',
             background: 'rgba(120,160,200,0.12)',
             border: '1px solid rgba(120,160,200,0.3)',
             color: '#80a8c8',
@@ -137,9 +138,9 @@ const SkillCard: FC<{
       </div>
       {/* Description */}
       <div style={{
-        fontSize: 9,
+        fontSize: compact ? 9 : 11,
         color: '#7a9a82',
-        marginTop: 2,
+        marginTop: compact ? 2 : 4,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         ...(expanded ? {} : { whiteSpace: 'nowrap' as const }),
@@ -148,7 +149,7 @@ const SkillCard: FC<{
       </div>
       {/* Expanded details */}
       {expanded && (
-        <div style={{ marginTop: 4, fontSize: 8, color: '#5a7a62', lineHeight: 1.6 }}>
+        <div style={{ marginTop: compact ? 4 : 6, fontSize: compact ? 8 : 10, color: '#5a7a62', lineHeight: 1.6 }}>
           {skill.model && <div>Model: <span style={{ color: '#a0c090' }}>{skill.model}</span></div>}
           {skill.agent && <div>Agent: <span style={{ color: '#a0c090' }}>{skill.agent}</span></div>}
           {skill.argumentHint && <div>Args: <span style={{ color: '#a0c090' }}>{skill.argumentHint}</span></div>}
@@ -288,9 +289,11 @@ export interface SkillsPanelProps {
   onOpenMarketplace?: () => void;
   onMoveSkill?: (filePath: string, newCategory: string) => void;
   onDuplicateSkill?: (filePath: string, newName: string) => void;
+  /** When false (default in Operations View), uses full-size layout. When true, uses compact sizing for Command Center. */
+  compact?: boolean;
 }
 
-export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
+export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, compact = false } = {}) => {
   const skills = useCommandCenterStore((s) => s.skills);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -406,8 +409,8 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
           placeholder="Search skills..."
           style={{
             flex: 1,
-            padding: '2px 6px',
-            fontSize: 9,
+            padding: compact ? '2px 6px' : '5px 10px',
+            fontSize: compact ? 9 : 12,
             background: 'rgba(0,0,0,0.3)',
             border: '1px solid #2a4a3a',
             color: '#a0c090',
@@ -420,8 +423,8 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
             type="button"
             onClick={() => setScopeFilter(scopeFilter === scope ? null : scope)}
             style={{
-              padding: '1px 5px',
-              fontSize: 7,
+              padding: compact ? '1px 5px' : '3px 8px',
+              fontSize: compact ? 7 : 9,
               border: `1px solid ${scopeFilter === scope ? '#3a6a4a' : '#2a4a3a'}`,
               background: scopeFilter === scope ? 'rgba(50,90,60,0.4)' : 'transparent',
               color: scopeFilter === scope ? '#8fc08a' : '#6a7a72',
@@ -436,7 +439,7 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
       </div>
       {/* Agent type filters (multi-select toggle) */}
       <div style={{ display: 'flex', gap: 3, marginBottom: 4, alignItems: 'center' }}>
-        <span style={{ fontSize: 7, color: '#5a6a62', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Agent:</span>
+        <span style={{ fontSize: compact ? 7 : 9, color: '#5a6a62', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Agent:</span>
         {(['claude-code', 'opencode', 'copilot'] as const).map((at) => {
           const active = activeAgentFilters.has(at);
           const color = getAgentTypeColor(at);
@@ -446,8 +449,8 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
               type="button"
               onClick={() => toggleAgentFilter(at)}
               style={{
-                padding: '1px 5px',
-                fontSize: 7,
+                padding: compact ? '1px 5px' : '3px 8px',
+                fontSize: compact ? 7 : 9,
                 border: `1px solid ${active ? color : '#2a4a3a'}`,
                 background: active ? `${color}22` : 'transparent',
                 color: active ? color : '#6a7a72',
@@ -461,7 +464,7 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
         })}
       </div>
       {/* Skill list */}
-      <div style={{ maxHeight: 85, overflowY: 'auto' }}>
+      <div style={{ maxHeight: compact ? 85 : undefined, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
           <div style={{ color: '#4a5a52', fontSize: 9, padding: 4 }}>No matching skills.</div>
         ) : filtered.map((skill, i) => (
@@ -469,6 +472,7 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
             key={`${skill.scope}-${skill.name}`}
             skill={skill}
             expanded={expandedIndex === i}
+            compact={compact}
             onToggle={() => setExpandedIndex(expandedIndex === i ? null : i)}
             onOpen={onOpenSkill}
             onMove={onMoveSkill}
