@@ -142,11 +142,47 @@ export async function setupCopilotHooks(): Promise<void> {
   await ensureHooksLocationRegistered();
 }
 
+/**
+ * Register Event Horizon as an MCP server in VS Code's MCP config.
+ * Copilot agent mode reads MCP servers from .vscode/mcp.json (workspace) or
+ * the user-level setting via "MCP: Open User Configuration".
+ * We write to the workspace .vscode/mcp.json so it's project-scoped.
+ */
+export async function registerCopilotMcpServer(): Promise<void> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return;
+
+  const token = getAuthToken();
+  const tokenParam = token ? `?token=${token}` : '';
+  const mcpUrl = `http://127.0.0.1:${PORT}/mcp${tokenParam}`;
+
+  for (const folder of folders) {
+    const vscodePath = path.join(folder.uri.fsPath, '.vscode');
+    const mcpJsonPath = path.join(vscodePath, 'mcp.json');
+
+    let config: Record<string, unknown> = {};
+    try {
+      const raw = await fsp.readFile(mcpJsonPath, 'utf8');
+      config = JSON.parse(raw);
+    } catch {
+      // File doesn't exist — start fresh
+    }
+
+    const servers = (config.servers ?? {}) as Record<string, unknown>;
+    servers['event-horizon'] = { type: 'http', url: mcpUrl };
+    config.servers = servers;
+
+    await fsp.mkdir(vscodePath, { recursive: true });
+    await fsp.writeFile(mcpJsonPath, JSON.stringify(config, null, 2), 'utf8');
+  }
+}
+
 export async function runSetupCopilotHooks(): Promise<void> {
   try {
     await setupCopilotHooks();
+    await registerCopilotMcpServer();
     void vscode.window.showInformationMessage(
-      'Event Horizon: Copilot hooks installed globally. Copilot agent sessions will now send events in any workspace.',
+      'Event Horizon: Copilot hooks + MCP tools installed. Copilot agent sessions will now send events and can use coordination tools.',
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
