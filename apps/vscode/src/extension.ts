@@ -62,7 +62,7 @@ async function nudgeRunningAgents(): Promise<void> {
 
 /** Normalize a path for cross-platform comparison. */
 function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/').toLowerCase();
+  return p.split('\\').join('/').toLowerCase();
 }
 
 /**

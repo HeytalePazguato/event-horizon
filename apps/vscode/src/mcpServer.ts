@@ -259,8 +259,8 @@ export class FileActivityTracker {
   query(filePath?: string, limit = 20): FileActivityEntry[] {
     let results = this.entries;
     if (filePath) {
-      const norm = filePath.replace(/\\/g, '/').toLowerCase();
-      results = results.filter((e) => e.filePath.replace(/\\/g, '/').toLowerCase() === norm);
+      const norm = filePath.split('\\').join('/').toLowerCase();
+      results = results.filter((e) => e.filePath.split('\\').join('/').toLowerCase() === norm);
     }
     return results.slice(-limit).reverse();
   }

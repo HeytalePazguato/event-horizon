@@ -113,7 +113,7 @@ async function handleMoveSkill(filePath: string, _newCategory: string): Promise<
   const skillDir = path.dirname(filePath);
   const skillName = path.basename(skillDir);
 
-  const normalized = filePath.replace(/\\/g, '/');
+  const normalized = filePath.split('\\').join('/');
   const parts = normalized.split('/');
   const skillsIdx = parts.lastIndexOf('skills');
   if (skillsIdx < 0) {

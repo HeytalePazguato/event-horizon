@@ -130,7 +130,7 @@ export class LockManager {
   }
 
   private normalize(filePath: string): string {
-    return filePath.replace(/\\/g, '/').toLowerCase();
+    return filePath.split('\\').join('/').toLowerCase();
   }
 
   private pruneExpired(): void {

@@ -111,7 +111,7 @@ fi
 
 /** Build the PreToolUse command — calls the external script file. */
 function buildPreToolUseCommand(): string {
-  const scriptPath = path.join(os.homedir(), '.event-horizon', 'eh-lock-check.sh').replace(/\\/g, '/');
+  const scriptPath = path.join(os.homedir(), '.event-horizon', 'eh-lock-check.sh').split('\\').join('/');
   return `bash "${scriptPath}"`;
 }
 

@@ -86,7 +86,16 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
       title = rawTitle;
     }
 
-    title = title.replace(/<!--.*?-->/g, '').trim();
+    // Strip HTML comments — use indexOf loop instead of regex to avoid CodeQL "Bad HTML filtering regexp"
+    let cleaned = title;
+    let commentStart = cleaned.indexOf('<!--');
+    while (commentStart !== -1) {
+      const commentEnd = cleaned.indexOf('-->', commentStart + 4);
+      if (commentEnd === -1) break;
+      cleaned = cleaned.slice(0, commentStart) + cleaned.slice(commentEnd + 3);
+      commentStart = cleaned.indexOf('<!--');
+    }
+    title = cleaned.trim();
 
     const blockedBy: string[] = [];
     let description = '';
