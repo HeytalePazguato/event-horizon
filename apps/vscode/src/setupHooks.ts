@@ -111,7 +111,7 @@ fi
 
 /** Build the PreToolUse command — calls the external script file. */
 function buildPreToolUseCommand(): string {
-  const scriptPath = path.join(os.homedir(), '.event-horizon', 'eh-lock-check.sh').replace(/\\/g, '/');
+  const scriptPath = path.join(os.homedir(), '.event-horizon', 'eh-lock-check.sh').split('\\').join('/');
   return `bash "${scriptPath}"`;
 }
 
@@ -272,11 +272,38 @@ export async function setupClaudeCodeHooks(): Promise<void> {
   await fsp.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
+/**
+ * Register Event Horizon as an MCP server in ~/.claude.json.
+ * Reads existing config, merges our entry without overwriting other servers.
+ */
+export async function registerMcpServer(): Promise<void> {
+  const claudeJsonPath = path.join(os.homedir(), '.claude.json');
+  const token = getAuthToken();
+  const tokenParam = token ? `?token=${token}` : '';
+  const mcpUrl = `http://127.0.0.1:${PORT}/mcp${tokenParam}`;
+
+  let config: Record<string, unknown> = {};
+  try {
+    const raw = await fsp.readFile(claudeJsonPath, 'utf8');
+    config = JSON.parse(raw);
+  } catch {
+    // File doesn't exist or is invalid — start fresh
+  }
+
+  const servers = (config.mcpServers ?? {}) as Record<string, unknown>;
+  servers['event-horizon'] = { type: 'http', url: mcpUrl };
+  config.mcpServers = servers;
+
+  await fsp.writeFile(claudeJsonPath, JSON.stringify(config, null, 2), 'utf8');
+}
+
 export async function runSetupClaudeCodeHooks(): Promise<void> {
   try {
     await setupClaudeCodeHooks();
+    // Also register MCP server for tool-based coordination
+    await registerMcpServer();
     void vscode.window.showInformationMessage(
-      'Event Horizon: Claude Code hooks installed! Start a Claude Code session to see your agent appear.',
+      'Event Horizon: Claude Code hooks + MCP tools installed! Start a Claude Code session to see your agent appear.',
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

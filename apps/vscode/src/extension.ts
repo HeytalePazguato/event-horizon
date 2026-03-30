@@ -8,15 +8,17 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue } from './eventServer';
+import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
-import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, hasStaleClaudeCodeHooks, ensureLockScripts } from './setupHooks';
-import { setupOpenCodeHooks, hasStaleOpenCodeHooks } from './setupOpenCodeHooks';
-import { setupCopilotHooks, hasStaleCopilotHooks } from './setupCopilotHooks';
+import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
+import { setupOpenCodeHooks, isOpenCodeHooksInstalled, registerOpenCodeMcpServer } from './setupOpenCodeHooks';
+import { setupCopilotHooks, isCopilotHooksInstalled } from './setupCopilotHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
 import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
+import { ensureBundledSkills } from './bundledSkills';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -60,7 +62,7 @@ async function nudgeRunningAgents(): Promise<void> {
 
 /** Normalize a path for cross-platform comparison. */
 function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/').toLowerCase();
+  return p.split('\\').join('/').toLowerCase();
 }
 
 /**
@@ -95,6 +97,82 @@ export function activate(context: vscode.ExtensionContext): void {
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
+
+  // Initialize MCP server with runtime dependencies
+  initMcpServer({ agentStateManager });
+
+  // Restore plans from globalState (survives window reload)
+  // Migration: old single-plan 'planBoard' → new multi-plan 'planBoards'
+  const savedPlans = context.globalState.get<PlanBoard[]>('planBoards');
+  const legacyPlan = context.globalState.get<PlanBoard>('planBoard');
+  if (savedPlans && savedPlans.length > 0) {
+    planBoardManager.restore(savedPlans);
+  } else if (legacyPlan && legacyPlan.tasks?.length > 0) {
+    // Migrate old single plan — add an id if missing
+    if (!(legacyPlan as PlanBoard).id) {
+      (legacyPlan as PlanBoard).id = 'legacy-plan';
+      (legacyPlan as PlanBoard).status = 'active';
+    }
+    planBoardManager.restore([legacyPlan]);
+    void context.globalState.update('planBoard', undefined); // clean up old key
+  }
+
+  /** Serialize a PlanBoard to the webview plan-update format. */
+  function planToView(board: PlanBoard) {
+    return {
+      loaded: true as const,
+      id: board.id,
+      name: board.name,
+      status: board.status,
+      sourceFile: board.sourceFile,
+      lastUpdatedAt: board.lastUpdatedAt,
+      tasks: board.tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        assignee: t.assigneeName ?? t.assignee,
+        assigneeId: t.assignee,
+        blockedBy: t.blockedBy,
+        notes: t.notes,
+      })),
+    };
+  }
+
+  // Forward plan changes to webview + persist to globalState + sync checkboxes to file
+  planBoardManager.onChange((_boards, changedPlanId) => {
+    // Persist all plans to globalState
+    void context.globalState.update('planBoards', planBoardManager.serialize());
+
+    // Write back checkbox status for the changed plan
+    if (changedPlanId) {
+      const sync = planBoardManager.getSourceFileSync(changedPlanId);
+      if (sync && sync.sourceFile !== 'inline') {
+        void fsp.readFile(sync.sourceFile, 'utf8').then((content) => {
+          let updated = content;
+          for (const [taskId, isDone] of sync.taskStatuses) {
+            const escapedId = taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const re = new RegExp(`^(\\s*- \\[)[ xX](\\]\\s+${escapedId}\\s)`, 'gm');
+            updated = updated.replace(re, `$1${isDone ? 'x' : ' '}$2`);
+          }
+          if (updated !== content) return fsp.writeFile(sync.sourceFile, updated, 'utf8');
+        }).catch(() => {});
+      }
+    }
+
+    if (!webviewRef.current) return;
+    const allPlans = planBoardManager.getAllPlans();
+    webviewRef.current.postMessage({
+      type: 'plans-update',
+      plans: allPlans.map((p) => ({
+        id: p.id, name: p.name, status: p.status,
+        totalTasks: p.tasks.length,
+        doneTasks: p.tasks.filter((t) => t.status === 'done').length,
+        lastUpdatedAt: p.lastUpdatedAt,
+      })),
+      // Send the changed plan in full so the Kanban updates
+      activePlan: changedPlanId ? planToView(planBoardManager.getPlan(changedPlanId)!) : undefined,
+    });
+  });
 
   // ── Status bar — live agent count ──────────────────────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -167,6 +245,11 @@ export function activate(context: vscode.ExtensionContext): void {
   //   updateBadge(agentStateManager);
   // }
 
+  // ── Transcript-based smart lock release ────────────────────────────────────
+  // Track last locked file per agent for smart release: when an agent writes to
+  // a DIFFERENT file, release the previous lock automatically.
+  const lastLockedFileByAgent = new Map<string, string>();
+
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
     // Skip if hooks already emitted this type for this agent recently
@@ -175,6 +258,26 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
+
+    // Smart lock release: agent idle (end_turn) → release all locks
+    if (event.type === 'agent.idle') {
+      lockManager.releaseAll(event.agentId);
+      lastLockedFileByAgent.delete(event.agentId);
+    }
+
+    // Smart lock release: agent writes to a different file → release previous lock
+    if (event.type === 'tool.call' && event.payload?.filePath) {
+      const filePath = event.payload.filePath as string;
+      const toolName = event.payload.toolName as string | undefined;
+      const isWrite = toolName === 'Write' || toolName === 'WriteFile' || toolName === 'Edit' || toolName === 'MultiEdit';
+      if (isWrite) {
+        const lastFile = lastLockedFileByAgent.get(event.agentId);
+        if (lastFile && lastFile !== filePath) {
+          lockManager.release(lastFile, event.agentId);
+        }
+        lastLockedFileByAgent.set(event.agentId, filePath);
+      }
+    }
   }
 
   // ── Copilot subagent session tracking ──────────────────────────────────────
@@ -251,6 +354,41 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
+
+    // Auto-discovery: notify newly joined agents about active plans
+    if (event.type === 'agent.spawn') {
+      const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
+      if (activePlans.length === 1) {
+        const plan = activePlans[0];
+        const done = plan.tasks.filter((t) => t.status === 'done').length;
+        const pending = plan.tasks.filter((t) => t.status === 'pending').length;
+        messageQueue.send(
+          'event-horizon', 'Event Horizon', event.agentId,
+          `A shared plan "${plan.name}" is active (${done}/${plan.tasks.length} done, ${pending} pending). ` +
+          'Use eh_get_plan to see tasks and eh_claim_task to claim work.',
+        );
+      } else if (activePlans.length > 1) {
+        messageQueue.send(
+          'event-horizon', 'Event Horizon', event.agentId,
+          `${activePlans.length} active plans available. Use eh_list_plans to see them and eh_get_plan with a plan_id to view tasks.`,
+        );
+      }
+    }
+
+    // Track file activity for MCP eh_file_activity tool
+    if (event.type === 'tool.call' && event.payload?.filePath) {
+      const toolName = event.payload.toolName as string | undefined;
+      const action: 'read' | 'write' | 'edit' =
+        toolName === 'Write' || toolName === 'WriteFile' ? 'write' :
+        toolName === 'Edit' || toolName === 'MultiEdit' ? 'edit' : 'read';
+      fileActivityTracker.record({
+        filePath: event.payload.filePath as string,
+        agentId: event.agentId,
+        agentName: event.agentName,
+        action,
+        timestamp: event.timestamp,
+      });
+    }
 
     // Start transcript watcher for Claude Code agents when we first see a transcript path.
     // The watcher provides richer events (waiting ring, per-turn tokens, tool details)
@@ -335,15 +473,20 @@ export function activate(context: vscode.ExtensionContext): void {
       // Always regenerate lock scripts with the current session token
       await ensureLockScripts();
 
-      // Refresh hooks if the token changed (stale from a previous session)
-      const [staleClaude, staleOpenCode, staleCopilot] = await Promise.all([
-        hasStaleClaudeCodeHooks(),
-        hasStaleOpenCodeHooks(),
-        hasStaleCopilotHooks(),
+      // Auto-update all installed hooks/plugins/MCP configs on every activation.
+      // This ensures hooks stay current when the extension upgrades, the auth
+      // token rotates, or new features are added — no manual reinstall needed.
+      const [hasClaude, hasOpenCode, hasCopilot] = await Promise.all([
+        isClaudeCodeHooksInstalled(),
+        isOpenCodeHooksInstalled(),
+        isCopilotHooksInstalled(),
       ]);
-      if (staleClaude) await setupClaudeCodeHooks();
-      if (staleOpenCode) await setupOpenCodeHooks();
-      if (staleCopilot) await setupCopilotHooks();
+      if (hasClaude) { await setupClaudeCodeHooks(); await registerMcpServer(); }
+      if (hasOpenCode) { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
+      if (hasCopilot) await setupCopilotHooks();
+
+      // Write bundled skills to ~/.claude/skills/
+      await ensureBundledSkills();
 
       // Nudge running agents to announce themselves by touching their config
       // files. This triggers ConfigChange hooks so each running session sends

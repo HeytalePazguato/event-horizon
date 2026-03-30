@@ -129,6 +129,64 @@ A full-screen dashboard alternative to the cosmic visualization. Toggle with `Ct
 - **Files tab** — Full-size file activity heatmap with sortable columns (File, Total, Reads, Writes, Errors, Agents, Last Active), heat color legend, Full Paths toggle, click-to-expand per-agent breakdown.
 - **Logs tab** — Full-height searchable event log with event type filter chips, auto-scroll toggle, click-to-copy.
 - **Timeline tab** — Horizontal swimlane visualization with one row per agent, colored blocks for state changes (green), tool calls (amber), file operations (blue), and errors (red).
+- **Plan tab** — Kanban board showing shared plan tasks grouped by status (Blocked, Pending, Claimed, In Progress, Done, Failed). Progress bar, assignee badges, dependency annotations, agent notes. Toggle between "Active Only" and "All Columns" view.
+
+### Multi-Agent Plan Coordination
+
+Event Horizon enables 2-5 AI agents to work on a shared plan in parallel. This is the core collaboration feature — agents claim tasks atomically, report progress, and coordinate through the MCP server.
+
+#### How It Works
+
+1. **Create a plan**: Use `/eh:create-plan` to generate a plan optimized for parallel execution. The plan is a standard markdown file with `- [ ]` checklists and `- depends:` annotations.
+2. **Assign agents**: Tell each agent `/eh:work-on-plan [plan name] [phase]`. The agent claims tasks, marks progress, and communicates breaking changes.
+3. **Monitor**: Use `/eh:plan-status` or watch the Plan tab in Operations View. The Kanban board updates live as agents complete work.
+
+#### Plan Format
+
+Any markdown file with checklist items works:
+
+```markdown
+# My Feature Plan
+
+## Phase A — Database
+- [ ] 1.1 Create migration for users table
+- [ ] 1.2 Add seed data
+  - depends: 1.1
+
+## Phase B — API
+- [ ] 2.1 User CRUD endpoints
+  - depends: 1.1
+- [ ] 2.2 Auth middleware (can run parallel to 2.1)
+```
+
+Task IDs are extracted from numbered prefixes. Dependencies declared with `- depends:` lines. Completed tasks have their checkboxes updated in the source file automatically.
+
+#### MCP Tools (12 total)
+
+| Tool | Description |
+|------|-------------|
+| `eh_load_plan` | Parse a markdown plan and register it |
+| `eh_get_plan` | View all tasks with status and assignees |
+| `eh_claim_task` | Atomically claim a task (blocks others) |
+| `eh_update_task` | Mark progress, done, or failed with notes |
+| `eh_send_message` | Send a message to another agent or broadcast |
+| `eh_get_messages` | Retrieve unread messages |
+| `eh_check_lock` | Check if a file is locked |
+| `eh_acquire_lock` | Acquire a file lock |
+| `eh_release_lock` | Release a file lock |
+| `eh_wait_for_unlock` | Wait for a lock to release, then acquire |
+| `eh_list_agents` | List all connected agents |
+| `eh_file_activity` | Recent file activity across agents |
+
+#### Bundled Skills
+
+Three coordination skills ship with the extension and are installed to `~/.claude/skills/` on activation — discovered by all agents automatically:
+
+| Skill | Description |
+|-------|-------------|
+| `/eh:create-plan` | Generate a parallelism-optimized plan with scope check, file map, verify steps, and self-review. Registers with Event Horizon. |
+| `/eh:work-on-plan` | Claim tasks, implement them, mark progress, communicate breaking changes to other agents. |
+| `/eh:plan-status` | Show plan progress, active agents, blocked tasks, and available work. |
 
 ### Skills
 
@@ -236,6 +294,7 @@ The table below shows which agent lifecycle events are supported and their visua
 | **Estimated Cost** | ✅ | — | ✅ | USD estimate in Command Center |
 | **Error** | ✅ | — | ✅ | Red error glow |
 | **File Locking** | ✅ | — | 🔧 | Tool hard-blocked (exit 2) |
+| **MCP Coordination** | ✅ | — | ✅ | Plan claiming, messaging, locks |
 
 ### Known Limitations
 

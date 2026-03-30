@@ -36,86 +36,41 @@ export function getAuthToken(): string | null {
   return authToken;
 }
 
-// ── File lock registry ──────────────────────────────────────────────────────
-// Distributed lock manager for AI agents. When enabled, PreToolUse hooks
-// check this registry before writing to a file. If another agent holds
-// the lock, the hook returns non-zero and the agent's tool call is blocked.
+// ── File lock manager (extracted to lockManager.ts) ─────────────────────────
+import { LockManager } from './lockManager.js';
+import { McpServer, FileActivityTracker } from './mcpServer.js';
+import { PlanBoardManager } from './planBoard.js';
+import { MessageQueue } from './messageQueue.js';
 
-interface FileLock {
-  agentId: string;
-  agentName: string;
-  acquiredAt: number;
+export const lockManager = new LockManager(30_000);
+export const fileActivityTracker = new FileActivityTracker();
+export const planBoardManager = new PlanBoardManager();
+export const messageQueue = new MessageQueue();
+
+// MCP server — initialized lazily when agentStateManager is provided
+let mcpServer: McpServer | null = null;
+
+/** Initialize the MCP server with runtime dependencies. Must be called after extension activates. */
+export function initMcpServer(deps: { agentStateManager: import('@event-horizon/core').AgentStateManager }): void {
+  mcpServer = new McpServer({
+    lockManager,
+    agentStateManager: deps.agentStateManager,
+    fileActivityTracker,
+    planBoardManager,
+    messageQueue,
+  });
 }
 
-/** File locks keyed by normalized path. */
-const fileLocks = new Map<string, FileLock>();
-/** Lock TTL — auto-expire after 30 seconds to prevent stale locks from crashed agents. */
-const LOCK_TTL_MS = 30_000;
-/** Whether file locking is enabled (read from VS Code settings). */
-let fileLockingEnabled = false;
+/** @internal — exposed for testing only. */
+export function _getMcpServer(): McpServer | null { return mcpServer; }
+/** @internal — exposed for testing only. */
+export function _setMcpServer(s: McpServer | null): void { mcpServer = s; }
 
-export function setFileLockingEnabled(enabled: boolean): void {
-  fileLockingEnabled = enabled;
-  if (!enabled) fileLocks.clear();
-}
-
-export function isFileLockingEnabled(): boolean {
-  return fileLockingEnabled;
-}
-
-/** Get all active locks (for UI display). */
-export function getActiveLocks(): Array<{ path: string; agentId: string; agentName: string; acquiredAt: number }> {
-  pruneExpiredLocks();
-  return [...fileLocks.entries()].map(([p, l]) => ({ path: p, ...l }));
-}
-
-function pruneExpiredLocks(): void {
-  const now = Date.now();
-  for (const [path, lock] of fileLocks) {
-    if (now - lock.acquiredAt > LOCK_TTL_MS) fileLocks.delete(path);
-  }
-}
-
-function normalizeLockPath(filePath: string): string {
-  return filePath.replace(/\\/g, '/').toLowerCase();
-}
-
-/**
- * Check if a file can be written by the given agent.
- * Returns { allowed: true } or { allowed: false, owner: ... }.
- */
-function checkAndAcquireLock(filePath: string, agentId: string, agentName: string): { allowed: boolean; owner?: string; ownerAgent?: string } {
-  if (!fileLockingEnabled) return { allowed: true };
-
-  pruneExpiredLocks();
-  const norm = normalizeLockPath(filePath);
-  const existing = fileLocks.get(norm);
-
-  if (existing && existing.agentId !== agentId) {
-    // Another agent holds the lock
-    return { allowed: false, owner: existing.agentName, ownerAgent: existing.agentId };
-  }
-
-  // Acquire or refresh the lock
-  fileLocks.set(norm, { agentId, agentName, acquiredAt: Date.now() });
-  return { allowed: true };
-}
-
-/** Release a lock held by the given agent. */
-function releaseLock(filePath: string, agentId: string): void {
-  const norm = normalizeLockPath(filePath);
-  const existing = fileLocks.get(norm);
-  if (existing && existing.agentId === agentId) {
-    fileLocks.delete(norm);
-  }
-}
-
-/** Release all locks held by a specific agent (on agent termination). */
-export function releaseAgentLocks(agentId: string): void {
-  for (const [path, lock] of fileLocks) {
-    if (lock.agentId === agentId) fileLocks.delete(path);
-  }
-}
+// Backward-compat exports used by extension.ts
+export function setFileLockingEnabled(enabled: boolean): void { lockManager.setEnabled(enabled); }
+export function isFileLockingEnabled(): boolean { return lockManager.isEnabled(); }
+export function releaseAgentLocks(agentId: string): void { lockManager.releaseAll(agentId); }
+export function getActiveLocks() { return lockManager.getActiveLocks(); }
 
 // Sliding-window rate limiter
 const rateCounts = new Map<string, { count: number; resetAt: number }>();
@@ -247,17 +202,24 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
         return;
       }
 
+      // ── MCP endpoint (JSON-RPC 2.0) ────────────────────────────────────
+      if (route === '/mcp') {
+        if (!mcpServer) {
+          send(503, JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'MCP server not initialized' }, id: null }));
+          return;
+        }
+        mcpServer.handleRequest(body)
+          .then((response) => send(200, JSON.stringify(response)))
+          .catch(() => send(500, JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null })));
+        return;
+      }
+
       // ── Lock API ──────────────────────────────────────────────────────
-      // POST /lock — check/acquire a file lock before a write operation.
-      // Body: { action: 'check' | 'release', filePath, agentId, agentName }
-      // Response: { allowed: true } or { allowed: false, owner: '...' }
       if (route === '/lock') {
         const b = body as Record<string, unknown>;
         const action = b.action as string;
         const filePath = b.filePath as string;
         const agentId = b.agentId as string;
-        // DEBUG: log lock requests to VS Code output
-        console.log(`[EH-LOCK] action=${action} file=${filePath} agent=${agentId} enabled=${fileLockingEnabled}`);
         const agentName = (b.agentName as string) ?? agentId;
 
         if (!filePath || !agentId) {
@@ -266,38 +228,26 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
         }
 
         if (action === 'release') {
-          releaseLock(filePath, agentId);
+          lockManager.release(filePath, agentId);
           send(200, JSON.stringify({ released: true }));
           return;
         }
 
-        // 'query' — check if locked by someone else, but don't acquire (for Read operations)
         if (action === 'query') {
-          if (!fileLockingEnabled) { send(200, JSON.stringify({ allowed: true })); return; }
-          pruneExpiredLocks();
-          const norm = normalizeLockPath(filePath);
-          const existing = fileLocks.get(norm);
-          if (existing && existing.agentId !== agentId) {
-            send(409, JSON.stringify({ allowed: false, owner: existing.agentName, ownerAgent: existing.agentId }));
-          } else {
-            send(200, JSON.stringify({ allowed: true }));
-          }
+          const result = lockManager.query(filePath, agentId);
+          send(result.allowed ? 200 : 409, JSON.stringify(result));
           return;
         }
 
-        // Default: check + acquire (for Write operations)
-        const result = checkAndAcquireLock(filePath, agentId, agentName);
-        if (result.allowed) {
-          send(200, JSON.stringify({ allowed: true }));
-        } else {
-          send(409, JSON.stringify({ allowed: false, owner: result.owner, ownerAgent: result.ownerAgent }));
-        }
+        // Default: check + acquire
+        const result = lockManager.acquire(filePath, agentId, agentName, b.reason as string | undefined);
+        send(result.allowed ? 200 : 409, JSON.stringify(result));
         return;
       }
 
       // GET /lock/status — list all active locks (for UI)
       if (route === '/lock/status') {
-        send(200, JSON.stringify({ enabled: fileLockingEnabled, locks: getActiveLocks() }));
+        send(200, JSON.stringify({ enabled: lockManager.isEnabled(), locks: lockManager.getActiveLocks() }));
         return;
       }
 

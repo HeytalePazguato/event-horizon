@@ -225,11 +225,39 @@ export async function setupOpenCodeHooks(): Promise<void> {
   await fsp.writeFile(getPluginPath(), buildPluginSource(), 'utf8');
 }
 
+/**
+ * Register Event Horizon as an MCP server in OpenCode's config.
+ * Reads ~/.config/opencode/opencode.json, merges our entry under "mcp".
+ */
+export async function registerOpenCodeMcpServer(): Promise<void> {
+  const configPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+  const token = getAuthToken();
+  const tokenParam = token ? `?token=${token}` : '';
+  const mcpUrl = `http://127.0.0.1:${PORT}/mcp${tokenParam}`;
+
+  let config: Record<string, unknown> = {};
+  try {
+    const raw = await fsp.readFile(configPath, 'utf8');
+    config = JSON.parse(raw);
+  } catch {
+    // File doesn't exist or is invalid — start fresh
+  }
+
+  const mcp = (config.mcp ?? {}) as Record<string, unknown>;
+  mcp['event-horizon'] = { type: 'remote', url: mcpUrl, enabled: true };
+  config.mcp = mcp;
+
+  const dir = path.dirname(configPath);
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
+}
+
 export async function runSetupOpenCodeHooks(): Promise<void> {
   try {
     await setupOpenCodeHooks();
+    await registerOpenCodeMcpServer();
     void vscode.window.showInformationMessage(
-      'Event Horizon: OpenCode plugin installed! Restart OpenCode to see your agent appear.',
+      'Event Horizon: OpenCode plugin + MCP tools installed! Restart OpenCode to see your agent appear.',
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

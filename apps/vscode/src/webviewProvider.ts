@@ -11,6 +11,7 @@ import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHo
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import type { SkillInfo } from './skillScanner.js';
+import { planBoardManager } from './eventServer.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -112,7 +113,7 @@ async function handleMoveSkill(filePath: string, _newCategory: string): Promise<
   const skillDir = path.dirname(filePath);
   const skillName = path.basename(skillDir);
 
-  const normalized = filePath.replace(/\\/g, '/');
+  const normalized = filePath.split('\\').join('/');
   const parts = normalized.split('/');
   const skillsIdx = parts.lastIndexOf('skills');
   if (skillsIdx < 0) {
@@ -205,6 +206,8 @@ function readVscodeConfig(): {
   animationSpeed: number;
   eventServerPort: number;
   fileLockingEnabled: boolean;
+  viewMode: 'universe' | 'operations';
+  planShowAllColumns: boolean;
 } {
   const cfg = vscode.workspace.getConfiguration('eventHorizon');
   const settings: Record<string, { color: string; sizeMult: number }> = {};
@@ -220,6 +223,8 @@ function readVscodeConfig(): {
     animationSpeed: cfg.get<number>('animationSpeed', 1.0),
     eventServerPort: cfg.get<number>('port', 28765),
     fileLockingEnabled: cfg.get<boolean>('fileLockingEnabled', false),
+    viewMode: cfg.get<'universe' | 'operations'>('defaultView', 'universe'),
+    planShowAllColumns: cfg.get<boolean>('planShowAllColumns', false),
   };
 }
 
@@ -230,6 +235,8 @@ async function writeVscodeConfig(msg: {
   animationSpeed?: number;
   eventServerPort?: number;
   fileLockingEnabled?: boolean;
+  viewMode?: 'universe' | 'operations';
+  planShowAllColumns?: boolean;
 }): Promise<void> {
   const cfg = vscode.workspace.getConfiguration('eventHorizon');
   if (msg.achievementsEnabled !== undefined) {
@@ -243,6 +250,12 @@ async function writeVscodeConfig(msg: {
   }
   if (msg.fileLockingEnabled !== undefined) {
     await cfg.update('fileLockingEnabled', msg.fileLockingEnabled, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.viewMode !== undefined) {
+    await cfg.update('defaultView', msg.viewMode, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.planShowAllColumns !== undefined) {
+    await cfg.update('planShowAllColumns', msg.planShowAllColumns, vscode.ConfigurationTarget.Global);
   }
   if (msg.settings) {
     for (const [cfgKey, storeKey] of Object.entries(AGENT_CONFIG_MAP)) {
@@ -276,9 +289,8 @@ function wireUniverseWebview(
       void webview.postMessage({
         type: 'init-settings',
         ...cfg,
-        // Preserve non-config settings from globalState
+        // Preserve non-config settings from globalState (tourCompleted only — viewMode & planShowAllColumns are in VS Code settings now)
         tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
-        viewMode: (savedGeneral as Record<string, unknown> | undefined)?.viewMode,
       });
     }
   });
@@ -315,6 +327,7 @@ function wireUniverseWebview(
       // Preserve non-config settings from globalState
       tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
       viewMode: (savedGeneral as Record<string, unknown> | undefined)?.viewMode,
+      planShowAllColumns: (savedGeneral as Record<string, unknown> | undefined)?.planShowAllColumns,
     });
 
     const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
@@ -333,11 +346,59 @@ function wireUniverseWebview(
         })
       );
     }
+
+    // Hydrate all plans from persisted state
+    const allPlans = planBoardManager.getAllPlans();
+    if (allPlans.length > 0) {
+      const activePlan = allPlans.find((p) => p.status === 'active') ?? allPlans[0];
+      void webview.postMessage({
+        type: 'plans-update',
+        plans: allPlans.map((p) => ({
+          id: p.id, name: p.name, status: p.status,
+          totalTasks: p.tasks.length,
+          doneTasks: p.tasks.filter((t) => t.status === 'done').length,
+          lastUpdatedAt: p.lastUpdatedAt,
+        })),
+        activePlan: {
+          loaded: true,
+          id: activePlan.id,
+          name: activePlan.name,
+          status: activePlan.status,
+          sourceFile: activePlan.sourceFile,
+          lastUpdatedAt: activePlan.lastUpdatedAt,
+          tasks: activePlan.tasks.map((t) => ({
+            id: t.id, title: t.title, status: t.status,
+            assignee: t.assigneeName ?? t.assignee,
+            assigneeId: t.assignee,
+            blockedBy: t.blockedBy, notes: t.notes,
+          })),
+        },
+      });
+    }
   }
 
   webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
     if (msg?.type === 'ready') {
       hydrateWebview();
+      return;
+    }
+    if (msg?.type === 'request-plan') {
+      const planId = msg.planId as string;
+      const board = planBoardManager.getPlan(planId);
+      if (board) {
+        void webview.postMessage({
+          type: 'plan-update',
+          plan: {
+            loaded: true, id: board.id, name: board.name, status: board.status,
+            sourceFile: board.sourceFile, lastUpdatedAt: board.lastUpdatedAt,
+            tasks: board.tasks.map((t) => ({
+              id: t.id, title: t.title, status: t.status,
+              assignee: t.assigneeName ?? t.assignee, assigneeId: t.assignee,
+              blockedBy: t.blockedBy, notes: t.notes,
+            })),
+          },
+        });
+      }
       return;
     }
     if (msg?.type === 'persist-medals') {
@@ -356,7 +417,6 @@ function wireUniverseWebview(
       // Write to globalState (non-config settings like tourCompleted)
       void context.globalState.update('generalSettings', {
         tourCompleted: msg.tourCompleted,
-        viewMode: msg.viewMode,
       });
       // Write to VS Code native settings — suppress echo to avoid feedback loop
       suppressConfigEcho = true;
@@ -366,6 +426,8 @@ function wireUniverseWebview(
         animationSpeed: msg.animationSpeed as number | undefined,
         eventServerPort: msg.eventServerPort as number | undefined,
         fileLockingEnabled: msg.fileLockingEnabled as boolean | undefined,
+        viewMode: msg.viewMode as 'universe' | 'operations' | undefined,
+        planShowAllColumns: msg.planShowAllColumns as boolean | undefined,
       }).finally(() => {
         // Re-enable after a small delay to let all config change events flush
         setTimeout(() => { suppressConfigEcho = false; }, 200);
@@ -450,14 +512,14 @@ let universePanel: vscode.WebviewPanel | null = null;
  * Open or focus the full universe in the main editor area as a WebviewPanel.
  * Returns the webview reference so the extension can forward events to it.
  */
-export function openUniversePanel(
+export async function openUniversePanel(
   context: vscode.ExtensionContext,
   webviewRef: { current: vscode.Webview | null },
   agentStateManager: AgentStateManager,
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
-): void {
+): Promise<void> {
   // If already open, just reveal it
   if (universePanel) {
     universePanel.reveal(vscode.ViewColumn.One);
@@ -484,7 +546,8 @@ export function openUniversePanel(
     vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js'),
   );
 
-  panel.webview.html = getUniverseHtml(panel.webview, scriptUri, version);
+  const connectedAgents = await getConnectedAgentTypes();
+  panel.webview.html = getUniverseHtml(panel.webview, scriptUri, version, connectedAgents);
 
   wireUniverseWebview(panel.webview, context, agentStateManager, metricsEngine, getSkills, rescanSkills);
 
@@ -535,6 +598,7 @@ function getUniverseHtml(
   webview: vscode.Webview,
   scriptUri: vscode.Uri,
   version: string,
+  connectedAgents: string[] = [],
 ): string {
   const csp = [
     "default-src 'none'",
@@ -544,7 +608,7 @@ function getUniverseHtml(
   ].join('; ');
 
   const scriptSrc = scriptUri.toString() + '?v=' + version;
-  const initData = JSON.stringify({ connectedAgents: [], version });
+  const initData = JSON.stringify({ connectedAgents, version });
 
   return `<!DOCTYPE html>
 <html>
