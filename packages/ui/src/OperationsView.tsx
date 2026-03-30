@@ -15,7 +15,7 @@ import { LogsPanel } from './panels/LogsPanel.js';
 import { TimelinePanel } from './panels/TimelinePanel.js';
 import { SkillsPanel } from './panels/SkillsPanel.js';
 import { PlanPanel } from './panels/PlanPanel.js';
-import type { PlanView } from './panels/PlanPanel.js';
+import type { PlanView, PlanSummary } from './panels/PlanPanel.js';
 
 type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan';
 
@@ -38,6 +38,9 @@ export interface OperationsViewProps {
   metricsMap: Record<string, AgentMetrics>;
   agentStates: Record<string, string>;
   plan?: PlanView;
+  plans?: PlanSummary[];
+  selectedPlanId?: string | null;
+  onSelectPlan?: (id: string) => void;
   onOpenSkill?: (filePath: string) => void;
   onCreateSkill?: () => void;
   onOpenMarketplace?: () => void;
@@ -45,7 +48,7 @@ export interface OperationsViewProps {
   onDuplicateSkill?: (filePath: string, newName: string) => void;
 }
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
@@ -89,7 +92,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* Left sidebar */}
-        <AgentSidebar agents={agents} agentStates={agentStates} />
+        <AgentSidebar agents={agents} agentStates={agentStates} plans={plans} selectedPlanId={selectedPlanId} onSelectPlan={(id) => { onSelectPlan?.(id); setActiveTab('plan'); }} />
 
         {/* Right: tabs + content */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>

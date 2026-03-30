@@ -25,10 +25,21 @@ export interface PlanTaskView {
 
 export interface PlanView {
   loaded: boolean;
+  id?: string;
   name?: string;
+  status?: 'active' | 'completed' | 'archived';
   sourceFile?: string;
   lastUpdatedAt?: number;
   tasks?: PlanTaskView[];
+}
+
+export interface PlanSummary {
+  id: string;
+  name: string;
+  status: 'active' | 'completed' | 'archived';
+  totalTasks: number;
+  doneTasks: number;
+  lastUpdatedAt: number;
 }
 
 /** Map task status to display color. */
@@ -169,15 +180,19 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         display: 'flex',
         gap: sizes.spacing.md,
         overflowX: 'auto',
-        minHeight: 200,
+        flex: 1,
+        minHeight: 0,
       }}>
         {visibleColumns.map((col) => (
           <div key={col.status} style={{
             flex: '1 1 180px',
             minWidth: 160,
             maxWidth: 280,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
           }}>
-            {/* Column header */}
+            {/* Column header — sticky */}
             <div style={{
               display: 'flex',
               alignItems: 'center',
@@ -185,6 +200,11 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
               padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
               marginBottom: sizes.spacing.sm,
               borderBottom: `2px solid ${taskStatusColor(col.status)}`,
+              position: 'sticky',
+              top: 0,
+              background: 'linear-gradient(180deg, #080e0a 0%, rgba(8,14,10,0.95) 100%)',
+              zIndex: 1,
+              flexShrink: 0,
             }}>
               <div style={{
                 width: 6,
@@ -212,8 +232,8 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
               </span>
             </div>
 
-            {/* Task cards */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
+            {/* Task cards — scrollable */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs, overflowY: 'auto', flex: 1, minHeight: 0 }}>
               {col.tasks.map((task) => (
                 <TaskCard key={task.id} task={task} />
               ))}

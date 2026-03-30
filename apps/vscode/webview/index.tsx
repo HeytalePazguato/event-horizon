@@ -142,6 +142,8 @@ function App() {
   const [marketplaceSearchSource, setMarketplaceSearchSource] = useState<string>('');
   const [marketplaceSearchError, setMarketplaceSearchError] = useState<'timeout' | 'error' | null>(null);
   const [plan, setPlan] = useState<import('@event-horizon/ui').PlanView>({ loaded: false });
+  const [plans, setPlans] = useState<import('@event-horizon/ui').PlanSummary[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -193,7 +195,7 @@ function App() {
     setMarketplaceSearchResults, setMarketplaceSearchLoading, setMarketplaceSearchSource, setMarketplaceSearchError,
     agentMapRef, metricsMapRef, agentLastSeenRef,
     activeFilesRef, recentSparkPairsRef, activeSkillsRef, invokedSkillNamesRef,
-    shipTimerIdsRef, addLog, incrementTiered, setPlan,
+    shipTimerIdsRef, addLog, incrementTiered, setPlan, setPlans,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -409,7 +411,9 @@ function App() {
       </div>
 
       {viewMode === 'operations' && (
-        <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates} plan={plan}
+        <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
+          plan={plan} plans={plans} selectedPlanId={selectedPlanId}
+          onSelectPlan={(id) => { setSelectedPlanId(id); vscodeApi?.postMessage({ type: 'request-plan', planId: id }); }}
           onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace}
           onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       )}

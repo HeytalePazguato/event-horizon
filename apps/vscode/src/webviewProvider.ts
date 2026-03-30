@@ -347,24 +347,30 @@ function wireUniverseWebview(
       );
     }
 
-    // Hydrate plan board from persisted state
-    const board = planBoardManager.getPlan();
-    if (board) {
+    // Hydrate all plans from persisted state
+    const allPlans = planBoardManager.getAllPlans();
+    if (allPlans.length > 0) {
+      const activePlan = allPlans.find((p) => p.status === 'active') ?? allPlans[0];
       void webview.postMessage({
-        type: 'plan-update',
-        plan: {
+        type: 'plans-update',
+        plans: allPlans.map((p) => ({
+          id: p.id, name: p.name, status: p.status,
+          totalTasks: p.tasks.length,
+          doneTasks: p.tasks.filter((t) => t.status === 'done').length,
+          lastUpdatedAt: p.lastUpdatedAt,
+        })),
+        activePlan: {
           loaded: true,
-          name: board.name,
-          sourceFile: board.sourceFile,
-          lastUpdatedAt: board.lastUpdatedAt,
-          tasks: board.tasks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            status: t.status,
+          id: activePlan.id,
+          name: activePlan.name,
+          status: activePlan.status,
+          sourceFile: activePlan.sourceFile,
+          lastUpdatedAt: activePlan.lastUpdatedAt,
+          tasks: activePlan.tasks.map((t) => ({
+            id: t.id, title: t.title, status: t.status,
             assignee: t.assigneeName ?? t.assignee,
             assigneeId: t.assignee,
-            blockedBy: t.blockedBy,
-            notes: t.notes,
+            blockedBy: t.blockedBy, notes: t.notes,
           })),
         },
       });
@@ -374,6 +380,25 @@ function wireUniverseWebview(
   webview.onDidReceiveMessage((msg: { type?: string; agentType?: string; command?: string; label?: string; [key: string]: unknown }) => {
     if (msg?.type === 'ready') {
       hydrateWebview();
+      return;
+    }
+    if (msg?.type === 'request-plan') {
+      const planId = msg.planId as string;
+      const board = planBoardManager.getPlan(planId);
+      if (board) {
+        void webview.postMessage({
+          type: 'plan-update',
+          plan: {
+            loaded: true, id: board.id, name: board.name, status: board.status,
+            sourceFile: board.sourceFile, lastUpdatedAt: board.lastUpdatedAt,
+            tasks: board.tasks.map((t) => ({
+              id: t.id, title: t.title, status: t.status,
+              assignee: t.assigneeName ?? t.assignee, assigneeId: t.assignee,
+              blockedBy: t.blockedBy, notes: t.notes,
+            })),
+          },
+        });
+      }
       return;
     }
     if (msg?.type === 'persist-medals') {

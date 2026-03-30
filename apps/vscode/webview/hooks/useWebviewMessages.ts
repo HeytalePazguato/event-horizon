@@ -7,7 +7,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
 import { useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { AgentState, AgentRuntimeState, AgentMetrics } from '@event-horizon/core';
-import type { SkillInfo, MarketplaceSkillResult, PlanView } from '@event-horizon/ui';
+import type { SkillInfo, MarketplaceSkillResult, PlanView, PlanSummary } from '@event-horizon/ui';
 
 /** Max visible ships between a given ordered (from→to) pair at once. */
 const MAX_SHIPS_PER_PAIR = 2;
@@ -41,6 +41,7 @@ export interface WebviewMessageDeps {
   addLog: (log: { id: string; ts: string; agentId: string; agentName: string; type: string; skillName?: string }) => void;
   incrementTiered: (id: string) => void;
   setPlan: React.Dispatch<React.SetStateAction<PlanView>>;
+  setPlans: React.Dispatch<React.SetStateAction<PlanSummary[]>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -123,6 +124,12 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       if (msg?.type === 'plan-update') {
         const data = msg as unknown as { plan: PlanView };
         if (data.plan) depsRef.current.setPlan(data.plan);
+        return;
+      }
+      if (msg?.type === 'plans-update') {
+        const data = msg as unknown as { plans: PlanSummary[]; activePlan?: PlanView };
+        if (data.plans) depsRef.current.setPlans(data.plans);
+        if (data.activePlan) depsRef.current.setPlan(data.activePlan);
         return;
       }
       if (msg?.type === 'skills-update') {

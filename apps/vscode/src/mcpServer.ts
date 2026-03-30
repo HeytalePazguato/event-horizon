@@ -128,7 +128,19 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_get_plan',
-    description: 'Get the current shared plan — all tasks with status, assignee, and dependencies.',
+    description: 'Get a plan by ID, or the most recently loaded plan if no ID given. Returns all tasks with status, assignee, and dependencies.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_list_plans',
+    description: 'List all plans with their status, task counts, and progress.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -146,6 +158,7 @@ export const MCP_TOOLS: McpToolDef[] = [
         task_id: { type: 'string', description: 'Task ID from the plan' },
         agent_id: { type: 'string', description: 'Your agent/session ID' },
         agent_name: { type: 'string', description: 'Human-readable agent name' },
+        plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
       },
       required: ['task_id', 'agent_id'],
     },
@@ -161,8 +174,33 @@ export const MCP_TOOLS: McpToolDef[] = [
         agent_name: { type: 'string', description: 'Human-readable agent name' },
         status: { type: 'string', enum: ['in_progress', 'done', 'failed', 'blocked'], description: 'New task status' },
         note: { type: 'string', description: 'Optional note for other agents' },
+        plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
       },
       required: ['task_id', 'agent_id', 'status'],
+    },
+  },
+  {
+    name: 'eh_archive_plan',
+    description: 'Archive a plan — marks it as archived so it no longer shows as active. Tasks are preserved for reference.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plan_id: { type: 'string', description: 'Plan ID to archive' },
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['plan_id', 'agent_id'],
+    },
+  },
+  {
+    name: 'eh_delete_plan',
+    description: 'Permanently delete a plan and all its tasks.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plan_id: { type: 'string', description: 'Plan ID to delete' },
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['plan_id', 'agent_id'],
     },
   },
   // ── Agent messaging tools ────────────────────────────────────────────────
@@ -397,7 +435,6 @@ export class McpServer {
           throw new Error('Either file_path or content must be provided');
         }
 
-        // Content is passed directly — the agent already read the file
         const markdown = content ?? '';
         if (!markdown) {
           throw new Error('No content provided. Pass the markdown content in the "content" parameter.');
@@ -406,6 +443,7 @@ export class McpServer {
         const plan = planBoardManager.loadPlan(markdown, filePath);
         return {
           loaded: true,
+          plan_id: plan.id,
           name: plan.name,
           taskCount: plan.tasks.length,
           tasks: plan.tasks.map((t) => ({
@@ -418,13 +456,16 @@ export class McpServer {
       }
 
       case 'eh_get_plan': {
-        const plan = planBoardManager.getPlan();
+        const planId = args.plan_id as string | undefined;
+        const plan = planBoardManager.getPlan(planId);
         if (!plan) {
-          return { loaded: false, message: 'No plan loaded. Use eh_load_plan first.' };
+          return { loaded: false, message: planId ? `Plan not found: ${planId}` : 'No plan loaded. Use eh_load_plan first.' };
         }
         return {
           loaded: true,
+          plan_id: plan.id,
           name: plan.name,
+          status: plan.status,
           sourceFile: plan.sourceFile,
           lastUpdatedAt: plan.lastUpdatedAt,
           tasks: plan.tasks.map((t) => ({
@@ -439,15 +480,32 @@ export class McpServer {
         };
       }
 
+      case 'eh_list_plans': {
+        const plans = planBoardManager.getAllPlans();
+        return {
+          plans: plans.map((p) => ({
+            plan_id: p.id,
+            name: p.name,
+            status: p.status,
+            sourceFile: p.sourceFile,
+            totalTasks: p.tasks.length,
+            doneTasks: p.tasks.filter((t) => t.status === 'done').length,
+            lastUpdatedAt: p.lastUpdatedAt,
+          })),
+          count: plans.length,
+        };
+      }
+
       case 'eh_claim_task': {
         const taskId = args.task_id as string;
         const agentId = args.agent_id as string;
         const agentName = (args.agent_name as string) ?? agentId;
-        const result = planBoardManager.claimTask(taskId, agentId, agentName);
+        const planId = args.plan_id as string | undefined;
+        const result = planBoardManager.claimTask(taskId, agentId, agentName, planId);
         if (!result.success) {
-          return { claimed: false, error: result.error, task: result.task ? { id: result.task.id, status: result.task.status, assignee: result.task.assigneeName } : undefined };
+          return { claimed: false, error: result.error, plan_id: result.planId, task: result.task ? { id: result.task.id, status: result.task.status, assignee: result.task.assigneeName } : undefined };
         }
-        return { claimed: true, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
+        return { claimed: true, plan_id: result.planId, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
       }
 
       case 'eh_update_task': {
@@ -456,6 +514,7 @@ export class McpServer {
         const agentName = (args.agent_name as string) ?? agentId;
         const status = args.status as string;
         const note = args.note as string | undefined;
+        const planId = args.plan_id as string | undefined;
 
         const validStatuses = ['in_progress', 'done', 'failed', 'blocked'];
         if (!validStatuses.includes(status)) {
@@ -463,16 +522,28 @@ export class McpServer {
         }
 
         const result = planBoardManager.updateTask(
-          taskId,
-          agentId,
+          taskId, agentId,
           status as 'in_progress' | 'done' | 'failed' | 'blocked',
-          note,
-          agentName,
+          note, agentName, planId,
         );
         if (!result.success) {
-          return { updated: false, error: result.error };
+          return { updated: false, error: result.error, plan_id: result.planId };
         }
-        return { updated: true, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
+        return { updated: true, plan_id: result.planId, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
+      }
+
+      case 'eh_archive_plan': {
+        const planId = args.plan_id as string;
+        const result = planBoardManager.archivePlan(planId);
+        if (!result.success) return { archived: false, error: result.error };
+        return { archived: true, plan_id: planId };
+      }
+
+      case 'eh_delete_plan': {
+        const planId = args.plan_id as string;
+        const result = planBoardManager.deletePlan(planId);
+        if (!result.success) return { deleted: false, error: result.error };
+        return { deleted: true, plan_id: planId };
       }
 
       // ── Agent messaging tools ──────────────────────────────────────────────
