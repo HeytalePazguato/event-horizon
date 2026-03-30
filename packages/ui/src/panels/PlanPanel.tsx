@@ -5,8 +5,9 @@
  */
 
 import type { FC } from 'react';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { colors, fonts, sizes } from '../styles/tokens.js';
+import { useCommandCenterStore } from '../store.js';
 
 // ── Task status → visual mapping ────────────────────────────────────────────
 
@@ -108,7 +109,8 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
     }));
   }, [plan.tasks]);
 
-  const [showAllColumns, setShowAllColumns] = useState(false);
+  const showAllColumns = useCommandCenterStore((s) => s.planShowAllColumns);
+  const setShowAllColumns = useCommandCenterStore((s) => s.setPlanShowAllColumns);
   const visibleColumns = showAllColumns ? columns : columns.filter((col) => col.tasks.length > 0);
 
   const totalTasks = plan.tasks!.length;
@@ -128,7 +130,7 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
           </span>
           <button
             type="button"
-            onClick={() => setShowAllColumns((v) => !v)}
+            onClick={() => setShowAllColumns(!showAllColumns)}
             style={{
               padding: '2px 7px',
               border: `1px solid ${colors.border.primary}`,

@@ -107,6 +107,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
           tourCompleted?: boolean;
           viewMode?: 'universe' | 'operations';
           fileLockingEnabled?: boolean;
+          planShowAllColumns?: boolean;
         };
         const store = useCommandCenterStore.getState();
         if (data.settings) store.setVisualSettings(data.settings);
@@ -116,6 +117,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.tourCompleted !== undefined) store.setTourCompleted(data.tourCompleted);
         if (data.viewMode) store.setViewMode(data.viewMode);
         if (data.fileLockingEnabled !== undefined) store.setFileLockingEnabled(data.fileLockingEnabled);
+        if (data.planShowAllColumns !== undefined) store.setPlanShowAllColumns(data.planShowAllColumns);
         return;
       }
       if (msg?.type === 'plan-update') {

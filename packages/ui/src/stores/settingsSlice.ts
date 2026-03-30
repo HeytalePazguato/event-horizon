@@ -52,6 +52,8 @@ export interface SettingsSlice {
   setCcMinimized: (minimized: boolean) => void;
   infoOpen: boolean;
   toggleInfo: () => void;
+  planShowAllColumns: boolean;
+  setPlanShowAllColumns: (show: boolean) => void;
 }
 
 type SetFn = (fn: (s: SettingsSlice) => Partial<SettingsSlice>) => void;
@@ -112,5 +114,7 @@ export function createSettingsSlice(set: SetFn): SettingsSlice {
     setCcMinimized: (minimized) => set(() => ({ ccMinimized: minimized })),
     infoOpen: false,
     toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),
+    planShowAllColumns: false,
+    setPlanShowAllColumns: (show) => set(() => ({ planShowAllColumns: show })),
   };
 }

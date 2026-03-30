@@ -102,11 +102,25 @@
           "description": "Animation speed multiplier (0.25 = slow-mo, 3.0 = fast-forward).",
           "order": 2
         },
+        "eventHorizon.defaultView": {
+          "type": "string",
+          "default": "universe",
+          "enum": ["universe", "operations"],
+          "enumDescriptions": ["Cosmic planet visualization", "Full-screen dashboard with tabs"],
+          "description": "Which view to show when opening Event Horizon.",
+          "order": 3
+        },
+        "eventHorizon.planShowAllColumns": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show all Kanban columns in the Plan tab, including empty ones.",
+          "order": 4
+        },
         "eventHorizon.achievementsEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable achievement medals and toast notifications.",
-          "order": 3
+          "order": 5
         },
         "eventHorizon.agentColors.claudeCode": {
           "type": "string",
