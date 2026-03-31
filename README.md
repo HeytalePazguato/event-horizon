@@ -290,11 +290,11 @@ The table below shows which agent lifecycle events are supported and their visua
 | **Workspace Detection** | ✅ | ✅ | ✅ | Asteroid belt around group |
 | **Skill Discovery** | ✅ | ✅ | ✅ | Skills tab + orbit ring dots |
 | **Skill Usage** | ✅ | ✅ | ✅ | Pulsing dot + floating label |
-| **Token Usage** | ✅ | — | ✅ | Displayed in Command Center |
+| **Token Usage** | ✅ | 🔧 | ✅ | Displayed in Command Center |
 | **Estimated Cost** | ✅ | — | ✅ | USD estimate in Command Center |
+| **MCP Coordination** | ✅ | ✅ | ✅ | Plan claiming, messaging, locks |
 | **Error** | ✅ | — | ✅ | Red error glow |
 | **File Locking** | ✅ | — | 🔧 | Tool hard-blocked (exit 2) |
-| **MCP Coordination** | ✅ | — | ✅ | Plan claiming, messaging, locks |
 
 ### Known Limitations
 
