@@ -2,6 +2,30 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.0.1] — 2026-03-30
+
+### Added
+- **Multi-plan support**: load multiple plans simultaneously, keyed by slugified filename (e.g. `AUTH_PLAN.md` → `auth-plan`). Plans have lifecycle statuses: active, completed (auto when all tasks done), and archived
+- **Plans sidebar tab**: Operations View sidebar now has Agents/Plans tabs. Plans tab shows plans grouped by status (Active/Completed/Archived) with collapsible sections, mini progress bars, and task counts. Click a plan to view its Kanban board
+- **Plan management MCP tools**: `eh_list_plans` (view all plans with progress), `eh_archive_plan` (shelve a plan), `eh_delete_plan` (permanent removal). Total: 15 MCP tools
+- **Plan ID on existing tools**: `eh_get_plan`, `eh_claim_task`, and `eh_update_task` now accept optional `plan_id` parameter. Defaults to the most recently loaded plan for backward compatibility
+- **Copilot MCP registration**: Event Horizon MCP server auto-registered in `.vscode/mcp.json` when connecting Copilot hooks, giving Copilot agent mode access to all coordination tools
+- **Copilot transcript parsing**: token usage (input/output) extracted from Copilot transcript JSON on session end for metrics display
+
+### Improved
+- **Sticky Kanban column headers**: column names stay visible when scrolling through long task lists
+- **Kanban column toggle**: "All Columns" / "Active Only" button persisted in VS Code settings (`eventHorizon.planShowAllColumns`)
+- **Plan checkbox sync**: completed tasks write `- [x]` back to the source markdown file automatically
+- **View mode in settings**: `eventHorizon.defaultView` (universe/operations) now in VS Code Preferences
+- **Skills panel full-size layout**: Operations View uses readable font sizes (13px names, 11px descriptions) with no height cap. Command Center retains compact sizing
+- **Auto-update hooks on activation**: all installed hooks, plugins, and MCP configs refreshed on every activation — no manual reinstall needed on extension upgrade
+- **Onboarding awareness**: "Connect Your First Agent" card skipped when hooks are already installed
+- **Planet cleanup**: removed aggressive stale-agent timer — planets persist until explicit terminate event. Idle does not mean gone
+- **Plan persistence migration**: old single-plan `planBoard` globalState auto-migrated to new `planBoards` array format
+
+### Fixed
+- **CodeQL alerts**: replaced regex backslash normalization with `split('\\').join('/')` and HTML comment regex with iterative `indexOf` loop
+
 ## [1.0.0] — 2026-03-29
 
 ### Added
