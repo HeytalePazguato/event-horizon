@@ -1,373 +1,181 @@
 # Event Horizon
 
-Event Horizon is a VS Code extension that monitors, coordinates, and prevents file collisions across AI coding agents. It visualizes agent behavior as a cosmic system — but underneath the planets and lightning arcs is a **real multi-agent coordination framework** with file locking, activity tracking, and an operations dashboard.
+**The multi-agent coordination framework for AI coding.** Give your AI agents a shared plan, file locks, and real-time awareness of each other — so they build together instead of breaking each other's work.
 
-**The problem it solves:** When you run 2-6 AI agents simultaneously (Claude Code, OpenCode, Copilot), they can silently overwrite each other's work. Event Horizon is the first tool that **hard-blocks** an agent from accessing a file that another agent is actively editing.
+![Event Horizon Demo](assets/demo2.gif)
 
-## Demo
+---
 
-![Event Horizon Demo](assets/demo.gif)
+## The Problem
 
-## The Origin
+You open three terminals. Claude Code is building the API. OpenCode is writing tests. Copilot is updating the docs. They're all editing the same project.
 
-I asked Claude a simple question:
+Then Claude overwrites OpenCode's changes to `server.ts`. OpenCode doesn't know. The build breaks. You spend 20 minutes untangling the mess.
 
-> *"If you could choose a visual representation of yourself as an AI agent, working, evaluating input, 'thinking' (computing), how would you represent yourself and your fellow AI agents collaborating?"*
+**Event Horizon prevents this entirely.**
 
-Claude's answer became this project:
+---
 
-*"The interaction between celestial bodies in a universe is an excellent way to showcase it. Each agent is a planet — a massive entity that consumes energy, emits output, and exerts gravitational influence on its surroundings. Tasks orbit agents like moons. Data flows between agents as spaceships traversing curved arcs through space. And at the center of it all, a black hole — the singularity where completed work collapses, pulling everything toward it.*
+## How It Works
 
-*This metaphor works because it scales naturally. One agent is a lonely planet. Five agents become a solar system. The visual language — size, color, orbital speed, surface type — encodes real information without requiring labels or dashboards."*
+### 1. Create a plan
 
-The cosmic metaphor resonated because it maps naturally onto how AI agents actually behave. An agent processing a complex task concentrates resources and grows in influence — just like a planet's gravitational pull scales with its mass. When an agent spawns subagents, those smaller processes orbit the parent in a clear hierarchy — moons around a planet. When two agents work in the same codebase, the data they exchange traces visible arcs through space — ships following bezier curves between worlds. And when work completes, it collapses inward toward the singularity at the center, the black hole that silently records everything the system has consumed.
+```
+/eh:create-plan Build a REST API with auth, database layer, and tests
+```
 
-From that answer, Event Horizon was born.
+Event Horizon generates a plan with parallel tracks, dependency annotations, and verify steps. Each task is concrete — file paths, function signatures, expected behavior.
 
-### Celestial Bodies
+### 2. Assign agents
 
-- **Planets** — Each AI agent appears as a planet. The visual style encodes the agent type:
-  - **Gas giants** (Claude Code) — Large planets with visible ring systems and storm bands. Slow, massive, deliberate.
-  - **Rocky planets** (OpenCode) — Solid, steady worlds with an even rhythm. Deterministic tool-based agents with predictable output.
-  - **Icy worlds** (Copilot) — Bright, reactive planets with a quick shimmer reflecting rapid-fire suggestions.
-  - **Volcanic planets** (Cursor, others) — Hot, restless surfaces that never fully settle.
-  - Planet **size** scales with agent load — busier agents grow larger. Brightness increases with activity.
+```
+Terminal 1:  /eh:work-on-plan api Phase 1 — database
+Terminal 2:  /eh:work-on-plan api Phase 2 — endpoints
+Terminal 3:  /eh:work-on-plan api Phase 3 — tests
+```
 
-- **Waiting Ring** — When an agent is waiting for user input (e.g. an AskUserQuestion prompt or a permission dialog), an amber pulsing ring appears around the planet. The ring breathes in and out to draw attention. It clears automatically when the agent resumes work after the user provides input.
+Each agent claims its tasks atomically. No two agents can claim the same task. Dependencies are enforced — Phase 2 can't start until Phase 1 is done.
 
-- **Moons** — Active subagents orbit their parent planet as small blue moons. Each subagent spawn creates a new moon at a different orbital distance and speed. When the subagent completes, the moon disappears.
+### 3. Watch them coordinate
 
-- **Spaceships** — Data transfers between agents are visualized as triangle ships flying curved bezier arcs between planets. Each ship leaves a colored trail matching the agent type. The arcs curve safely around the central black hole. Ships also appear automatically between cooperating agents (see **Agent Cooperation** below).
+The **Kanban board** updates live as agents move through tasks. The **Universe view** shows planets, orbital debris for plan tasks, ships for data transfers, and lightning when agents touch the same file.
 
-- **Asteroid Belts** — When multiple agents share a workspace, their planets are clustered together and surrounded by an irregular asteroid belt. The belt is an organic blob shape (not a perfect circle) made of scattered rocks with glowing highlights. The contour adapts to the cluster's shape, staying clear of planet labels and moon orbits.
+If two agents try to edit the same file, the second one is **hard-blocked** — not warned, blocked. It sees who holds the lock, works on something else, and retries when the lock releases.
 
-- **File Collision Lightning** — When two or more agents edit the same file simultaneously, a continuous lightning stream arcs between their planets. Multiple jagged bolts (cyan, white, pale blue) with glow effects and endpoint sparks persist as long as both agents are actively touching the same file. The collision detection uses a 10-second sliding window — if both agents touch the same file path within that window, lightning fires. The arcs are redrawn every frame with random jitter for a crackling, electric look.
+---
 
-- **Black Hole** — The singularity at the center of the universe. A layered disc (dark core, glowing accretion rings, outer halo) that exerts gravitational pull on nearby objects. Click anywhere in space to spawn astronauts that drift and spiral toward it.
-
-### Command Center
-
-A StarCraft-inspired control panel at the bottom of the viewport with chamfered corners and LED indicators. Three sections:
-
-- **Agent Identity** (left) — Selected agent name, type icon, and live state indicator
-- **Metrics** (center) — 5x2 grid showing Load, Tools, Prompts, Errors, Success%, Subagents, Tasks, Top Tool, Uptime, Last Active. Tabs for Info / Logs / Medals / Skills.
-- **Controls** (right) — 5x3 command grid: Pause, Isolate, Center, Connect, Spawn, Export, Screenshot, Marketplace, Demo, Info
-
-### Workspace Grouping
-
-When multiple agents share a workspace (same or nested directories), Event Horizon automatically clusters their planets together and wraps them in an irregular asteroid belt. This makes workspace relationships immediately visible — you can tell at a glance which agents are collaborating on the same project. Solo agents orbit independently outside any belt.
-
-### Agent Cooperation
-
-When multiple agents are running in the same workspace, Event Horizon detects this and visualizes their collaboration as ships flying between their planets at random intervals (3–10 seconds). This works across agent types — a Claude Code planet and an OpenCode planet will exchange ships if they share a workspace.
-
-Cooperation is inferred from the agents' working directories:
-
-- **Same folder** — Two agents running in the same directory are assumed to be collaborating on the same project.
-- **Nested folders** — An agent in `/project` and another in `/project/packages/core` are considered part of the same workspace.
-- **Shared VS Code workspace** — In multi-root workspaces, agents in different folders that belong to the same `.code-workspace` are detected as cooperating.
-
-Each agent reports its working directory when it connects:
-- **Claude Code** sends `cwd` in every hook payload.
-- **OpenCode** captures the `directory` and `worktree` from its plugin context.
-- As a fallback, the extension host assigns the primary VS Code workspace folder to any agent that doesn't report its own.
-
-### File Collision Detection
-
-When two agents edit the same file within a 10-second window, a lightning stream crackles between their planets. This visualizes real-time file contention — useful for spotting when multiple agents are stepping on each other's changes.
-
-File paths are extracted from each agent's tool-use payloads:
-- **Claude Code** — `file_path` from `Read`, `Write`, `Edit`, `MultiEdit` tool inputs
-- **OpenCode** — `path` from `file.edited`, `file.watcher.updated` events, and `file_path` from tool inputs
-- **Copilot** — `file_path` from `read_file`, `write_file`, `edit_file`, `insert_edit_into_file` tool inputs
-
-Only the file path string is extracted — file content is never captured or transmitted.
-
-### File Locking — Distributed Lock Manager
-
-Event Horizon includes a **distributed file lock manager** that prevents concurrent file access between agents. This is the first implementation of its kind for AI coding agents.
-
-#### How It Works
-
-1. **Lock acquisition**: When an agent's `PreToolUse` hook fires for a Write/Edit/Read tool with a `file_path`, the hook script calls Event Horizon's `/lock` API to acquire or check the lock.
-2. **Hard blocking**: If another agent holds the lock, the hook returns **exit code 2** — Claude Code's hard-block mechanism that prevents the tool from executing entirely. The agent sees a stderr message explaining which agent holds the lock and when to retry.
-3. **TTL-based expiry**: Locks auto-expire after 30 seconds of inactivity. Each write operation refreshes the TTL, so locks persist across read-write cycles as long as the agent is actively editing.
-4. **Agent termination cleanup**: When an agent disconnects, all its locks are released immediately.
-
-#### Lock API
-
-The event server (`127.0.0.1:28765`) exposes:
-
-| Endpoint | Action | Description |
-|----------|--------|-------------|
-| `POST /lock` | `check` | Acquire lock for writes (returns 409 if held by another agent) |
-| `POST /lock` | `query` | Check if locked without acquiring (for reads) |
-| `POST /lock` | `release` | Release a specific lock |
-
-#### Agent Support
-
-| Agent | Can Block? | Mechanism | Status |
-|-------|-----------|-----------|--------|
-| **Claude Code** | **YES** | PreToolUse hook → exit code 2 hard-blocks | Working |
-| **OpenCode** | YES (untested) | Plugin `tool.execute.before` → throw blocks | Implemented |
-| **Copilot** | No | Hooks are read-only curl | Advisory only |
-
-#### Configuration
-
-- **VS Code Setting**: `eventHorizon.fileLockingEnabled` (boolean, default: false)
-- **In-app toggle**: Settings modal → General → File Locking, or Operations status bar → "Locks ON/OFF"
-- **Requires hook reinstall** after enabling (Connect → Claude Code)
-
-Lock scripts are written to `~/.event-horizon/eh-lock-check.sh` as proper bash files — no inline `bash -c` quoting issues.
-
-### Operations Dashboard
-
-A full-screen dashboard alternative to the cosmic visualization. Toggle with `Ctrl+Shift+E O` or the layout button in the editor title bar. The Universe view is preserved (not destroyed) when switching — the PixiJS ticker pauses to save CPU.
-
-- **Agent Sidebar** (left, 200px) — "All Agents" overview + per-agent rows grouped by workspace. Planet icons, state color dots, working directory labels.
-- **Overview tab** — 4×3 metrics grid (Load, Tools, Prompts, Errors, Success%, Subagents, Uptime, Last Active, Tokens, Cost, Tasks, Prompts/min), tool breakdown bar chart. "All Agents" mode shows singularity stats + agent summary table.
-- **Files tab** — Full-size file activity heatmap with sortable columns (File, Total, Reads, Writes, Errors, Agents, Last Active), heat color legend, Full Paths toggle, click-to-expand per-agent breakdown.
-- **Logs tab** — Full-height searchable event log with event type filter chips, auto-scroll toggle, click-to-copy.
-- **Timeline tab** — Horizontal swimlane visualization with one row per agent, colored blocks for state changes (green), tool calls (amber), file operations (blue), and errors (red).
-- **Plan tab** — Kanban board showing shared plan tasks grouped by status (Blocked, Pending, Claimed, In Progress, Done, Failed). Progress bar, assignee badges, dependency annotations, agent notes. Toggle between "Active Only" and "All Columns" view.
+## Features
 
 ### Multi-Agent Plan Coordination
 
-Event Horizon enables 2-5 AI agents to work on a shared plan in parallel. This is the core collaboration feature — agents claim tasks atomically, report progress, and coordinate through the MCP server.
+- **Plan parser** — any markdown checklist (`- [ ]`) with numbered IDs and `- depends:` annotations
+- **Atomic task claiming** — no race conditions, no duplicate work
+- **Dependency resolution** — blocked tasks auto-unblock when dependencies complete
+- **Agent messaging** — targeted or broadcast messages between agents
+- **Auto-discovery** — new agents are notified about active plans on spawn
+- **Multi-plan support** — load multiple plans, manage lifecycle (active/completed/archived)
+- **Checkbox sync** — completed tasks update the source markdown file automatically
 
-#### How It Works
+### File Locking
 
-1. **Create a plan**: Use `/eh:create-plan` to generate a plan optimized for parallel execution. The plan is a standard markdown file with `- [ ]` checklists and `- depends:` annotations.
-2. **Assign agents**: Tell each agent `/eh:work-on-plan [plan name] [phase]`. The agent claims tasks, marks progress, and communicates breaking changes.
-3. **Monitor**: Use `/eh:plan-status` or watch the Plan tab in Operations View. The Kanban board updates live as agents complete work.
+When Agent A writes to a file, Agent B is hard-blocked from accessing it. Locks auto-expire after 30 seconds, refresh on each write, and release on agent termination. No manual lock management needed.
 
-#### Plan Format
+### Live Visualization
 
-Any markdown file with checklist items works:
+Each AI agent is a planet. The cosmic metaphor encodes real information:
 
-```markdown
-# My Feature Plan
+| Visual | Meaning |
+|--------|---------|
+| Planet type (gas, rocky, icy, volcanic) | Agent type (Claude, OpenCode, Copilot, Cursor) |
+| Planet size | Current activity load |
+| Pulsing ring | Agent is thinking |
+| Amber breathing ring | Waiting for user input |
+| Red glow | Error state |
+| Orbiting moons | Active subagents |
+| Ships between planets | Data transfers / cooperation |
+| Lightning arcs | File collision (same file, two agents) |
+| Asteroid belt | Workspace group (shared directory) |
+| Orbital debris | Plan tasks (shape/color = status) |
 
-## Phase A — Database
-- [ ] 1.1 Create migration for users table
-- [ ] 1.2 Add seed data
-  - depends: 1.1
+### Operations Dashboard
 
-## Phase B — API
-- [ ] 2.1 User CRUD endpoints
-  - depends: 1.1
-- [ ] 2.2 Auth middleware (can run parallel to 2.1)
-```
+Full-screen dashboard alternative (`Ctrl+Shift+E O`) with:
 
-Task IDs are extracted from numbered prefixes. Dependencies declared with `- depends:` lines. Completed tasks have their checkboxes updated in the source file automatically.
+- **Agents / Plans sidebar** — agents grouped by workspace, plans grouped by status (active/completed/archived)
+- **Overview** — metrics grid, tool breakdown charts, agent summary table
+- **Files** — sortable heatmap of file activity across all agents
+- **Logs** — searchable event log with type filters
+- **Timeline** — horizontal swimlane of agent activity over time
+- **Plan** — Kanban board with sticky headers, progress bar, column toggle
 
-#### MCP Tools (12 total)
+### Skills Management
 
-| Tool | Description |
-|------|-------------|
-| `eh_load_plan` | Parse a markdown plan and register it |
-| `eh_get_plan` | View all tasks with status and assignees |
-| `eh_claim_task` | Atomically claim a task (blocks others) |
-| `eh_update_task` | Mark progress, done, or failed with notes |
-| `eh_send_message` | Send a message to another agent or broadcast |
-| `eh_get_messages` | Retrieve unread messages |
-| `eh_check_lock` | Check if a file is locked |
-| `eh_acquire_lock` | Acquire a file lock |
-| `eh_release_lock` | Release a file lock |
-| `eh_wait_for_unlock` | Wait for a lock to release, then acquire |
-| `eh_list_agents` | List all connected agents |
-| `eh_file_activity` | Recent file activity across agents |
+Discover, create, browse, duplicate, and organize [Agent Skills](https://agentskills.io). Three coordination skills ship with the extension:
 
-#### Bundled Skills
-
-Three coordination skills ship with the extension and are installed to `~/.claude/skills/` on activation — discovered by all agents automatically:
-
-| Skill | Description |
+| Skill | What it does |
 |-------|-------------|
-| `/eh:create-plan` | Generate a parallelism-optimized plan with scope check, file map, verify steps, and self-review. Registers with Event Horizon. |
-| `/eh:work-on-plan` | Claim tasks, implement them, mark progress, communicate breaking changes to other agents. |
-| `/eh:plan-status` | Show plan progress, active agents, blocked tasks, and available work. |
+| `/eh:create-plan` | Generate a plan with scope check, file map, verify steps, self-review |
+| `/eh:work-on-plan` | Claim tasks, implement, mark progress, notify other agents |
+| `/eh:plan-status` | View progress, blocked tasks, available work |
 
-### Skills
+### 15 MCP Coordination Tools
 
-Event Horizon discovers installed [Agent Skills](https://agentskills.io) (`SKILL.md` files) and provides full lifecycle management — browse, create, organize, duplicate, and move skills without leaving the extension.
+All agents access these tools via the MCP server (auto-registered on connect):
 
-#### Discovery & Visualization
-
-- **Auto-scan**: all skill directories are scanned on startup and watched for live changes. Skills appear in the **Skills tab** in the Command Center with scope badges (Personal/Project/Plugin/Legacy), agent type badges (Claude/OC/Copilot), and category badges. Skills compatible with all three agent types show a gold "Universal" badge.
-- **Skill orbit ring**: each planet displays a faint dotted ring with one dot per compatible skill. When a skill is actively executing, its dot pulses bright cyan with a floating `/skill-name` label above the planet.
-- **Skill fork probe**: when a fork-context skill spawns a subagent, a cyan diamond "probe" ship launches from the planet with a matching trail.
-- **Logs integration**: skill invocations are highlighted in cyan in the Logs tab with `/skill-name` labels.
-
-#### Category Folders
-
-Skills can be organized into category subfolders for better structure:
-
-```
-~/.claude/skills/
-  documentation/
-    integration-plan/SKILL.md
-    update-docs/SKILL.md
-  development/
-    code-review/SKILL.md
-    run-tests/SKILL.md
-  my-flat-skill/SKILL.md          # also works without a category
-```
-
-#### Create, Duplicate & Move
-
-- **Create Skill wizard** (click "+" in Skills tab): 3-step guided flow — choose a template (Blank, Code Review, Test Runner, Documentation), configure name/description/scope/category/options, preview the generated SKILL.md frontmatter, then create. The category field is a combobox that lists existing folders and allows typing new ones.
-- **Duplicate**: expand a skill card and click Duplicate — enter a new name and the SKILL.md is copied with the `name:` field updated.
-- **Move**: expand a skill card and click Move — pick a new category from the combobox (or type a new one) and the skill folder is relocated. Empty source folders are auto-cleaned.
-
-#### Marketplace Browser
-
-Click the **Marketplace** button in the command grid (or "Browse Marketplace" in the empty Skills tab) to open the marketplace browser. Pre-populated with four sources:
-
-| Marketplace | Type | Description |
-|-------------|------|-------------|
-| [SkillHub](https://www.skillhub.club/) | API | Inline search — results appear directly in the panel |
-| [SkillsMP](https://skillsmp.com) | Browse | Opens in your browser |
-| [Anthropic Official](https://github.com/anthropics/skills) | Browse | Opens in your browser |
-| [MCP Market](https://mcpmarket.com/tools/skills) | Browse | Opens in your browser |
-
-You can add and remove custom marketplace URLs — similar to how VS Code manages extension repositories.
-
-#### Skill Directory Locations
-
-| Path | Scope | Claude Code | OpenCode | Copilot |
-|------|-------|:-----------:|:--------:|:-------:|
-| `~/.claude/skills/` | Personal | ✅ | ✅ | ✅ |
-| `~/.config/opencode/skills/` | Personal | — | ✅ | — |
-| `~/.copilot/skills/` | Personal | — | — | ✅ |
-| `~/.agents/skills/` | Personal | ✅ | ✅ | ✅ |
-| `.claude/skills/` | Project | ✅ | ✅ | ✅ |
-| `.opencode/skills/` | Project | — | ✅ | — |
-| `.github/skills/` | Project | — | — | ✅ |
-| `.agents/skills/` | Project | ✅ | ✅ | ✅ |
-| `~/.claude/plugins/*/skills/` | Plugin | ✅ | — | — |
-| `.claude/commands/` | Legacy | ✅ | — | — |
-
-Skills in shared directories (`.claude/skills/`, `.agents/skills/`) are shown for all agent types. Skills in agent-specific directories are only shown for that agent's planets and filtered accordingly in the UI. Both flat (`skills/<name>/`) and categorized (`skills/<category>/<name>/`) layouts are supported.
+`eh_load_plan` `eh_get_plan` `eh_list_plans` `eh_claim_task` `eh_update_task` `eh_archive_plan` `eh_delete_plan` `eh_send_message` `eh_get_messages` `eh_check_lock` `eh_acquire_lock` `eh_release_lock` `eh_wait_for_unlock` `eh_list_agents` `eh_file_activity`
 
 ### Achievements
 
-Certain actions and milestones unlock achievements, displayed as medals in the Command Center. Some achievements have multiple tiers with escalating thresholds (I through VI), shown with colored borders progressing from gray to diamond. Medals persist across sessions. 28 achievements in total, including:
+28 medals tracking milestones — from first agent spawn to multi-agent file collisions, UFO encounters, and astronaut black hole dives. Some are secret. Some have tiers.
 
-- **Skill Master** (tiered) — Invoke different skills across your agents
-- **Plugin Collector** (tiered) — Discover skills installed on your system
-- **First Contact / Ground Control / The Horde** — Connect 1 / 3 / 10 agents
-- **Traffic Control** (tiered) — Data ships launched between agents
-- **Supernova** (tiered) — Agents entering error state
-- **Gravity Well** (tiered) — Astronauts consumed by the black hole
-- And 22 more covering UFO encounters, astronaut feats, shooting stars, and agent-specific conquests
+---
 
-## Supported Agent Ecosystems
+## Supported Agents
 
-| Agent | Status | Integration |
-|-------|--------|-------------|
-| **Claude Code** | Supported | One-click hook installation via Connect wizard. Hooks added to `~/.claude/settings.json`. |
-| **OpenCode** | Supported | One-click plugin installation via Connect wizard. Plugin written to `~/.config/opencode/plugins/`. |
-| **GitHub Copilot** | In Progress | Hook-based integration via `.github/hooks/`. See notes below. |
-| **Cursor** | Planned | Connector ready, integration coming soon. |
+| Agent | Hooks | MCP Tools | File Locking | Token Tracking |
+|-------|:-----:|:---------:|:------------:|:--------------:|
+| **Claude Code** | ✅ | ✅ | ✅ | ✅ |
+| **OpenCode** | ✅ | ✅ | ✅ | ✅ |
+| **GitHub Copilot** | ✅ | ✅ | — | Partial |
+| **Cursor** | Planned | Manual config | — | — |
 
-### Hook & Event Support Matrix
+One-click connect for Claude Code, OpenCode, and Copilot. MCP server auto-registered in each agent's config. Hooks auto-updated on every extension activation — no manual reinstall needed.
 
-The table below shows which agent lifecycle events are supported and their visual effects.
+---
 
-| Lifecycle Event | Claude Code | GitHub Copilot | OpenCode | Visual Effect |
-|---|:---:|:---:|:---:|---|
-| **Session Start** | ✅ | ✅ | ✅ | Planet appears + pulse wave |
-| **Session End** | ✅ | ❌ | ✅ | Planet removed |
-| **Prompt Submit** | ✅ | ✅ | ✅ | Thinking ring activates |
-| **Tool Use** | ✅ | ✅ | ✅ | Blue tool-use glow |
-| **Subagent Start** | ✅ | ✅ | ✅ | Moon spawns on parent planet |
-| **Subagent Stop** | ✅ | ✅ | ✅ | Moon disappears |
-| **Permission Request** | ✅ | — | ✅ | Amber pulsing ring |
-| **Task Complete** | ✅ | ✅ | ✅ | Planet returns to idle |
-| **File Edit** | ✅ | ✅ | ✅ | Lightning arc if collision |
-| **File Collision** | ✅ | ✅ | ✅ | Lightning stream between planets |
-| **Workspace Detection** | ✅ | ✅ | ✅ | Asteroid belt around group |
-| **Skill Discovery** | ✅ | ✅ | ✅ | Skills tab + orbit ring dots |
-| **Skill Usage** | ✅ | ✅ | ✅ | Pulsing dot + floating label |
-| **Token Usage** | ✅ | — | ✅ | Displayed in Command Center |
-| **Estimated Cost** | ✅ | — | ✅ | USD estimate in Command Center |
-| **Error** | ✅ | — | ✅ | Red error glow |
-| **File Locking** | ✅ | — | 🔧 | Tool hard-blocked (exit 2) |
-| **MCP Coordination** | ✅ | — | ✅ | Plan claiming, messaging, locks |
+## Privacy
 
-### Known Limitations
+- **100% local** — HTTP server on `127.0.0.1:28765`. Nothing leaves your machine.
+- **Zero agent overhead** — hooks use `--connect-timeout 2` with silent fallback. If Event Horizon is closed, agents run identically.
+- **No telemetry** — no analytics, no tracking, no data collection.
 
-#### Claude Code
+---
 
-- **Subagent permission completion not signaled** — When a subagent requests permission (e.g. to run a Bash command), the `PermissionRequest` hook fires and the waiting ring appears. However, Claude Code does not fire any hook when the user grants or denies the permission. The only signal is `PostToolUse`, which fires when the tool *finishes executing* — not when the user approves it. This means the waiting ring stays visible for the entire duration of the tool execution, not just during the approval prompt. This is a [known limitation on Claude Code's side](https://github.com/anthropics/claude-code/issues/33473#issuecomment-4043810416). Once a permission completion hook is added upstream, Event Horizon will use it to clear the ring immediately after approval.
+## The Origin
 
+I asked Claude:
 
+> *"If you could choose a visual representation of yourself as an AI agent, how would you represent yourself and your fellow AI agents collaborating?"*
 
-#### GitHub Copilot
+Claude's answer:
 
-- **`SessionEnd` never fires** ([bug reported](https://github.com/microsoft/vscode-copilot-release/issues)). Closing a Copilot chat tab does not trigger any hook. There is no reliable way to detect session termination — the VS Code tab API doesn't expose which session a tab belongs to, so we can't link a tab close to a specific agent. Copilot planets currently persist until the extension reloads. A future workaround may use an inactivity timeout to garbage-collect stale agents.
-- **`Stop` fires per-turn**, not per-session. Every time Copilot finishes a response, `Stop` fires. This is fundamentally different from Claude Code, where `SessionEnd` signals a true session teardown.
-- **`SubagentStart` uses the subagent's `session_id`**, not the parent's. This means subagent events arrive with a different session ID than the parent agent. The parent can be identified by correlating with the preceding `PreToolUse` where `tool_name = "runSubagent"`.
-- **Payload field names are `snake_case`**: `session_id`, `hook_event_name`, `tool_name`, `tool_input`, `tool_response`, `tool_use_id`, `agent_id`, `agent_type`, `transcript_path`, `stop_hook_active`, `source`.
-- **`windows` field in hook config is ignored.** VS Code runs the `command` field directly through PowerShell on Windows, regardless of whether a `windows` override is present. Commands must be PowerShell-safe.
+> *"Each agent is a planet — a massive entity that consumes energy, emits output, and exerts gravitational influence. Tasks orbit as moons. Data flows as ships. At the center, a black hole where completed work collapses. This scales naturally. One agent is a lonely planet. Five agents become a solar system."*
+
+From that answer, Event Horizon was born.
+
+---
 
 ## Getting Started
 
-Install **Event Horizon** from the VS Code Marketplace (or from a `.vsix` file), then:
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode), then:
 
-1. **Open the universe:** Click the **rocket icon** (🚀) in the **editor title bar** (top-right, next to the split editor button), or press **Ctrl+Shift+P** → **Event Horizon: Open Universe**. The universe opens as a full editor tab.
+1. **Open**: Rocket icon in editor title bar, or `Ctrl+Shift+E H`
+2. **Connect**: Click Connect → choose agent → Install
+3. **Code**: Launch an agent session. Planet appears.
 
-2. **Connect an agent:** Click **Connect** in the Command Center, choose your agent, click **Install**.
-   - **Claude Code** — Adds curl hooks to `~/.claude/settings.json`. Start a Claude Code session and the planet appears automatically.
-   - **OpenCode** — Installs a plugin to `~/.config/opencode/plugins/`. Restart OpenCode after connecting.
-
-4. **Spawn an agent:** Click **Spawn** to open a new terminal running the selected agent CLI.
-
-5. **Demo mode:** Click **Demo** to see the universe populated with simulated agents.
-
-> **Customizing the title bar icon:** The icon uses VS Code's built-in [Codicon](https://microsoft.github.io/vscode-codicons/dist/codicon.html) set. To change it, edit `"icon"` in the `eventHorizon.open` command entry in `apps/vscode/package.json` (e.g. `$(globe)`, `$(telescope)`, `$(star-full)`).
+> No agent? Click **Demo** for simulated agents.
 
 ---
 
 ## Development
 
-Everything below is for contributors building Event Horizon from source. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for full guidelines.
-
-### Prerequisites
-
-- **Node.js** 18+
-- **pnpm** — `npm install -g pnpm` or `corepack enable && corepack prepare pnpm@latest`
-
-### Building
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for full guidelines.
 
 ```bash
-pnpm install
-pnpm build
+pnpm install && pnpm build    # build all packages
+pnpm test                      # run tests (500+)
+pnpm dev                       # watch mode
 ```
 
-### Running the Extension Locally
-
-1. **Build** (from repo root): `pnpm build`
-2. **Run:** Press **F5** to open the Extension Development Host.
-3. Open the universe, connect agents, or run the demo.
-
-**Package a .vsix:** `cd apps/vscode && pnpm run package:vsix`
-
-### Seeing Changes After Edits
-
-1. Rebuild: `pnpm build`
-2. In the Extension Development Host: **Ctrl+Shift+P** > **Developer: Reload Window**
+Press **F5** to launch the Extension Development Host.
 
 ## Documentation
 
-- [Changelog](apps/vscode/CHANGELOG.md) — What's new in each version
-- [Architecture](docs/ARCHITECTURE.md) — System design, data flow, and package structure
-- [Contributing](docs/CONTRIBUTING.md) — Development setup and PR guidelines
-- [Code of Conduct](docs/CODE_OF_CONDUCT.md) — Community standards
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) — Phased development roadmap
-- [Skills Integration Plan](docs/SKILLS_INTEGRATION_PLAN.md) — Skills discovery, UI, marketplace, and authoring
+- [Changelog](apps/vscode/CHANGELOG.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Contributing](docs/CONTRIBUTING.md)
+- [Code of Conduct](docs/CODE_OF_CONDUCT.md)
 
 ## License
 
-MIT License with Commons Clause — see [LICENSE](LICENSE) for details.
+MIT License with Commons Clause — see [LICENSE](LICENSE).

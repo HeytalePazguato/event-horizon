@@ -7,6 +7,7 @@ import { useState, useCallback, useRef, useEffect, type MutableRefObject } from 
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 import { useCommandCenterStore } from '@event-horizon/ui';
+import type { PlanView, PlanSummary, PlanTaskView } from '@event-horizon/ui';
 
 /** Max visible ships between a given ordered (from→to) pair at once. */
 const MAX_SHIPS_PER_PAIR = 2;
@@ -30,6 +31,18 @@ const DEMO_WS_GROUPS = [
 const DEMO_FILES = ['src/index.ts', 'src/utils.ts', 'package.json', 'README.md', 'src/app.tsx', 'src/components/App.tsx', 'tsconfig.json'];
 const DEMO_SKILLS = ['code-review', 'run-tests', 'update-docs', 'refactor'];
 
+const DEMO_PLAN_ID = 'demo-api-plan';
+const DEMO_PLAN_TASKS: PlanTaskView[] = [
+  { id: '1.1', title: 'Create database schema', status: 'done', assignee: '[Demo] Claude', assigneeId: 'demo-claude', blockedBy: [], notes: [{ agentId: 'demo-claude', agentName: '[Demo] Claude', text: 'Created users and sessions tables', ts: 0 }] },
+  { id: '1.2', title: 'Add seed data migration', status: 'done', assignee: '[Demo] OpenCode', assigneeId: 'demo-opencode', blockedBy: ['1.1'], notes: [] },
+  { id: '2.1', title: 'User CRUD endpoints', status: 'in_progress', assignee: '[Demo] Claude', assigneeId: 'demo-claude', blockedBy: ['1.1'], notes: [] },
+  { id: '2.2', title: 'Auth middleware + JWT', status: 'in_progress', assignee: '[Demo] OpenCode', assigneeId: 'demo-opencode', blockedBy: ['1.1'], notes: [] },
+  { id: '2.3', title: 'Rate limiting middleware', status: 'claimed', assignee: '[Demo] Copilot', assigneeId: 'demo-copilot', blockedBy: [], notes: [] },
+  { id: '3.1', title: 'Integration tests for auth', status: 'pending', assignee: null, assigneeId: null, blockedBy: ['2.1', '2.2'], notes: [] },
+  { id: '3.2', title: 'Integration tests for CRUD', status: 'blocked', assignee: null, assigneeId: null, blockedBy: ['2.1'], notes: [] },
+  { id: '3.3', title: 'Load testing setup', status: 'pending', assignee: null, assigneeId: null, blockedBy: [], notes: [] },
+];
+
 interface DemoSimDeps {
   setAgents: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; agentType?: string; cwd?: string }>>>;
   setAgentMap: React.Dispatch<React.SetStateAction<Record<string, AgentState>>>;
@@ -41,6 +54,8 @@ interface DemoSimDeps {
   shipTimerIdsRef: MutableRefObject<Set<ReturnType<typeof setTimeout>>>;
   unlockAchievement: (id: string) => void;
   demoRequested: boolean;
+  setPlan: React.Dispatch<React.SetStateAction<PlanView>>;
+  setPlans: React.Dispatch<React.SetStateAction<PlanSummary[]>>;
 }
 
 export interface DemoSimResult {
@@ -51,6 +66,7 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
   const {
     setAgents, setAgentMap, setMetricsMap, setShips, setSparks, setActiveSkillsView,
     agentLastSeenRef, shipTimerIdsRef, unlockAchievement, demoRequested,
+    setPlan, setPlans,
   } = deps;
 
   const [demoSimRunning, setDemoSimRunning] = useState(false);
@@ -90,6 +106,24 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
       }, delay);
       shipTimerIdsRef.current.add(timerId);
     });
+
+    // Initialize demo plan
+    const demoPlanTasks = DEMO_PLAN_TASKS.map((t) => ({ ...t, notes: [...t.notes] }));
+    const demoPlan: PlanView = {
+      loaded: true, id: DEMO_PLAN_ID, name: 'REST API with Auth',
+      status: 'active', sourceFile: 'docs/API_PLAN.md',
+      lastUpdatedAt: Date.now(), tasks: demoPlanTasks,
+    };
+    setPlan(demoPlan);
+    setPlans([{
+      id: DEMO_PLAN_ID, name: 'REST API with Auth', status: 'active',
+      totalTasks: demoPlanTasks.length,
+      doneTasks: demoPlanTasks.filter((t) => t.status === 'done').length,
+      lastUpdatedAt: Date.now(),
+    }]);
+
+    // Track plan progression timing
+    let lastPlanTick = Date.now();
 
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
     demoIntervalRef.current = setInterval(() => {
@@ -249,6 +283,67 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
           shipTimerIdsRef.current.add(timerId);
         }
       }
+
+      // Plan task progression — advance one task every 8-15 seconds
+      if (now - lastPlanTick > 8000 + Math.random() * 7000) {
+        lastPlanTick = now;
+        let changed = false;
+
+        for (const task of demoPlanTasks) {
+          if (task.status === 'in_progress') {
+            // Complete in-progress tasks
+            task.status = 'done';
+            task.notes.push({ agentId: task.assigneeId ?? '', agentName: task.assignee ?? '', text: 'Completed', ts: now });
+            changed = true;
+            // Unblock dependents
+            for (const dep of demoPlanTasks) {
+              if (dep.status === 'blocked' && dep.blockedBy.includes(task.id)) {
+                const allDone = dep.blockedBy.every((b) => demoPlanTasks.find((t) => t.id === b)?.status === 'done');
+                if (allDone) dep.status = 'pending';
+              }
+            }
+            break;
+          }
+        }
+
+        if (!changed) {
+          // Claim a pending task for a random active agent
+          const pendingTask = demoPlanTasks.find((t) => t.status === 'pending');
+          const claimedTask = demoPlanTasks.find((t) => t.status === 'claimed');
+          const targetTask = claimedTask ?? pendingTask;
+          if (targetTask) {
+            const agents = ['demo-claude', 'demo-opencode', 'demo-copilot'];
+            const agentNames = { 'demo-claude': '[Demo] Claude', 'demo-opencode': '[Demo] OpenCode', 'demo-copilot': '[Demo] Copilot' } as Record<string, string>;
+            const agentId = agents[Math.floor(Math.random() * agents.length)];
+            if (targetTask.status === 'claimed') {
+              targetTask.status = 'in_progress';
+            } else {
+              targetTask.status = 'claimed';
+              targetTask.assignee = agentNames[agentId] ?? agentId;
+              targetTask.assigneeId = agentId;
+            }
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          const doneTasks = demoPlanTasks.filter((t) => t.status === 'done').length;
+          const allDone = doneTasks === demoPlanTasks.length;
+          const updatedPlan: PlanView = {
+            ...demoPlan,
+            status: allDone ? 'completed' : 'active',
+            lastUpdatedAt: now,
+            tasks: demoPlanTasks.map((t) => ({ ...t, notes: [...t.notes] })),
+          };
+          setPlan(updatedPlan);
+          setPlans([{
+            id: DEMO_PLAN_ID, name: 'REST API with Auth',
+            status: allDone ? 'completed' : 'active',
+            totalTasks: demoPlanTasks.length, doneTasks,
+            lastUpdatedAt: now,
+          }]);
+        }
+      }
     }, 800);
     setDemoSimRunning(true);
   }, []);
@@ -260,6 +355,16 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     }
     setDemoSimRunning(false);
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
+    setAgentMap((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) { if (k.startsWith('demo-')) delete next[k]; }
+      return next;
+    });
+    setMetricsMap((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) { if (k.startsWith('demo-')) delete next[k]; }
+      return next;
+    });
     setShips((prev) => prev.filter((s) => !s.id.startsWith('demo-ship-')));
     setSparks((prev) => prev.filter((s) => !s.id.startsWith('demo-spark-')));
     setActiveSkillsView((prev) => {
@@ -270,6 +375,8 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     for (const id of Object.keys(agentLastSeenRef.current)) {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
     }
+    setPlan({ loaded: false });
+    setPlans([]);
     useCommandCenterStore.getState().clearFileActivity();
     useCommandCenterStore.getState().clearTimeline();
   }, []);

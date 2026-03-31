@@ -206,6 +206,7 @@ function App() {
   const { demoSimRunning } = useDemoSimulation({
     setAgents, setAgentMap, setMetricsMap, setShips, setSparks, setActiveSkillsView,
     agentLastSeenRef, shipTimerIdsRef, unlockAchievement, demoRequested,
+    setPlan, setPlans,
   });
 
   useSettingsPersistence(vscodeApi);

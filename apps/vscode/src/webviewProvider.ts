@@ -289,7 +289,7 @@ function wireUniverseWebview(
       void webview.postMessage({
         type: 'init-settings',
         ...cfg,
-        // Preserve non-config settings from globalState (tourCompleted only — viewMode & planShowAllColumns are in VS Code settings now)
+        // tourCompleted is the only non-config setting still in globalState
         tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
       });
     }

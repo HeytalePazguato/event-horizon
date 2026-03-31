@@ -13,7 +13,7 @@ import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, isOpenCodeHooksInstalled, registerOpenCodeMcpServer } from './setupOpenCodeHooks';
-import { setupCopilotHooks, isCopilotHooksInstalled } from './setupCopilotHooks';
+import { setupCopilotHooks, isCopilotHooksInstalled, registerCopilotMcpServer } from './setupCopilotHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
@@ -390,6 +390,48 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     }
 
+    // Parse Copilot transcript on Stop events for richer metrics (tokens, cost)
+    if (event.agentType === 'copilot' && event.type === 'agent.idle') {
+      const copilotTranscript = event.payload?.transcriptPath as string | undefined;
+      if (copilotTranscript) {
+        void fsp.readFile(copilotTranscript, 'utf8').then((raw) => {
+          try {
+            const data = JSON.parse(raw) as Record<string, unknown>;
+            // Extract usage/cost from transcript if available
+            const usage = data.usage as Record<string, number> | undefined;
+            const turns = (data.turns ?? data.messages) as Array<Record<string, unknown>> | undefined;
+            if (usage || turns) {
+              let totalInput = usage?.input_tokens ?? 0;
+              let totalOutput = usage?.output_tokens ?? 0;
+              // Aggregate from turns if top-level usage is missing
+              if (!usage && turns) {
+                for (const turn of turns) {
+                  const u = turn.usage as Record<string, number> | undefined;
+                  if (u) {
+                    totalInput += u.input_tokens ?? 0;
+                    totalOutput += u.output_tokens ?? 0;
+                  }
+                }
+              }
+              if (totalInput > 0 || totalOutput > 0) {
+                const tokenEvent: AgentEvent = {
+                  id: `copilot-tokens-${Date.now()}`,
+                  agentId: event.agentId,
+                  agentName: event.agentName,
+                  agentType: 'copilot',
+                  type: 'agent.idle',
+                  timestamp: Date.now(),
+                  payload: { inputTokens: totalInput, outputTokens: totalOutput, fromTranscript: true },
+                };
+                metricsEngine.process(tokenEvent);
+                broadcastEvent(tokenEvent);
+              }
+            }
+          } catch { /* invalid JSON — skip */ }
+        }).catch(() => { /* file not accessible */ });
+      }
+    }
+
     // Start transcript watcher for Claude Code agents when we first see a transcript path.
     // The watcher provides richer events (waiting ring, per-turn tokens, tool details)
     // and serves as the primary event source; hooks remain as fallback.
@@ -483,7 +525,7 @@ export function activate(context: vscode.ExtensionContext): void {
       ]);
       if (hasClaude) { await setupClaudeCodeHooks(); await registerMcpServer(); }
       if (hasOpenCode) { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
-      if (hasCopilot) await setupCopilotHooks();
+      if (hasCopilot) { await setupCopilotHooks(); await registerCopilotMcpServer(); }
 
       // Write bundled skills to ~/.claude/skills/
       await ensureBundledSkills();
