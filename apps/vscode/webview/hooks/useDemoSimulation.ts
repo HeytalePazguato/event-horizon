@@ -260,6 +260,16 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     }
     setDemoSimRunning(false);
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
+    setAgentMap((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) { if (k.startsWith('demo-')) delete next[k]; }
+      return next;
+    });
+    setMetricsMap((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) { if (k.startsWith('demo-')) delete next[k]; }
+      return next;
+    });
     setShips((prev) => prev.filter((s) => !s.id.startsWith('demo-ship-')));
     setSparks((prev) => prev.filter((s) => !s.id.startsWith('demo-spark-')));
     setActiveSkillsView((prev) => {
