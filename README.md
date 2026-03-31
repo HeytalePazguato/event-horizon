@@ -2,7 +2,7 @@
 
 **The multi-agent coordination framework for AI coding.** Give your AI agents a shared plan, file locks, and real-time awareness of each other — so they build together instead of breaking each other's work.
 
-![Event Horizon Demo](assets/demo.gif)
+![Event Horizon Demo](assets/demo2.gif)
 
 ---
 

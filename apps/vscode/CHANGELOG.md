@@ -11,8 +11,10 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Plan ID on existing tools**: `eh_get_plan`, `eh_claim_task`, and `eh_update_task` now accept optional `plan_id` parameter. Defaults to the most recently loaded plan for backward compatibility
 - **Copilot MCP registration**: Event Horizon MCP server auto-registered in `.vscode/mcp.json` when connecting Copilot hooks, giving Copilot agent mode access to all coordination tools
 - **Copilot transcript parsing**: token usage (input/output) extracted from Copilot transcript JSON on session end for metrics display
+- **Demo plan simulation**: demo mode now loads a sample plan ("REST API with Auth") with 8 tasks across 3 phases. Tasks progress live through the Kanban board — pending → claimed → in_progress → done. Dependencies unblock automatically.
 
 ### Improved
+- **README rewrite**: both marketplace and GitHub READMEs restructured with value-first messaging — leads with the multi-agent coordination pitch, 3-step workflow, and feature tables instead of technical documentation
 - **Sticky Kanban column headers**: column names stay visible when scrolling through long task lists
 - **Kanban column toggle**: "All Columns" / "Active Only" button persisted in VS Code settings (`eventHorizon.planShowAllColumns`)
 - **Plan checkbox sync**: completed tasks write `- [x]` back to the source markdown file automatically
@@ -25,6 +27,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ### Fixed
 - **CodeQL alerts**: replaced regex backslash normalization with `split('\\').join('/')` and HTML comment regex with iterative `indexOf` loop
+- **Demo ghost planets**: demo simulation now cleans `agentMap` and `metricsMap` on stop — previously left phantom planets
+- **View mode not persisted**: `eventHorizon.defaultView` setting was overridden by stale globalState on init
 
 ## [1.0.0] — 2026-03-29
 

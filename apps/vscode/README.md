@@ -6,7 +6,7 @@ You're running Claude Code in one terminal, OpenCode in another, maybe Copilot i
 
 Event Horizon fixes this. It gives your agents a **shared plan**, **file locks**, and **real-time coordination** — so they work together instead of against each other.
 
-![Event Horizon Demo](https://raw.githubusercontent.com/HeytalePazguato/event-horizon/master/assets/demo.gif)
+![Event Horizon Demo](https://raw.githubusercontent.com/HeytalePazguato/event-horizon/master/assets/demo2.gif)
 
 ---
 
