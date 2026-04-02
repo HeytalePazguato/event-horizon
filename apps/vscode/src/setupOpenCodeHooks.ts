@@ -95,11 +95,30 @@ export default async function EventHorizon({ project, directory, worktree, serve
   const base = project?.id ? String(project.id) : "opencode";
   const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const sessionId = base + "-" + uid;
-  const cwd = worktree || directory || undefined;
+
+  // Resolve cwd — worktree/directory may be strings, URL objects, or absent.
+  // Try every possible source, including process.cwd() as ultimate fallback.
+  function resolvePath(v) {
+    if (!v) return undefined;
+    if (typeof v === "string") return v;
+    if (typeof v === "object" && v.href) {
+      // file:///C:/path or file:///home/path
+      try { return new URL(v.href).pathname.replace(/^\\/([A-Z]:)/, "$1"); } catch {}
+      return v.href.replace(/^file:\\/\\/\\//, "").replace(/^file:\\/\\//, "");
+    }
+    if (typeof v === "object" && v.pathname) return v.pathname;
+    return String(v);
+  }
+  const cwd = resolvePath(worktree)
+    || resolvePath(directory)
+    || resolvePath(project?.path)
+    || resolvePath(project?.directory)
+    || resolvePath(project?.worktree)
+    || (typeof process !== "undefined" && process.cwd ? process.cwd() : undefined);
   const cwdFolder = cwd ? String(cwd).replace(/\\\\/g, "/").split("/").pop() : undefined;
   const agentName = cwdFolder ? "OpenCode (" + cwdFolder + ")" : "OpenCode";
   // OpenCode's internal server URL — used by Event Horizon for SSE subagent tracking
-  const opencodeServerUrl = typeof serverUrl === "object" && serverUrl?.href ? serverUrl.href : undefined;
+  const opencodeServerUrl = typeof serverUrl === "object" && serverUrl?.href ? serverUrl.href : (typeof serverUrl === "string" ? serverUrl : undefined);
 
   // Send initial session.created
   send("session.created", { sessionId, agentName, cwd, payload: {}, serverUrl: opencodeServerUrl });
@@ -130,26 +149,40 @@ export default async function EventHorizon({ project, directory, worktree, serve
       });
     },
     "tool.execute.before": async (input) => {
+      const toolName = String(input?.tool || "");
+      const fp = input?.input?.file_path || input?.input?.path;
+      const parentID = input?.sessionID !== input?.parentID ? input?.parentID : undefined;
       send("tool.execute.before", {
         sessionId,
         agentName,
         cwd,
-        payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
+        payload: {
+          toolName,
+          sessionID: input?.sessionID,
+          callID: input?.callID,
+          filePath: fp ? String(fp) : undefined,
+          parentID,
+        },
       });
       // Check file lock for any tool that accesses files
-      const toolName = String(input?.tool || "").toLowerCase();
-      const fileTool = ["read", "write", "edit", "patch", "file_read", "file_write", "file_edit"].includes(toolName);
-      const fp = input?.input?.file_path || input?.input?.path;
+      const toolLower = toolName.toLowerCase();
+      const fileTool = ["read", "write", "edit", "patch", "file_read", "file_write", "file_edit"].includes(toolLower);
       if (fileTool && fp) {
         await checkLock(String(fp), sessionId, agentName);
       }
     },
     "tool.execute.after": async (input) => {
+      const fp = input?.input?.file_path || input?.input?.path;
       send("tool.execute.after", {
         sessionId,
         agentName,
         cwd,
-        payload: { toolName: input?.tool, sessionID: input?.sessionID, callID: input?.callID },
+        payload: {
+          toolName: input?.tool,
+          sessionID: input?.sessionID,
+          callID: input?.callID,
+          filePath: fp ? String(fp) : undefined,
+        },
       });
       // Locks NOT released here — auto-expire via 30s TTL.
       // Each tool.execute.before refreshes the TTL.
@@ -223,6 +256,37 @@ export async function setupOpenCodeHooks(): Promise<void> {
   const oldMjs = path.join(dir, 'event-horizon.mjs');
   try { await fsp.unlink(oldMjs); } catch { /* ignore */ }
   await fsp.writeFile(getPluginPath(), buildPluginSource(), 'utf8');
+  // Also update .opencode/config.json hooks if they exist (add auth token)
+  await updateOpenCodeConfigHooks();
+}
+
+/** Update ~/.opencode/config.json hook URLs with the current auth token. */
+async function updateOpenCodeConfigHooks(): Promise<void> {
+  const configPath = path.join(os.homedir(), '.opencode', 'config.json');
+  const token = getAuthToken();
+  const tokenParam = token ? `?token=${token}` : '';
+  const baseUrl = `http://127.0.0.1:${PORT}/opencode${tokenParam}`;
+  try {
+    const raw = await fsp.readFile(configPath, 'utf8');
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const hooks = config.hooks as Record<string, Array<Record<string, unknown>>> | undefined;
+    if (!hooks) return;
+    let changed = false;
+    for (const entries of Object.values(hooks)) {
+      for (const entry of entries) {
+        if (typeof entry.command === 'string' && entry.command.includes(`127.0.0.1:${PORT}/opencode`)) {
+          const newCmd = `curl -s -X POST ${baseUrl} -H "Content-Type: application/json" --data-binary @-`;
+          if (entry.command !== newCmd) {
+            entry.command = newCmd;
+            changed = true;
+          }
+        }
+      }
+    }
+    if (changed) {
+      await fsp.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
+    }
+  } catch { /* file doesn't exist or not writable — skip */ }
 }
 
 /**

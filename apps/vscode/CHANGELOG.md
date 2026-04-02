@@ -2,6 +2,19 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.0.2] — 2026-04-01
+
+### Improved
+- **OpenCode plugin cwd resolution**: plugin now tries `worktree`, `directory`, `project.path`, `project.directory`, `project.worktree`, and `process.cwd()` as fallback. Handles URL objects (file:// protocol) in addition to plain strings. OpenCode agents should now always show their workspace folder
+- **OpenCode plugin sends file paths**: tool events now include `filePath` for file-touching tools, enabling file activity tracking and collision lightning in the Universe view
+- **OpenCode config.json hook auth**: `~/.opencode/config.json` hook URLs are now updated with the current auth token on every activation, fixing silent 401 rejections for hooks-based setups
+
+### Fixed
+- **Sticky Kanban column headers**: column headers split into a fixed row above the scrollable task area — headers stay visible when scrolling through long task lists
+- **Demo wiped real plans**: demo simulation now merges its plan with existing plans instead of replacing them. On stop, only the demo plan is removed. Demo plan prefixed with `[Demo]` for clarity
+- **Demo ghost planets**: demo now cleans `agentMap` and `metricsMap` on stop (was leaving phantom planets)
+- **View mode not persisted**: `eventHorizon.defaultView` setting correctly loads from VS Code settings on init instead of being overridden by stale globalState
+
 ## [1.0.1] — 2026-03-30
 
 ### Added
