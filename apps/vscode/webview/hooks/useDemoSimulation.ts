@@ -107,16 +107,16 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
       shipTimerIdsRef.current.add(timerId);
     });
 
-    // Initialize demo plan
+    // Initialize demo plan — merge with existing plans, don't replace
     const demoPlanTasks = DEMO_PLAN_TASKS.map((t) => ({ ...t, notes: [...t.notes] }));
     const demoPlan: PlanView = {
-      loaded: true, id: DEMO_PLAN_ID, name: 'REST API with Auth',
+      loaded: true, id: DEMO_PLAN_ID, name: '[Demo] REST API with Auth',
       status: 'active', sourceFile: 'docs/API_PLAN.md',
       lastUpdatedAt: Date.now(), tasks: demoPlanTasks,
     };
     setPlan(demoPlan);
-    setPlans([{
-      id: DEMO_PLAN_ID, name: 'REST API with Auth', status: 'active',
+    setPlans((prev) => [...prev.filter((p) => p.id !== DEMO_PLAN_ID), {
+      id: DEMO_PLAN_ID, name: '[Demo] REST API with Auth', status: 'active',
       totalTasks: demoPlanTasks.length,
       doneTasks: demoPlanTasks.filter((t) => t.status === 'done').length,
       lastUpdatedAt: Date.now(),
@@ -336,12 +336,15 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
             tasks: demoPlanTasks.map((t) => ({ ...t, notes: [...t.notes] })),
           };
           setPlan(updatedPlan);
-          setPlans([{
-            id: DEMO_PLAN_ID, name: 'REST API with Auth',
-            status: allDone ? 'completed' : 'active',
-            totalTasks: demoPlanTasks.length, doneTasks,
-            lastUpdatedAt: now,
-          }]);
+          setPlans((prev) => [
+            ...prev.filter((p) => p.id !== DEMO_PLAN_ID),
+            {
+              id: DEMO_PLAN_ID, name: '[Demo] REST API with Auth',
+              status: allDone ? 'completed' : 'active',
+              totalTasks: demoPlanTasks.length, doneTasks,
+              lastUpdatedAt: now,
+            },
+          ]);
         }
       }
     }, 800);
@@ -375,8 +378,13 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     for (const id of Object.keys(agentLastSeenRef.current)) {
       if (id.startsWith('demo-')) delete agentLastSeenRef.current[id];
     }
-    setPlan({ loaded: false });
-    setPlans([]);
+    // Only remove the demo plan, preserve real plans
+    setPlans((prev) => {
+      const remaining = prev.filter((p) => p.id !== DEMO_PLAN_ID);
+      return remaining;
+    });
+    // If the currently viewed plan was the demo plan, clear it
+    setPlan((prev) => prev.id === DEMO_PLAN_ID ? { loaded: false } : prev);
     useCommandCenterStore.getState().clearFileActivity();
     useCommandCenterStore.getState().clearTimeline();
   }, []);

@@ -129,9 +129,9 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
   const progress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
   return (
-    <div style={{ padding: sizes.spacing.lg, fontFamily: fonts.mono }}>
+    <div style={{ padding: sizes.spacing.lg, fontFamily: fonts.mono, display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.md, marginBottom: sizes.spacing.lg }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.md, marginBottom: sizes.spacing.lg, flexShrink: 0 }}>
         <div style={{ fontSize: sizes.text.xl, color: colors.text.primary, fontWeight: 600 }}>
           {plan.name}
         </div>
@@ -165,6 +165,7 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         borderRadius: sizes.radius.sm,
         marginBottom: sizes.spacing.lg,
         overflow: 'hidden',
+        flexShrink: 0,
       }}>
         <div style={{
           height: '100%',
@@ -175,10 +176,55 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         }} />
       </div>
 
-      {/* Kanban board */}
+      {/* Column headers — fixed row */}
       <div style={{
         display: 'flex',
         gap: sizes.spacing.md,
+        flexShrink: 0,
+        marginBottom: sizes.spacing.sm,
+      }}>
+        {visibleColumns.map((col) => (
+          <div key={col.status} style={{
+            flex: '1 1 180px',
+            minWidth: 160,
+            maxWidth: 280,
+            display: 'flex',
+            alignItems: 'center',
+            gap: sizes.spacing.xs,
+            padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
+            borderBottom: `2px solid ${taskStatusColor(col.status)}`,
+          }}>
+            <div style={{
+              width: 6, height: 6, borderRadius: 1,
+              background: taskStatusColor(col.status),
+              boxShadow: `0 0 4px ${taskStatusColor(col.status)}`,
+              flexShrink: 0,
+            }} />
+            <span style={{
+              fontSize: sizes.text.sm,
+              color: taskStatusColor(col.status),
+              fontWeight: 600,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+            }}>
+              {col.label}
+            </span>
+            <span style={{
+              fontSize: sizes.text.xs,
+              color: colors.text.dim,
+              marginLeft: 'auto',
+            }}>
+              {col.tasks.length}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Task cards — scrollable area */}
+      <div style={{
+        display: 'flex',
+        gap: sizes.spacing.md,
+        overflowY: 'auto',
         overflowX: 'auto',
         flex: 1,
         minHeight: 0,
@@ -188,52 +234,8 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
             flex: '1 1 180px',
             minWidth: 160,
             maxWidth: 280,
-            display: 'flex',
-            flexDirection: 'column',
-            minHeight: 0,
           }}>
-            {/* Column header — sticky */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: sizes.spacing.xs,
-              padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
-              marginBottom: sizes.spacing.sm,
-              borderBottom: `2px solid ${taskStatusColor(col.status)}`,
-              position: 'sticky',
-              top: 0,
-              background: 'linear-gradient(180deg, #080e0a 0%, rgba(8,14,10,0.95) 100%)',
-              zIndex: 1,
-              flexShrink: 0,
-            }}>
-              <div style={{
-                width: 6,
-                height: 6,
-                borderRadius: 1,
-                background: taskStatusColor(col.status),
-                boxShadow: `0 0 4px ${taskStatusColor(col.status)}`,
-                flexShrink: 0,
-              }} />
-              <span style={{
-                fontSize: sizes.text.sm,
-                color: taskStatusColor(col.status),
-                fontWeight: 600,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-              }}>
-                {col.label}
-              </span>
-              <span style={{
-                fontSize: sizes.text.xs,
-                color: colors.text.dim,
-                marginLeft: 'auto',
-              }}>
-                {col.tasks.length}
-              </span>
-            </div>
-
-            {/* Task cards — scrollable */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs, overflowY: 'auto', flex: 1, minHeight: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
               {col.tasks.map((task) => (
                 <TaskCard key={task.id} task={task} />
               ))}
