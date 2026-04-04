@@ -27,6 +27,7 @@ export interface PlanTask {
   claimedAt: number | null;
   completedAt: number | null;
   blockedBy: string[];
+  role: string | null;
   notes: TaskNote[];
 }
 
@@ -97,6 +98,13 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
     }
     title = cleaned.trim();
 
+    const roleMatch = title.match(/\[role:\s*(\w[\w-]*)\]\s*$/);
+    let role: string | null = null;
+    if (roleMatch) {
+      role = roleMatch[1];
+      title = title.replace(roleMatch[0], '').trim();
+    }
+
     const blockedBy: string[] = [];
     let description = '';
     for (let j = i + 1; j < lines.length; j++) {
@@ -130,6 +138,7 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
       claimedAt: null,
       completedAt: isDone ? Date.now() : null,
       blockedBy,
+      role,
       notes: [],
     });
   }
@@ -166,9 +175,19 @@ export class PlanBoardManager {
   private boards = new Map<string, PlanBoard>();
   private activePlanId: string | null = null;
   private changeListeners: Array<(boards: Map<string, PlanBoard>, changedPlanId: string | null) => void> = [];
+  private taskCompleteListeners: Array<(task: PlanTask, planId: string) => void> = [];
+  private taskClaimListeners: Array<(task: PlanTask, planId: string) => void> = [];
 
   onChange(listener: (boards: Map<string, PlanBoard>, changedPlanId: string | null) => void): void {
     this.changeListeners.push(listener);
+  }
+
+  onTaskComplete(fn: (task: PlanTask, planId: string) => void): void {
+    this.taskCompleteListeners.push(fn);
+  }
+
+  onTaskClaim(fn: (task: PlanTask, planId: string) => void): void {
+    this.taskClaimListeners.push(fn);
   }
 
   private notifyChange(changedPlanId: string | null): void {
@@ -253,6 +272,7 @@ export class PlanBoardManager {
     task.claimedAt = Date.now();
     board.lastUpdatedAt = Date.now();
     this.notifyChange(board.id);
+    for (const fn of this.taskClaimListeners) fn(task, board.id);
     return { success: true, task, planId: board.id };
   }
 
@@ -292,6 +312,7 @@ export class PlanBoardManager {
         this.unblockDependents(board, taskId);
         this.checkAutoComplete(board);
       }
+      for (const fn of this.taskCompleteListeners) fn(task, board.id);
     }
 
     if (note) {

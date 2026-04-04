@@ -42,6 +42,9 @@ export interface WebviewMessageDeps {
   incrementTiered: (id: string) => void;
   setPlan: React.Dispatch<React.SetStateAction<PlanView>>;
   setPlans: React.Dispatch<React.SetStateAction<PlanSummary[]>>;
+  setRoles: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>>>;
+  setRoleAssignments: React.Dispatch<React.SetStateAction<Array<{ roleId: string; agentType: string | null; agentId: string | null }>>>;
+  setAgentProfiles: React.Dispatch<React.SetStateAction<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -109,6 +112,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
           viewMode?: 'universe' | 'operations';
           fileLockingEnabled?: boolean;
           planShowAllColumns?: boolean;
+          fontSize?: 'small' | 'default' | 'large';
         };
         const store = useCommandCenterStore.getState();
         if (data.settings) store.setVisualSettings(data.settings);
@@ -119,6 +123,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.viewMode) store.setViewMode(data.viewMode);
         if (data.fileLockingEnabled !== undefined) store.setFileLockingEnabled(data.fileLockingEnabled);
         if (data.planShowAllColumns !== undefined) store.setPlanShowAllColumns(data.planShowAllColumns);
+        if (data.fontSize) store.setFontSize(data.fontSize);
         return;
       }
       if (msg?.type === 'plan-update') {
@@ -130,6 +135,14 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         const data = msg as unknown as { plans: PlanSummary[]; activePlan?: PlanView };
         if (data.plans) depsRef.current.setPlans(data.plans);
         if (data.activePlan) depsRef.current.setPlan(data.activePlan);
+        return;
+      }
+      if (msg?.type === 'roles-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (data.roles) depsRef.current.setRoles(data.roles);
+        if (data.assignments) depsRef.current.setRoleAssignments(data.assignments);
+        if (data.profiles) depsRef.current.setAgentProfiles(data.profiles);
         return;
       }
       if (msg?.type === 'skills-update') {
@@ -406,6 +419,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
     };
     window.addEventListener('message', handler);
     vscodeApi?.postMessage({ type: 'ready' });
+    vscodeApi?.postMessage({ type: 'request-roles' });
     return () => window.removeEventListener('message', handler);
   }, [addLog]);
 }

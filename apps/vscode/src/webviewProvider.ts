@@ -11,7 +11,7 @@ import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHo
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler } from './eventServer.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -208,6 +208,7 @@ function readVscodeConfig(): {
   fileLockingEnabled: boolean;
   viewMode: 'universe' | 'operations';
   planShowAllColumns: boolean;
+  fontSize: 'small' | 'default' | 'large';
 } {
   const cfg = vscode.workspace.getConfiguration('eventHorizon');
   const settings: Record<string, { color: string; sizeMult: number }> = {};
@@ -225,6 +226,7 @@ function readVscodeConfig(): {
     fileLockingEnabled: cfg.get<boolean>('fileLockingEnabled', false),
     viewMode: cfg.get<'universe' | 'operations'>('defaultView', 'universe'),
     planShowAllColumns: cfg.get<boolean>('planShowAllColumns', false),
+    fontSize: cfg.get<'small' | 'default' | 'large'>('fontSize', 'default'),
   };
 }
 
@@ -237,6 +239,7 @@ async function writeVscodeConfig(msg: {
   fileLockingEnabled?: boolean;
   viewMode?: 'universe' | 'operations';
   planShowAllColumns?: boolean;
+  fontSize?: 'small' | 'default' | 'large';
 }): Promise<void> {
   const cfg = vscode.workspace.getConfiguration('eventHorizon');
   if (msg.achievementsEnabled !== undefined) {
@@ -256,6 +259,9 @@ async function writeVscodeConfig(msg: {
   }
   if (msg.planShowAllColumns !== undefined) {
     await cfg.update('planShowAllColumns', msg.planShowAllColumns, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.fontSize !== undefined) {
+    await cfg.update('fontSize', msg.fontSize, vscode.ConfigurationTarget.Global);
   }
   if (msg.settings) {
     for (const [cfgKey, storeKey] of Object.entries(AGENT_CONFIG_MAP)) {
@@ -324,10 +330,9 @@ function wireUniverseWebview(
     void webview.postMessage({
       type: 'init-settings',
       ...vscodeSettings,
-      // Preserve non-config settings from globalState
+      // Preserve non-config settings from globalState (viewMode and planShowAllColumns
+      // come from VS Code config via readVscodeConfig — do NOT override from stale globalState)
       tourCompleted: (savedGeneral as Record<string, unknown> | undefined)?.tourCompleted,
-      viewMode: (savedGeneral as Record<string, unknown> | undefined)?.viewMode,
-      planShowAllColumns: (savedGeneral as Record<string, unknown> | undefined)?.planShowAllColumns,
     });
 
     const savedSingularity = context.globalState.get<Record<string, unknown>>('singularityStats');
@@ -394,7 +399,7 @@ function wireUniverseWebview(
             tasks: board.tasks.map((t) => ({
               id: t.id, title: t.title, status: t.status,
               assignee: t.assigneeName ?? t.assignee, assigneeId: t.assignee,
-              blockedBy: t.blockedBy, notes: t.notes,
+              blockedBy: t.blockedBy, notes: t.notes, role: t.role,
             })),
           },
         });
@@ -428,6 +433,7 @@ function wireUniverseWebview(
         fileLockingEnabled: msg.fileLockingEnabled as boolean | undefined,
         viewMode: msg.viewMode as 'universe' | 'operations' | undefined,
         planShowAllColumns: msg.planShowAllColumns as boolean | undefined,
+        fontSize: msg.fontSize as 'small' | 'default' | 'large' | undefined,
       }).finally(() => {
         // Re-enable after a small delay to let all config change events flush
         setTimeout(() => { suppressConfigEcho = false; }, 200);
@@ -500,6 +506,30 @@ function wireUniverseWebview(
           void webview.postMessage({ type: 'skills-update', skills });
         }
       });
+    } else if (msg?.type === 'request-roles') {
+      void webview.postMessage({
+        type: 'roles-update',
+        roles: roleManager.getAllRoles(),
+        assignments: roleManager.getAllAssignments(),
+        profiles: agentProfiler.getAllProfiles(),
+      });
+    } else if (msg?.type === 'assign-role') {
+      const { roleId, agentType } = msg as { roleId: string; agentType: string };
+      try {
+        roleManager.assignRole(roleId, agentType, null);
+      } catch { /* ignore invalid assignments */ }
+    } else if (msg?.type === 'create-role') {
+      try {
+        const role = msg.role as { id: string; name: string; description: string; skills: string[]; instructions: string };
+        roleManager.addCustomRole(role);
+      } catch { /* ignore invalid role creation */ }
+    } else if (msg?.type === 'edit-role') {
+      try {
+        const role = msg.role as { id: string; name: string; description: string; skills: string[]; instructions: string };
+        roleManager.editRole(role.id, role);
+      } catch { /* ignore invalid role edit */ }
+    } else if (msg?.type === 'delete-role') {
+      roleManager.removeCustomRole(msg.roleId as string);
     }
   });
 }

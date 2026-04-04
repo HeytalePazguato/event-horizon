@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Real-time visual monitoring for Claude Code, OpenCode & Copilot — see agent activity, file collisions, token costs, and cooperation at a glance.",
@@ -22,11 +22,17 @@
   "keywords": [
     "ai",
     "agents",
+    "multi-agent",
+    "agent-orchestration",
     "claude-code",
     "opencode",
     "copilot",
     "monitoring",
-    "visualization"
+    "visualization",
+    "software-architecture",
+    "software-planning",
+    "ai-coding",
+    "orchestration"
   ],
   "repository": {
     "type": "git",
@@ -101,6 +107,14 @@
           "maximum": 3.0,
           "description": "Animation speed multiplier (0.25 = slow-mo, 3.0 = fast-forward).",
           "order": 2
+        },
+        "eventHorizon.fontSize": {
+          "type": "string",
+          "default": "default",
+          "enum": ["small", "default", "large"],
+          "enumDescriptions": ["Smaller text (87%)", "Default text size", "Larger text for improved readability (115%)"],
+          "description": "UI font size for the Event Horizon panel. Affects all text in the universe and operations views.",
+          "order": 3
         },
         "eventHorizon.defaultView": {
           "type": "string",
@@ -196,6 +210,30 @@
           "maximum": 2.0,
           "description": "Planet size multiplier for unrecognized agent types.",
           "order": 24
+        },
+        "eventHorizon.roles.custom": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "description": "Unique role identifier (lowercase, hyphens allowed)" },
+              "name": { "type": "string", "description": "Display name" },
+              "description": { "type": "string", "description": "What this role specializes in" },
+              "skills": { "type": "array", "items": { "type": "string" }, "description": "Skill names to recommend for this role" },
+              "instructions": { "type": "string", "description": "Markdown instructions sent to the agent when assigned this role" }
+            },
+            "required": ["id", "name", "description"]
+          },
+          "markdownDescription": "Define custom agent roles beyond the 6 built-in ones (researcher, planner, implementer, reviewer, tester, debugger). Each role maps to skills and instructions.",
+          "order": 20
+        },
+        "eventHorizon.roles.assignments": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string" },
+          "markdownDescription": "Map role IDs to default agent types. Example: `{ \"researcher\": \"claude-code\", \"reviewer\": \"copilot\" }`",
+          "order": 21
         }
       }
     },

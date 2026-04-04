@@ -5,6 +5,7 @@
 
 import type { FC } from 'react';
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useCommandCenterStore } from '../store.js';
 import type { SkillInfo } from '../store.js';
 import { DEFAULT_VISUAL_SETTINGS } from '../store.js';
@@ -17,10 +18,32 @@ const SCOPE_COLORS: Record<string, string> = {
 };
 
 const SCOPE_LABELS: Record<string, string> = {
-  personal: 'Personal',
+  personal: 'Global',
   project:  'Project',
   plugin:   'Plugin',
   legacy:   'Legacy',
+};
+
+const SCOPE_TIPS: Record<string, string> = {
+  personal: 'Global skill — installed on the host machine, accessible by all agents across all projects',
+  project: 'Project skill — lives in this workspace, only available in this project',
+  plugin: 'Plugin skill — provided by a Claude Code plugin',
+  legacy: 'Legacy command — old-style .claude/commands/ file',
+};
+
+const TOOLTIP_STYLE: React.CSSProperties = {
+  position: 'fixed',
+  top: 8,
+  right: 12,
+  width: 220,
+  background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+  border: '1px solid #2a5a3c',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.75)',
+  padding: '8px 10px',
+  fontFamily: 'Consolas, monospace',
+  zIndex: 9999,
+  pointerEvents: 'none',
+  clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
 /** Resolve agent type color from store settings with fallback to defaults. */
@@ -51,6 +74,7 @@ const SkillCard: FC<{
   const scopeColor = SCOPE_COLORS[skill.scope] ?? '#6a7a72';
   const [duplicating, setDuplicating] = useState(false);
   const [dupName, setDupName] = useState('');
+  const [hoveredBadge, setHoveredBadge] = useState<string | null>(null);
 
   const canMove = skill.scope !== 'legacy' && skill.scope !== 'plugin';
   /** Skill is in a category subfolder that breaks agent discovery. */
@@ -77,16 +101,20 @@ const SkillCard: FC<{
           <span style={{ color: '#8fc08a' }}>/{skill.name}</span>
         </span>
         {/* Scope badge */}
-        <span style={{
-          fontSize: compact ? 8 : 10,
-          padding: compact ? '1px 4px' : '2px 6px',
-          background: `${scopeColor}22`,
-          border: `1px solid ${scopeColor}44`,
-          color: scopeColor,
-          borderRadius: 2,
-          letterSpacing: '0.04em',
-          textTransform: 'uppercase',
-        }}>
+        <span
+          style={{
+            fontSize: compact ? 8 : 10,
+            padding: compact ? '1px 4px' : '2px 6px',
+            background: `${scopeColor}22`,
+            border: `1px solid ${scopeColor}44`,
+            color: scopeColor,
+            borderRadius: 2,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+          onMouseEnter={() => setHoveredBadge(SCOPE_TIPS[skill.scope] ?? '')}
+          onMouseLeave={() => setHoveredBadge(null)}
+        >
           {skill.pluginName ? `${SCOPE_LABELS[skill.scope]}:${skill.pluginName}` : SCOPE_LABELS[skill.scope]}
         </span>
         {/* Agent type badges */}
@@ -104,10 +132,18 @@ const SkillCard: FC<{
           </span>
         ))}
         {skill.userInvocable && (
-          <span title="User-invocable" style={{ fontSize: 9, color: '#d4c44a' }}>&#x26A1;</span>
+          <span
+            style={{ fontSize: 9, color: '#d4c44a' }}
+            onMouseEnter={() => setHoveredBadge('User-invocable: can be triggered with /command')}
+            onMouseLeave={() => setHoveredBadge(null)}
+          >&#x26A1;</span>
         )}
         {skill.context === 'fork' && (
-          <span title="Fork context" style={{ fontSize: 9, color: '#6ab0d4' }}>&#x2442;</span>
+          <span
+            style={{ fontSize: 9, color: '#6ab0d4' }}
+            onMouseEnter={() => setHoveredBadge('Runs in a separate fork context')}
+            onMouseLeave={() => setHoveredBadge(null)}
+          >&#x2442;</span>
         )}
         {/* Metadata category badge */}
         {skill.metadataCategory && (
@@ -190,7 +226,8 @@ const SkillCard: FC<{
             {canMove && isInSubfolder && onMove && (
               <button
                 type="button"
-                title="Skill is in a category subfolder — agents can't discover it. Move to root."
+                onMouseEnter={() => setHoveredBadge('Skill is in a category subfolder \u2014 agents can\'t discover it. Move to root.')}
+                onMouseLeave={() => setHoveredBadge(null)}
                 onClick={(e) => { e.stopPropagation(); onMove(skill.filePath, ''); setDuplicating(false); }}
                 style={{
                   padding: '2px 8px',
@@ -279,6 +316,12 @@ const SkillCard: FC<{
           )}
         </div>
       )}
+      {hoveredBadge && createPortal(
+        <div style={TOOLTIP_STYLE}>
+          <div style={{ fontSize: 11, color: '#6a9a78' }}>{hoveredBadge}</div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 };
@@ -300,6 +343,7 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [scopeFilter, setScopeFilter] = useState<string | null>(null);
   const [activeAgentFilters, setActiveAgentFilters] = useState<Set<string>>(new Set(['claude-code', 'opencode', 'copilot']));
+  const [hoveredPanelTip, setHoveredPanelTip] = useState<string | null>(null);
 
   // Debounce search input by 150ms
   useEffect(() => {
@@ -378,7 +422,8 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
           <button
             type="button"
             onClick={onCreateSkill}
-            title="Create new skill"
+            onMouseEnter={() => setHoveredPanelTip('Create new skill')}
+            onMouseLeave={() => setHoveredPanelTip(null)}
             style={{
               padding: '1px 6px',
               fontSize: 11,
@@ -480,6 +525,12 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
           />
         ))}
       </div>
+      {hoveredPanelTip && createPortal(
+        <div style={TOOLTIP_STYLE}>
+          <div style={{ fontSize: 11, color: '#6a9a78' }}>{hoveredPanelTip}</div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 };

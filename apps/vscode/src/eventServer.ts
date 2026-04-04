@@ -41,11 +41,15 @@ import { LockManager } from './lockManager.js';
 import { McpServer, FileActivityTracker } from './mcpServer.js';
 import { PlanBoardManager } from './planBoard.js';
 import { MessageQueue } from './messageQueue.js';
+import { RoleManager } from './roleManager.js';
+import { AgentProfiler } from './agentProfiler.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
 export const planBoardManager = new PlanBoardManager();
 export const messageQueue = new MessageQueue();
+export const roleManager = new RoleManager();
+export const agentProfiler = new AgentProfiler();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -58,6 +62,8 @@ export function initMcpServer(deps: { agentStateManager: import('@event-horizon/
     fileActivityTracker,
     planBoardManager,
     messageQueue,
+    roleManager,
+    agentProfiler,
   });
 }
 

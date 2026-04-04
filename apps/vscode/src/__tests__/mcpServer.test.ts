@@ -8,6 +8,8 @@ import { LockManager } from '../lockManager.js';
 import { AgentStateManager } from '@event-horizon/core';
 import { PlanBoardManager } from '../planBoard.js';
 import { MessageQueue } from '../messageQueue.js';
+import { RoleManager } from '../roleManager.js';
+import { AgentProfiler } from '../agentProfiler.js';
 
 let lockManager: LockManager;
 let agentStateManager: AgentStateManager;
@@ -19,7 +21,7 @@ beforeEach(() => {
   lockManager.setEnabled(true);
   agentStateManager = new AgentStateManager();
   fileActivityTracker = new FileActivityTracker();
-  mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager: new PlanBoardManager(), messageQueue: new MessageQueue() });
+  mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager: new PlanBoardManager(), messageQueue: new MessageQueue(), roleManager: new RoleManager(), agentProfiler: new AgentProfiler() });
 });
 
 function rpc(method: string, params?: Record<string, unknown>, id: number | string = 1) {
@@ -65,10 +67,10 @@ describe('initialize', () => {
 // ── tools/list ──────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 15 tools', async () => {
+  it('returns all 19 tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(15);
+    expect(result.tools).toHaveLength(19);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');

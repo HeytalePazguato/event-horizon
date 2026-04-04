@@ -163,6 +163,8 @@ export const SettingsModal: FC = () => {
   const setEventServerPort = useCommandCenterStore((s) => s.setEventServerPort);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
   const setFileLockingEnabled = useCommandCenterStore((s) => s.setFileLockingEnabled);
+  const fontSize          = useCommandCenterStore((s) => s.fontSize);
+  const setFontSize       = useCommandCenterStore((s) => s.setFontSize);
 
   if (!settingsOpen) return null;
 
@@ -381,6 +383,36 @@ export const SettingsModal: FC = () => {
                 }}
               />
               <span style={{ color: '#4a6a5a', fontSize: 7, fontStyle: 'italic' }}>restart required</span>
+            </div>
+          </div>
+
+          {/* Font size selector */}
+          <div style={rowStyle}>
+            <span style={{ ...labelStyle, color: '#8fc08a', fontSize: 9 }}>Font Size</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {(['small', 'default', 'large'] as const).map((size) => {
+                const active = fontSize === size;
+                return (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => setFontSize(size)}
+                    style={{
+                      padding: '2px 8px',
+                      fontSize: 9,
+                      color: active ? '#8fc08a' : '#5a7a6a',
+                      background: active ? 'rgba(50,90,60,0.35)' : 'transparent',
+                      border: `1px solid ${active ? '#2a4a3a' : '#1e3328'}`,
+                      cursor: 'pointer',
+                      fontFamily: 'Consolas, monospace',
+                      letterSpacing: '0.04em',
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    {size}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

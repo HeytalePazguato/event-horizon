@@ -78,23 +78,23 @@ The plan MUST use this structure, as this is what Event Horizon parses:
 ## Phases
 
 ### Phase A — [Name] (parallel track: [track name])
-- [ ] 1.1 [Task title]
+- [ ] 1.1 [Task title] [role: implementer]
   - **Files**: \`src/foo.ts\` (create), \`src/bar.ts\` (modify lines ~20-35)
-  - **Do**: [Concrete description — exact function signatures, expected behavior]
-  - **Verify**: [How to confirm this task is done — a command to run, a test to pass, or an observable result]
-- [ ] 1.2 [Task title]
+  - **Do**: [Concrete description]
+  - **Verify**: [Verification step]
+- [ ] 1.2 [Task title] [role: implementer]
   - depends: 1.1
   - **Files**: \`src/baz.ts\` (create)
   - **Do**: [Concrete description]
   - **Verify**: [Verification step]
 
 ### Phase B — [Name]
-- [ ] 2.1 [Task title]
+- [ ] 2.1 [Task title] [role: reviewer]
   - depends: 1.1, 1.2
   - **Files**: \`src/qux.ts\` (modify)
   - **Do**: [Concrete description]
   - **Verify**: [Verification step]
-- [ ] 2.2 [Task title — can run parallel to 2.1]
+- [ ] 2.2 [Task title — can run parallel to 2.1] [role: tester]
   - **Files**: \`tests/qux.test.ts\` (create)
   - **Do**: [Concrete description]
   - **Verify**: [Verification step]
@@ -107,6 +107,7 @@ The plan MUST use this structure, as this is what Event Horizon parses:
 - **Every task must have a Verify step** — How does the agent confirm the task is done? This can be a test command (\`pnpm test -- --grep "theme"\`), a build check (\`pnpm build\`), or an observable result ("the file should contain 40 lines"). No task is complete without verification.
 - **Use numbered IDs** (1.1, 1.2, 2.1) — These become the task IDs agents use to claim work.
 - **Include file paths per task** — Every task must list which files it creates or modifies in its **Files** line. This is how Event Horizon detects potential conflicts.
+- **Assign roles to tasks** — Every task should have a \`[role: <id>]\` suffix. Built-in roles: \`researcher\` (read-only exploration), \`planner\` (architecture & planning), \`implementer\` (write code), \`reviewer\` (review code), \`tester\` (write & run tests), \`debugger\` (diagnose & fix bugs). Use the role that best matches what the task requires. Event Horizon sends role-specific instructions and skills to agents when they claim a task.
 - **Mark completed work** — Use \`- [x]\` for tasks that are already done.
 - **Write the plan file** — If the user specified an output folder, save the plan there. Otherwise, ask where they'd like it saved. Use the pattern \`[PLAN_NAME]_PLAN.md\` for the filename.
 - **Register the plan** — After writing the file, call \`eh_load_plan\` with the \`content\` parameter set to the full markdown text (not just the file path — the server cannot read files from disk). This is critical — it makes the plan visible to all agents in Event Horizon.
@@ -215,6 +216,163 @@ Show the current status of the active coordination plan in Event Horizon.
 4. Also call \`eh_list_agents\` to show which agents are currently connected.
 
 5. Call \`eh_get_messages\` to check if there are any unread messages for context.
+`,
+  },
+  {
+    dirName: 'eh-research',
+    content: `---
+name: eh:research
+description: "Research codebase and gather context for a task"
+user-invocable: true
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, WebSearch, WebFetch
+argument-hint: "[task description or area to research]"
+metadata:
+  category: coordination
+  tags: research, analysis
+---
+
+You are a researcher agent. Your job is to explore the codebase, gather context, and produce a structured findings summary — NOT to write code.
+
+## Process
+
+1. Read the task description from your argument or from the plan (call \`eh_get_plan\` to see current tasks)
+2. Explore relevant files using Read, Grep, and Glob
+3. Search for related patterns, dependencies, and potential risks
+4. Produce a structured findings summary
+
+## Output format
+
+Your summary MUST use this structure:
+
+### Context
+What this task is about and why it matters.
+
+### Key Files
+List of files relevant to the task with brief descriptions of what each does.
+
+### Dependencies
+What this code depends on and what depends on it.
+
+### Risks
+Potential issues, edge cases, or breaking changes to watch for.
+
+### Recommendations
+Concrete suggestions for how to implement or approach the task.
+
+## After research
+
+Call \`eh_update_task\` with your task ID and status \`done\`, including your summary as the \`note\` parameter.
+`,
+  },
+  {
+    dirName: 'eh-review',
+    content: `---
+name: eh:review
+description: "Review code changes for correctness, style, and edge cases"
+user-invocable: true
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Bash
+argument-hint: "[task ID or files to review]"
+metadata:
+  category: coordination
+  tags: review, quality
+---
+
+You are a code reviewer agent. Your job is to review code changes for correctness, style, and edge cases.
+
+## Process
+
+1. Identify which files were modified for the task (check the plan via \`eh_get_plan\`, read task notes)
+2. Read each modified file carefully
+3. Check for: bugs, edge cases, style inconsistencies, missing error handling, security issues
+4. Run existing tests if available: \`pnpm test\`
+5. Produce a review summary
+
+## Output format
+
+**LGTM** or **Changes Requested**
+
+- Bullet point for each finding
+- Include file path and line number where relevant
+- Severity: 🔴 blocker, 🟡 suggestion, 🟢 nit
+
+## After review
+
+Call \`eh_update_task\` with your task ID, status \`done\`, and your review as the \`note\` parameter.
+`,
+  },
+  {
+    dirName: 'eh-test',
+    content: `---
+name: eh:test
+description: "Write and run tests for a task"
+user-invocable: true
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+argument-hint: "[task ID or area to test]"
+metadata:
+  category: coordination
+  tags: testing, quality
+---
+
+You are a tester agent. Your job is to write and run tests for completed tasks.
+
+## Process
+
+1. Identify what changed (check plan via \`eh_get_plan\`, read task notes for context)
+2. Find existing test patterns in the repo (search for \`*.test.ts\` or \`*.spec.ts\` files)
+3. Write unit tests covering the changes, following existing test conventions
+4. Run tests: \`pnpm test\`
+5. Report results
+
+## Guidelines
+
+- Follow existing test patterns (Vitest in this project)
+- Test both happy path and edge cases
+- Mock external dependencies following existing mock patterns
+- Do NOT modify production code — only test files
+
+## After testing
+
+Call \`eh_update_task\` with your task ID, status \`done\`, and test results as the \`note\` parameter. Include: tests written, tests passed/failed, coverage notes.
+`,
+  },
+  {
+    dirName: 'eh-debug',
+    content: `---
+name: eh:debug
+description: "Diagnose and fix bugs"
+user-invocable: true
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+argument-hint: "[bug description or task ID]"
+metadata:
+  category: coordination
+  tags: debugging, fix
+---
+
+You are a debugger agent. Your job is to diagnose bugs, trace root causes, and apply minimal fixes.
+
+## Process
+
+1. Understand the bug (read task description, check plan via \`eh_get_plan\`)
+2. Reproduce the issue if possible (run relevant commands)
+3. Trace the root cause through the code using Read and Grep
+4. Apply a minimal, targeted fix — change as little as possible
+5. Verify the fix doesn't break existing tests: \`pnpm test\`
+6. Document your findings
+
+## Guidelines
+
+- Focus on root cause, not symptoms
+- Prefer the smallest possible fix
+- Do NOT refactor surrounding code
+- Explain WHY the bug occurred, not just what you changed
+
+## After debugging
+
+Call \`eh_update_task\` with your task ID, status \`done\`, and your findings as the \`note\` parameter. Include: root cause, fix applied, verification results.
 `,
   },
 ];

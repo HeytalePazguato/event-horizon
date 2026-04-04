@@ -10,6 +10,8 @@ import type { AgentStateManager } from '@event-horizon/core';
 import type { LockManager } from './lockManager.js';
 import type { PlanBoardManager } from './planBoard.js';
 import type { MessageQueue } from './messageQueue.js';
+import type { RoleManager } from './roleManager.js';
+import type { AgentProfiler } from './agentProfiler.js';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -229,6 +231,55 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id'],
     },
   },
+  // ── Role & profiling tools ──────────────────────────────────────────────
+  {
+    name: 'eh_list_roles',
+    description: 'List all available roles and their current agent assignments. Roles define specialized behaviors with associated skills.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_assign_role',
+    description: 'Assign a default agent type to a role. When tasks with this role are available, the assigned agent type will be recommended.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        role_id: { type: 'string', description: 'Role ID to assign (e.g. researcher, planner, implementer)' },
+        agent_type: { type: 'string', description: 'Agent type to assign (e.g. claude-code, copilot, opencode)' },
+      },
+      required: ['agent_id', 'role_id', 'agent_type'],
+    },
+  },
+  {
+    name: 'eh_get_agent_profile',
+    description: 'Get historical performance profile for an agent type. Shows success rate, average duration, cost, and breakdown by role.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        agent_type: { type: 'string', description: 'Agent type to get profile for (e.g. claude-code, copilot)' },
+      },
+      required: ['agent_id', 'agent_type'],
+    },
+  },
+  {
+    name: 'eh_recommend_agent',
+    description: 'Get ranked recommendations for which agent type is best suited for a given role, based on historical task performance data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        role_id: { type: 'string', description: 'Role ID to get recommendations for' },
+      },
+      required: ['agent_id', 'role_id'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -274,6 +325,8 @@ export interface McpServerDeps {
   fileActivityTracker: FileActivityTracker;
   planBoardManager: PlanBoardManager;
   messageQueue: MessageQueue;
+  roleManager: RoleManager;
+  agentProfiler: AgentProfiler;
 }
 
 export class McpServer {
@@ -575,6 +628,40 @@ export class McpServer {
           })),
           count: messages.length,
         };
+      }
+
+      case 'eh_list_roles': {
+        const { roleManager } = this.deps;
+        return {
+          roles: roleManager.getAllRoles(),
+          assignments: roleManager.getAllAssignments(),
+        };
+      }
+
+      case 'eh_assign_role': {
+        const roleId = args.role_id as string;
+        const agentType = args.agent_type as string;
+        const { roleManager } = this.deps;
+        try {
+          roleManager.assignRole(roleId, agentType, null);
+          return { assigned: true, role_id: roleId, agent_type: agentType };
+        } catch (e) {
+          return { assigned: false, error: (e as Error).message };
+        }
+      }
+
+      case 'eh_get_agent_profile': {
+        const agentType = args.agent_type as string;
+        const { agentProfiler } = this.deps;
+        const profile = agentProfiler.getProfile(agentType);
+        if (!profile) return { error: 'No profile data for this agent type' };
+        return profile;
+      }
+
+      case 'eh_recommend_agent': {
+        const roleId = args.role_id as string;
+        const { agentProfiler } = this.deps;
+        return { recommendations: agentProfiler.recommendForRole(roleId) };
       }
 
       default:
