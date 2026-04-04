@@ -6,6 +6,7 @@
 
 import type { FC } from 'react';
 import { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 import { useCommandCenterStore } from './store.js';
 import { AgentSidebar } from './panels/AgentSidebar.js';
@@ -16,8 +17,9 @@ import { TimelinePanel } from './panels/TimelinePanel.js';
 import { SkillsPanel } from './panels/SkillsPanel.js';
 import { PlanPanel } from './panels/PlanPanel.js';
 import type { PlanView, PlanSummary } from './panels/PlanPanel.js';
+import { RolesPanel } from './panels/RolesPanel.js';
 
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan';
+type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan' | 'roles';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -46,10 +48,33 @@ export interface OperationsViewProps {
   onOpenMarketplace?: () => void;
   onMoveSkill?: (filePath: string, newCategory: string) => void;
   onDuplicateSkill?: (filePath: string, newName: string) => void;
+  roles?: Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>;
+  roleAssignments?: Array<{ roleId: string; agentType: string | null; agentId: string | null }>;
+  agentProfiles?: Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>;
+  onAssignRole?: (roleId: string, agentType: string) => void;
+  onCreateRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
+  onEditRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
+  onDeleteRole?: (roleId: string) => void;
 }
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill }) => {
+const OPS_TOOLTIP_STYLE: React.CSSProperties = {
+  position: 'fixed',
+  top: 8,
+  right: 12,
+  width: 220,
+  background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+  border: '1px solid #2a5a3c',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.75)',
+  padding: '8px 10px',
+  fontFamily: 'Consolas, monospace',
+  zIndex: 9999,
+  pointerEvents: 'none',
+  clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+};
+
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
+  const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
   const setFileLockingEnabled = useCommandCenterStore((s) => s.setFileLockingEnabled);
@@ -114,6 +139,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             <button type="button" style={tabStyle(activeTab === 'plan')} onClick={() => setActiveTab('plan')}>
               Plan{plan?.tasks ? ` (${plan.tasks.filter((t) => t.status === 'done').length}/${plan.tasks.length})` : ''}
             </button>
+            <button type="button" style={tabStyle(activeTab === 'roles')} onClick={() => setActiveTab('roles')}>
+              Roles{roles && roles.length > 0 ? ` (${roles.length})` : ''}
+            </button>
 
             {/* Command buttons — right-aligned */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: '0 8px' }}>
@@ -175,6 +203,11 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             {activeTab === 'plan' && (
               <PlanPanel plan={plan ?? { loaded: false }} />
             )}
+            {activeTab === 'roles' && (
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -212,7 +245,8 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             alignItems: 'center',
             gap: 5,
           }}
-          title={fileLockingEnabled ? 'File locking is ON — agents are blocked from concurrent writes. Click to disable.' : 'File locking is OFF — agents can write to the same file simultaneously. Click to enable.'}
+          onMouseEnter={() => setHoveredTooltip('File Locking: prevents multiple agents from writing the same file simultaneously')}
+          onMouseLeave={() => setHoveredTooltip(null)}
         >
           {fileLockingEnabled ? 'Locks ON' : 'Locks OFF'}
         </button>
@@ -261,6 +295,13 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
           Universe View
         </button>
       </div>
+      {hoveredTooltip && createPortal(
+        <div style={OPS_TOOLTIP_STYLE}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#90d898', marginBottom: 2 }}>File Locking</div>
+          <div style={{ fontSize: 11, color: '#6a9a78' }}>{hoveredTooltip}</div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 };

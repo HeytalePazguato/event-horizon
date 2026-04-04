@@ -152,6 +152,7 @@ const LED_ON = '#25904a';
 const LED_DIM = '#154a28';
 
 export interface CommandCenterProps {
+  role?: string | null;
   onOpenSkill?: (filePath: string) => void;
   onCreateSkill?: () => void;
   onOpenMarketplace?: () => void;
@@ -159,7 +160,7 @@ export interface CommandCenterProps {
   onDuplicateSkill?: (filePath: string, newName: string) => void;
 }
 
-export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
+export const CommandCenter: FC<CommandCenterProps> = ({ role, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
   const minimized = useCommandCenterStore((s) => s.ccMinimized);
   const setCcMinimized = useCommandCenterStore((s) => s.setCcMinimized);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
@@ -364,7 +365,7 @@ export const CommandCenter: FC<CommandCenterProps> = ({ onOpenSkill, onCreateSki
           <div data-tour="identity" style={leftPanelStyle}>
             <Led style={{ top: 6, right: 6, background: LED_ON, boxShadow: `0 0 5px ${LED_ON}` }} />
             <Led style={{ bottom: 6, right: 6, background: LED_DIM }} />
-            <AgentIdentity />
+            <AgentIdentity role={role} />
           </div>
 
           {/* CENTER — metrics / info */}

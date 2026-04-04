@@ -13,6 +13,7 @@ export interface PlanTaskDebris {
   id: string;
   status: DebrisStatus;
   assigneeId: string | null;
+  role: string | null;
 }
 
 export interface DebrisPlan {
@@ -93,6 +94,7 @@ export function updateDebris(
       orbitDistance,
       orbitSpeed: task.status === 'done' ? orbitSpeed * 0.3 : orbitSpeed,
       size,
+      role: task.role,
     });
 
     // If task is claimed/in_progress by an agent, orbit that agent's planet instead

@@ -54,6 +54,8 @@ export interface SettingsSlice {
   toggleInfo: () => void;
   planShowAllColumns: boolean;
   setPlanShowAllColumns: (show: boolean) => void;
+  fontSize: 'small' | 'default' | 'large';
+  setFontSize: (size: 'small' | 'default' | 'large') => void;
 }
 
 type SetFn = (fn: (s: SettingsSlice) => Partial<SettingsSlice>) => void;
@@ -116,5 +118,7 @@ export function createSettingsSlice(set: SetFn): SettingsSlice {
     toggleInfo: () => set((s) => ({ infoOpen: !s.infoOpen })),
     planShowAllColumns: false,
     setPlanShowAllColumns: (show) => set(() => ({ planShowAllColumns: show })),
+    fontSize: 'default',
+    setFontSize: (size) => set(() => ({ fontSize: size })),
   };
 }

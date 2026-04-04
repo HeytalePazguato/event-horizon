@@ -19,6 +19,7 @@ export interface PlanTaskView {
   status: PlanTaskStatus;
   assignee: string | null;
   assigneeId: string | null;
+  role?: string | null;
   blockedBy: string[];
   notes: Array<{ agentId: string; agentName: string; text: string; ts: number }>;
 }
@@ -247,6 +248,13 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
   );
 };
 
+// ── Role tag colors ────────────────────────────────────────────────────────
+
+const ROLE_COLORS: Record<string, string> = {
+  researcher: '#66ccff', planner: '#ffaa33', implementer: '#88ff88',
+  reviewer: '#cc88ff', tester: '#ffcc00', debugger: '#ff6666',
+};
+
 // ── Task Card ───────────────────────────────────────────────────────────────
 
 const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
@@ -269,6 +277,16 @@ const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
         <span style={{ color: colors.text.primary, fontSize: sizes.text.sm }}>
           {task.title}
         </span>
+        {task.role && (
+          <span style={{
+            fontSize: 7, textTransform: 'uppercase', fontFamily: 'monospace',
+            color: ROLE_COLORS[task.role] ?? '#aaccff',
+            border: `1px solid ${(ROLE_COLORS[task.role] ?? '#aaccff')}66`,
+            borderRadius: 2, padding: '1px 2px', marginLeft: 4,
+          }}>
+            {task.role}
+          </span>
+        )}
       </div>
 
       {/* Assignee */}

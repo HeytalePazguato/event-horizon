@@ -8,6 +8,8 @@ import { McpServer, FileActivityTracker } from '../mcpServer.js';
 import { LockManager } from '../lockManager.js';
 import { AgentStateManager } from '@event-horizon/core';
 import { PlanBoardManager } from '../planBoard.js';
+import { RoleManager } from '../roleManager.js';
+import { AgentProfiler } from '../agentProfiler.js';
 
 // ── MessageQueue unit tests ─────────────────────────────────────────────────
 
@@ -151,6 +153,8 @@ describe('Messaging MCP tools', () => {
       fileActivityTracker: new FileActivityTracker(),
       planBoardManager: new PlanBoardManager(),
       messageQueue: new MessageQueue(),
+      roleManager: new RoleManager(),
+      agentProfiler: new AgentProfiler(),
     });
   });
 

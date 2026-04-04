@@ -144,6 +144,9 @@ function App() {
   const [plan, setPlan] = useState<import('@event-horizon/ui').PlanView>({ loaded: false });
   const [plans, setPlans] = useState<import('@event-horizon/ui').PlanSummary[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [roles, setRoles] = useState<Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>>([]);
+  const [roleAssignments, setRoleAssignments] = useState<Array<{ roleId: string; agentType: string | null; agentId: string | null }>>([]);
+  const [agentProfiles, setAgentProfiles] = useState<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>([]);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -175,6 +178,7 @@ function App() {
   const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
   const screenshotRequestedAt = useCommandCenterStore((s) => s.screenshotRequestedAt);
   const viewMode             = useCommandCenterStore((s) => s.viewMode);
+  const fontSize             = useCommandCenterStore((s) => s.fontSize);
 
   // ── Refs ──
   const agentMapRef = useRef(agentMap);
@@ -196,6 +200,7 @@ function App() {
     agentMapRef, metricsMapRef, agentLastSeenRef,
     activeFilesRef, recentSparkPairsRef, activeSkillsRef, invokedSkillNamesRef,
     shipTimerIdsRef, addLog, incrementTiered, setPlan, setPlans,
+    setRoles, setRoleAssignments, setAgentProfiles,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -230,6 +235,12 @@ function App() {
   const handleCreateSkill = useCallback((req: CreateSkillRequest) => { vscodeApi?.postMessage({ type: 'create-skill', ...req }); toggleCreateSkill(); }, [toggleCreateSkill]);
   const handleMoveSkill = useCallback((filePath: string, newCategory: string) => { vscodeApi?.postMessage({ type: 'move-skill', filePath, newCategory }); }, []);
   const handleDuplicateSkill = useCallback((filePath: string, newName: string) => { vscodeApi?.postMessage({ type: 'duplicate-skill', filePath, newName }); }, []);
+
+  // ── Role actions ──
+  const handleAssignRole = useCallback((roleId: string, agentType: string) => { vscodeApi?.postMessage({ type: 'assign-role', roleId, agentType }); }, []);
+  const handleCreateRole = useCallback((role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => { vscodeApi?.postMessage({ type: 'create-role', role }); }, []);
+  const handleEditRole = useCallback((role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => { vscodeApi?.postMessage({ type: 'edit-role', role }); }, []);
+  const handleDeleteRole = useCallback((roleId: string) => { vscodeApi?.postMessage({ type: 'delete-role', roleId }); }, []);
 
   // ── Marketplace actions ──
   const handleMarketplaceBrowse = useCallback((url: string) => { vscodeApi?.postMessage({ type: 'open-marketplace-url', url }); }, []);
@@ -363,16 +374,23 @@ function App() {
         id: t.id,
         status: t.status as 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked',
         assigneeId: t.assigneeId ?? null,
+        role: t.role ?? null,
       })),
     };
   }, [plan]);
+  const selectedAgentRole = useMemo(() => {
+    if (!plan?.tasks || !selectedAgentId) return null;
+    const task = plan.tasks.find(t => t.assigneeId === selectedAgentId && (t.status === 'claimed' || t.status === 'in_progress') && t.role);
+    return task?.role ?? null;
+  }, [plan, selectedAgentId]);
+
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
   const hoveredMetrics = hoveredAgentId ? metricsMap[hoveredAgentId] : null;
   const panelSize = usePanelSize();
 
   // ── Render ──
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 380, flex: 1, background: 'transparent' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 380, flex: 1, background: 'transparent', zoom: fontSize === 'small' ? 0.87 : fontSize === 'large' ? 1.15 : 1 }}>
       {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state */}
       <div style={{ flex: 1, display: viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
         <div ref={panelSize.ref} data-tour="universe" style={{ flex: 1, minHeight: 0, position: 'relative', background: 'transparent' }}>
@@ -408,12 +426,14 @@ function App() {
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
-        <CommandCenter onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+        <CommandCenter role={selectedAgentRole} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       </div>
 
       {viewMode === 'operations' && (
         <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
           plan={plan} plans={plans} selectedPlanId={selectedPlanId}
+          roles={roles} roleAssignments={roleAssignments} agentProfiles={agentProfiles}
+          onAssignRole={handleAssignRole} onCreateRole={handleCreateRole} onEditRole={handleEditRole} onDeleteRole={handleDeleteRole}
           onSelectPlan={(id) => { setSelectedPlanId(id); vscodeApi?.postMessage({ type: 'request-plan', planId: id }); }}
           onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace}
           onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
@@ -441,7 +461,7 @@ function App() {
       )}
       <SettingsModal />
       {hoveredAgentId && hoveredAgent && (
-        <div style={{ position: 'fixed', left: Math.min(mousePos.x + 14, window.innerWidth - 180), top: Math.max(mousePos.y - 60, 8), zIndex: 1000, pointerEvents: 'none' }}>
+        <div style={{ position: 'fixed', left: Math.min(mousePos.x + 14, window.innerWidth - 180), top: Math.min(Math.max(mousePos.y - 60, 8), window.innerHeight - 250), zIndex: 1000, pointerEvents: 'none' }}>
           <Tooltip agentName={hoveredAgent.name} loadPercent={Math.round((hoveredMetrics?.load ?? 0.5) * 100)} activeTask={hoveredAgent.currentTaskId} cwd={hoveredAgent.cwd} />
         </div>
       )}

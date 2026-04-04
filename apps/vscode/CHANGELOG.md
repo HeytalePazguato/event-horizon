@@ -2,6 +2,36 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.1.0] — 2026-04-02
+
+### Added
+- **Agent roles system**: 6 built-in roles (researcher, planner, implementer, reviewer, tester, debugger) with customizable skill mappings and instructions. Agents receive role context automatically when claiming tasks. Users can define custom roles via `eventHorizon.roles.custom` setting
+- **Agent profiling & recommendations**: historical task performance tracking per agent type per role — success rate, duration, token cost, error count. New `eh_recommend_agent` MCP tool ranks agent types by suitability for a given role based on real data
+- **4 new MCP tools**: `eh_list_roles`, `eh_assign_role`, `eh_get_agent_profile`, `eh_recommend_agent` — total: 19 MCP tools
+- **4 new bundled skills**: `eh:research` (codebase exploration), `eh:review` (code review), `eh:test` (test writing), `eh:debug` (bug diagnosis) — each tied to a role with structured output formats
+- **Roles & Profiles panel**: new "Roles" tab in Operations View showing role definitions, agent assignments, performance profiles with success rate bars, and per-role breakdowns
+- **Role tags in plan markdown**: tasks support `[role: researcher]` suffix syntax — parsed and displayed on kanban cards and orbital debris
+- **Role badge in CommandCenter**: AgentIdentity panel shows the current role when an agent has a role-tagged task claimed
+- **Role-colored debris glow**: orbital task debris shows a subtle glow ring in the assigned role's color, overlaying the existing status color
+- **Role assignment persistence**: role assignments and agent profiles survive extension restarts via VS Code globalState
+- **Role instructions on claim**: when an agent claims a task with a role, Event Horizon automatically sends role instructions and recommended skills via the messaging system
+- **Role creation & editing UI**: create custom roles directly from the Roles panel ("+") with tag-based skill selector showing installed skills with autocomplete. Edit any role (including built-in) via pencil icon — edited role highlighted with orange border
+- **Role-aware plan skill**: `eh:create-plan` now assigns `[role: X]` to every task in generated plans, matching tasks to the appropriate role
+- **Font size accessibility setting**: `eventHorizon.fontSize` with 3 levels — Small (87%), Default, Large (115%) — applied via CSS zoom. Accessible from Settings panel and VS Code settings
+- **Marketplace keywords**: added `multi-agent`, `agent-orchestration`, `orchestration`, `software-architecture`, `software-planning`, `ai-coding` for discoverability
+
+### Improved
+- **Scope label renamed**: skill scope badge "Personal" → "Global" — clearer that these skills are installed on the host machine and accessible by all agents across all projects
+- **Custom tooltips on skill badges**: GLOBAL/Project/Plugin/Legacy scope badges and user-invocable/fork-context icons now show descriptive hover tooltips matching the app's tooltip style
+- **Roles panel layout**: create/edit form stays fixed at top, roles grid scrolls below. Skill field uses tag-based autocomplete from installed skills instead of free text
+- **Font standardization**: RolesPanel font sizes aligned with SkillsPanel hierarchy — role names 13px, descriptions 11px, form inputs 11px, using design token system
+
+### Fixed
+- **Default view override**: stale `viewMode` from globalState was overriding the VS Code `eventHorizon.defaultView` setting on every webview open. Now `readVscodeConfig()` is the single source of truth
+
+### Security
+- **Dependabot alerts resolved**: added pnpm overrides to upgrade transitive dependencies — `lodash` 4.17.23 → 4.18.1 (code injection & prototype pollution), `brace-expansion` 5.0.4 → 5.0.5 (process hang via zero-step sequences), `@xmldom/xmldom` 0.8.11 → 0.8.12 (XML injection via CDATA serialization)
+
 ## [1.0.2] — 2026-04-01
 
 ### Improved

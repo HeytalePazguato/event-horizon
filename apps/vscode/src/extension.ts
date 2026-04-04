@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -117,6 +117,13 @@ export function activate(context: vscode.ExtensionContext): void {
     void context.globalState.update('planBoard', undefined); // clean up old key
   }
 
+  // Restore roles and agent profiles from globalState
+  const savedRoles = context.globalState.get<ReturnType<typeof roleManager.serialize>>('agentRoles');
+  if (savedRoles) roleManager.restore(savedRoles);
+
+  const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
+  if (savedProfiles) agentProfiler.restore(savedProfiles);
+
   /** Serialize a PlanBoard to the webview plan-update format. */
   function planToView(board: PlanBoard) {
     return {
@@ -134,6 +141,7 @@ export function activate(context: vscode.ExtensionContext): void {
         assigneeId: t.assignee,
         blockedBy: t.blockedBy,
         notes: t.notes,
+        role: t.role,
       })),
     };
   }
@@ -172,6 +180,59 @@ export function activate(context: vscode.ExtensionContext): void {
       // Send the changed plan in full so the Kanban updates
       activePlan: changedPlanId ? planToView(planBoardManager.getPlan(changedPlanId)!) : undefined,
     });
+  });
+
+  // Record completed tasks for agent profiling
+  planBoardManager.onTaskComplete((task, planId) => {
+    if (!task.assignee) return;
+    const agent = agentStateManager.getAgent(task.assignee);
+    const metrics = metricsEngine.getMetrics(task.assignee);
+    agentProfiler.recordTask({
+      taskId: task.id,
+      planId,
+      agentId: task.assignee,
+      agentType: agent?.type ?? 'unknown',
+      agentName: task.assigneeName ?? task.assignee,
+      role: task.role,
+      claimedAt: task.claimedAt ?? Date.now(),
+      completedAt: Date.now(),
+      status: task.status === 'done' ? 'done' : 'failed',
+      durationMs: task.claimedAt ? Date.now() - task.claimedAt : 0,
+      inputTokens: metrics?.inputTokens ?? -1,
+      outputTokens: metrics?.outputTokens ?? -1,
+      estimatedCostUsd: metrics?.estimatedCostUsd ?? -1,
+      toolCalls: metrics?.toolCalls ?? 0,
+      errorCount: metrics?.errorCount ?? 0,
+    });
+    void context.globalState.update('agentProfiles', agentProfiler.serialize());
+  });
+
+  // Send role instructions when a task with a role is claimed
+  planBoardManager.onTaskClaim((task, _planId) => {
+    if (!task.role || !task.assignee) return;
+    const instructions = roleManager.getInstructionsForRole(task.role);
+    const skills = roleManager.getSkillsForRole(task.role);
+    const role = roleManager.getRole(task.role);
+    if (!instructions && skills.length === 0) return;
+    const parts: string[] = [];
+    if (role) parts.push(`**Role assigned: ${role.name}**`);
+    if (instructions) parts.push(instructions);
+    if (skills.length > 0) parts.push(`Recommended skills: ${skills.map(s => '/' + s.replace('eh-', 'eh:')).join(', ')}`);
+    messageQueue.send('event-horizon', 'Event Horizon', task.assignee, parts.join('\n\n'));
+  });
+
+  // Persist role changes
+  roleManager.onChange(() => {
+    void context.globalState.update('agentRoles', roleManager.serialize());
+    // Forward to webview
+    if (webviewRef.current) {
+      webviewRef.current.postMessage({
+        type: 'roles-update',
+        roles: roleManager.getAllRoles(),
+        assignments: roleManager.getAllAssignments(),
+        profiles: agentProfiler.getAllProfiles(),
+      });
+    }
   });
 
   // ── Status bar — live agent count ──────────────────────────────────────────

@@ -24,6 +24,19 @@ export function debrisColor(status: DebrisStatus): number {
   }
 }
 
+/** Map role ID to a subtle glow color. */
+export function roleGlowColor(role: string): number {
+  switch (role) {
+    case 'researcher': return 0x66ccff;
+    case 'planner':    return 0xffaa33;
+    case 'implementer': return 0x88ff88;
+    case 'reviewer':   return 0xcc88ff;
+    case 'tester':     return 0xffcc00;
+    case 'debugger':   return 0xff6666;
+    default:           return 0xaaccff;
+  }
+}
+
 // ── Debris factory ──────────────────────────────────────────────────────────
 
 export interface DebrisProps {
@@ -32,11 +45,13 @@ export interface DebrisProps {
   orbitDistance: number;
   orbitSpeed: number;
   size: number;
+  role?: string | null;
 }
 
 export type ExtendedDebris = Container & {
   __taskId?: string;
   __status?: DebrisStatus;
+  __role?: string | null;
   __orbitDistance?: number;
   __orbitSpeed?: number;
   __orbitAngle?: number;
@@ -53,6 +68,7 @@ export function createDebris(props: DebrisProps): ExtendedDebris {
   const container = new Container() as ExtendedDebris;
   container.__taskId = props.taskId;
   container.__status = props.status;
+  container.__role = props.role ?? null;
   container.__orbitDistance = props.orbitDistance;
   container.__orbitSpeed = props.orbitSpeed;
   container.__orbitAngle = Math.random() * Math.PI * 2;
@@ -86,6 +102,13 @@ export function createDebris(props: DebrisProps): ExtendedDebris {
 
   container.__gfx = g;
   container.addChild(g);
+
+  if (props.role) {
+    const glow = new Graphics();
+    glow.circle(0, 0, props.size + 2);
+    glow.stroke({ width: 1, color: roleGlowColor(props.role), alpha: 0.25 });
+    container.addChild(glow);
+  }
 
   return container;
 }

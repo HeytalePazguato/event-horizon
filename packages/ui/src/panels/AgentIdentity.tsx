@@ -16,6 +16,11 @@ const stateColors: Record<string, string> = {
   error: '#c65858',
 };
 
+const roleColors: Record<string, string> = {
+  researcher: '#66ccff', planner: '#ffaa33', implementer: '#88ff88',
+  reviewer: '#cc88ff', tester: '#ffcc00', debugger: '#ff6666',
+};
+
 // SVG planet icons keyed by agentType — each structurally distinct
 export function PlanetIcon({ type, size = 52 }: { type: string; size?: number }) {
   const r = size / 2;
@@ -157,7 +162,7 @@ export function SingularityIcon({ size = 52 }: { size?: number }) {
   );
 }
 
-export const AgentIdentity: FC = () => {
+export const AgentIdentity: FC<{ role?: string | null }> = ({ role }) => {
   const selectedAgent = useCommandCenterStore((s) => s.selectedAgent);
   const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
 
@@ -200,6 +205,23 @@ export const AgentIdentity: FC = () => {
             <span style={{ fontSize: 8, color: '#5a7a6a', marginTop: 1, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {folderName(selectedAgent.cwd)}
             </span>
+          )}
+          {role && (
+            <div style={{
+              display: 'inline-block',
+              fontSize: 8,
+              fontFamily: 'monospace',
+              textTransform: 'uppercase',
+              letterSpacing: 0.5,
+              color: roleColors[role] ?? '#aaccff',
+              background: `${roleColors[role] ?? '#aaccff'}15`,
+              border: `1px solid ${roleColors[role] ?? '#aaccff'}40`,
+              borderRadius: 2,
+              padding: '1px 4px',
+              marginTop: 2,
+            }}>
+              ROLE: {role}
+            </div>
           )}
         </>
       )}
