@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [1.1.0] — 2026-04-02
+## [1.1.0] — 2026-04-03
 
 ### Added
 - **Agent roles system**: 6 built-in roles (researcher, planner, implementer, reviewer, tester, debugger) with customizable skill mappings and instructions. Agents receive role context automatically when claiming tasks. Users can define custom roles via `eventHorizon.roles.custom` setting

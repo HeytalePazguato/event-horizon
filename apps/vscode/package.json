@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Real-time visual monitoring for Claude Code, OpenCode & Copilot — see agent activity, file collisions, token costs, and cooperation at a glance.",
