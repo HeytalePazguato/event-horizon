@@ -207,7 +207,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               </div>
             )}
             {activeTab === 'skills' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />
               </div>
             )}
@@ -215,12 +215,12 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <PlanPanel plan={plan ?? { loaded: false }} />
             )}
             {activeTab === 'roles' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} agents={agents.map((a) => ({ id: a.id, name: a.name, type: a.agentType }))} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
               </div>
             )}
             {activeTab === 'knowledge' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 <KnowledgePanel workspace={knowledgeWorkspace} plan={knowledgePlan} planName={knowledgePlanName} onAdd={onKnowledgeAdd ?? (() => {})} onEdit={onKnowledgeEdit ?? (() => {})} onDelete={onKnowledgeDelete ?? (() => {})} />
               </div>
             )}
