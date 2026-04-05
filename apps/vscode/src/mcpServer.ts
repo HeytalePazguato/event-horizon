@@ -6,12 +6,13 @@
  * Mounted at POST /mcp on the existing event server.
  */
 
-import type { AgentStateManager } from '@event-horizon/core';
+import type { AgentStateManager, AgentMetrics } from '@event-horizon/core';
 import type { LockManager } from './lockManager.js';
 import type { PlanBoardManager } from './planBoard.js';
 import type { MessageQueue } from './messageQueue.js';
 import type { RoleManager } from './roleManager.js';
 import type { AgentProfiler } from './agentProfiler.js';
+import type { SharedKnowledgeStore } from './sharedKnowledge.js';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -153,16 +154,17 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_claim_task',
-    description: 'Atomically claim an unclaimed task. Fails if already claimed or blocked by dependencies.',
+    description: 'Atomically claim a task. If task_id is omitted or empty, auto-selects the best available task using the recommendation algorithm (requires agent_type).',
     inputSchema: {
       type: 'object',
       properties: {
-        task_id: { type: 'string', description: 'Task ID from the plan' },
+        task_id: { type: 'string', description: 'Task ID from the plan (optional — omit to auto-select the best task)' },
         agent_id: { type: 'string', description: 'Your agent/session ID' },
         agent_name: { type: 'string', description: 'Human-readable agent name' },
+        agent_type: { type: 'string', description: 'Your agent type (claude-code, opencode, copilot). Required when task_id is omitted for auto-selection.' },
         plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
       },
-      required: ['task_id', 'agent_id'],
+      required: ['agent_id'],
     },
   },
   {
@@ -280,6 +282,91 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id', 'role_id'],
     },
   },
+
+  // ── Phase 1: Retry, recommendations, shared knowledge ─────────────────────
+
+  {
+    name: 'eh_retry_task',
+    description: 'Retry a failed task: resets it to pending, increments retry count, and un-cascades any dependents that were failed due to this task.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        task_id: { type: 'string', description: 'ID of the failed task to retry' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id', 'task_id'],
+    },
+  },
+  {
+    name: 'eh_recommend_task',
+    description: 'Get the best available task for you to work on, scored by role match, historical performance, current load, and dependency priority.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        agent_name: { type: 'string', description: 'Your display name' },
+        agent_type: { type: 'string', description: 'Your agent type (claude-code, opencode, copilot, etc.)' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id', 'agent_type'],
+    },
+  },
+  {
+    name: 'eh_write_shared',
+    description: 'Write a knowledge entry to the shared store. All agents can read all entries. Use workspace scope for persistent facts (tech stack, conventions), plan scope for task-specific findings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        agent_name: { type: 'string', description: 'Your display name' },
+        key: { type: 'string', description: 'Knowledge key (e.g. "auth-findings", "tech-stack")' },
+        value: { type: 'string', description: 'Knowledge value' },
+        scope: { type: 'string', enum: ['workspace', 'plan'], description: 'Scope: workspace (persistent) or plan (scoped to active plan). Defaults to plan.' },
+        plan_id: { type: 'string', description: 'Plan ID for plan-scoped entries (optional, defaults to active plan)' },
+      },
+      required: ['agent_id', 'key', 'value'],
+    },
+  },
+  {
+    name: 'eh_read_shared',
+    description: 'Read shared knowledge entries. Returns merged workspace + active plan entries. Optionally filter by key.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        key: { type: 'string', description: 'Specific key to read (optional, omit for all entries)' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_get_shared_summary',
+    description: 'Get a markdown digest of all shared knowledge, grouped by scope (workspace vs plan) and author. Designed to be injected into agent context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_delete_shared',
+    description: 'Delete a shared knowledge entry. Agents can only delete their own entries.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        key: { type: 'string', description: 'Knowledge key to delete' },
+        scope: { type: 'string', enum: ['workspace', 'plan'], description: 'Scope of the entry to delete' },
+        plan_id: { type: 'string', description: 'Plan ID for plan-scoped entries (optional)' },
+      },
+      required: ['agent_id', 'key', 'scope'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -327,6 +414,8 @@ export interface McpServerDeps {
   messageQueue: MessageQueue;
   roleManager: RoleManager;
   agentProfiler: AgentProfiler;
+  sharedKnowledge: SharedKnowledgeStore;
+  getMetrics?: (agentId: string) => AgentMetrics | undefined;
 }
 
 export class McpServer {
@@ -550,10 +639,101 @@ export class McpServer {
       }
 
       case 'eh_claim_task': {
-        const taskId = args.task_id as string;
+        let taskId = args.task_id as string | undefined;
         const agentId = args.agent_id as string;
         const agentName = (args.agent_name as string) ?? agentId;
+        const agentType = args.agent_type as string | undefined;
         const planId = args.plan_id as string | undefined;
+
+        // Auto-select best task when task_id is empty/missing
+        if (!taskId || taskId.trim() === '') {
+          if (!agentType) {
+            throw new Error('agent_type is required when task_id is omitted (for auto-selection)');
+          }
+
+          const plan = planBoardManager.getPlan(planId);
+          if (!plan) {
+            return { claimed: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+          }
+
+          const { roleManager: rm, agentProfiler: ap } = this.deps;
+          const getMetrics = this.deps.getMetrics;
+
+          const available = plan.tasks.filter((t) =>
+            t.status === 'pending' && (!t.assignee || t.assignee === agentId),
+          );
+
+          if (available.length === 0) {
+            return { claimed: false, error: 'No available tasks to claim' };
+          }
+
+          // Score each task (same algorithm as eh_recommend_task)
+          const scored = available.map((task) => {
+            let score = 0;
+            const reasons: string[] = [];
+
+            if (task.role) {
+              const role = rm.getRole(task.role);
+              const assignments = rm.getAllAssignments();
+              const assignedType = assignments.find((a) => a.roleId === task.role)?.agentType;
+              if (assignedType === agentType) {
+                score += 40;
+                reasons.push(`Role match: ${task.role}`);
+              } else if (role) {
+                const taskWords = `${task.title} ${task.description}`.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+                const roleWords = `${role.name} ${role.description}`.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+                const overlap = taskWords.filter((w) => roleWords.includes(w)).length;
+                const kwScore = Math.min(overlap * 10, 40);
+                score += kwScore;
+                if (kwScore > 0) reasons.push(`Keyword match: ${kwScore}%`);
+              }
+            }
+
+            const profile = ap.getProfile(agentType);
+            const byRole = profile?.byRole as Record<string, { successRate?: number }> | undefined;
+            if (byRole && task.role && byRole[task.role]) {
+              const roleStats = byRole[task.role];
+              const successScore = (roleStats.successRate ?? 0) * 30;
+              score += successScore;
+              if (successScore > 0) reasons.push(`Success rate: ${Math.round((roleStats.successRate ?? 0) * 100)}%`);
+            }
+
+            if (getMetrics) {
+              const metrics = getMetrics(agentId);
+              if (metrics) {
+                const loadScore = (1 - metrics.load) * 20;
+                score += loadScore;
+              }
+            }
+
+            const dependentCount = plan.tasks.filter((t) => t.blockedBy.includes(task.id)).length;
+            const depScore = Math.min(dependentCount * 5, 10);
+            score += depScore;
+            if (depScore > 0) reasons.push(`Blocks ${dependentCount} tasks`);
+
+            return { task, score, reasons };
+          });
+
+          scored.sort((a, b) => b.score - a.score);
+          const best = scored[0];
+          taskId = best.task.id;
+
+          const claimResult = planBoardManager.claimTask(taskId, agentId, agentName, planId);
+          if (!claimResult.success) {
+            return { claimed: false, error: claimResult.error, plan_id: claimResult.planId, task: claimResult.task ? { id: claimResult.task.id, status: claimResult.task.status, assignee: claimResult.task.assigneeName } : undefined };
+          }
+          return {
+            claimed: true,
+            auto_selected: true,
+            plan_id: claimResult.planId,
+            task: { id: claimResult.task!.id, title: claimResult.task!.title, status: claimResult.task!.status },
+            recommendation: {
+              score: Math.round(best.score),
+              reasons: best.reasons,
+            },
+          };
+        }
+
         const result = planBoardManager.claimTask(taskId, agentId, agentName, planId);
         if (!result.success) {
           return { claimed: false, error: result.error, plan_id: result.planId, task: result.task ? { id: result.task.id, status: result.task.status, assignee: result.task.assigneeName } : undefined };
@@ -662,6 +842,161 @@ export class McpServer {
         const roleId = args.role_id as string;
         const { agentProfiler } = this.deps;
         return { recommendations: agentProfiler.recommendForRole(roleId) };
+      }
+
+      // ── Phase 1: Retry, recommendations, shared knowledge ──────────────────
+
+      case 'eh_retry_task': {
+        const taskId = args.task_id as string;
+        const planId = args.plan_id as string | undefined;
+        const result = planBoardManager.retryTask(taskId, planId);
+        if (!result.success) {
+          return { retried: false, error: result.error };
+        }
+        return {
+          retried: true,
+          plan_id: result.planId,
+          task: { id: result.task!.id, title: result.task!.title, status: result.task!.status, retryCount: result.task!.retryCount },
+          uncascaded: result.uncascaded,
+          retryAfterMs: result.retryAfterMs,
+        };
+      }
+
+      case 'eh_recommend_task': {
+        const agentId = args.agent_id as string;
+        const agentType = args.agent_type as string;
+        const planId = args.plan_id as string | undefined;
+        const plan = planBoardManager.getPlan(planId);
+        if (!plan) {
+          return { recommendation: null, error: 'No plan loaded' };
+        }
+
+        const { roleManager: rm, agentProfiler: ap } = this.deps;
+        const getMetrics = this.deps.getMetrics;
+
+        // Find available tasks (pending or blocked-but-unblocked)
+        const available = plan.tasks.filter((t) =>
+          t.status === 'pending' && (!t.assignee || t.assignee === agentId),
+        );
+
+        if (available.length === 0) {
+          return { recommendation: null, message: 'No available tasks to claim' };
+        }
+
+        // Score each task
+        const scored = available.map((task) => {
+          let score = 0;
+          let reasons: string[] = [];
+
+          // 1. Role keyword match (40%)
+          if (task.role) {
+            const role = rm.getRole(task.role);
+            const assignments = rm.getAllAssignments();
+            const assignedType = assignments.find((a) => a.roleId === task.role)?.agentType;
+            if (assignedType === agentType) {
+              score += 40;
+              reasons.push(`Role match: ${task.role}`);
+            } else if (role) {
+              // Keyword matching: check if task title/desc overlaps with role description
+              const taskWords = `${task.title} ${task.description}`.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+              const roleWords = `${role.name} ${role.description}`.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+              const overlap = taskWords.filter((w) => roleWords.includes(w)).length;
+              const kwScore = Math.min(overlap * 10, 40);
+              score += kwScore;
+              if (kwScore > 0) reasons.push(`Keyword match: ${kwScore}%`);
+            }
+          }
+
+          // 2. Profiler success rate (30%)
+          const profile = ap.getProfile(agentType);
+          const byRole = profile?.byRole as Record<string, { successRate?: number }> | undefined;
+          if (byRole && task.role && byRole[task.role]) {
+            const roleStats = byRole[task.role];
+            const successScore = (roleStats.successRate ?? 0) * 30;
+            score += successScore;
+            if (successScore > 0) reasons.push(`Success rate: ${Math.round((roleStats.successRate ?? 0) * 100)}%`);
+          }
+
+          // 3. Load preference (20% — prefer less busy agents)
+          if (getMetrics) {
+            const metrics = getMetrics(agentId);
+            if (metrics) {
+              const loadScore = (1 - metrics.load) * 20;
+              score += loadScore;
+            }
+          }
+
+          // 4. Dependency priority (10% — tasks blocking more downstream work)
+          const dependentCount = plan.tasks.filter((t) => t.blockedBy.includes(task.id)).length;
+          const depScore = Math.min(dependentCount * 5, 10);
+          score += depScore;
+          if (depScore > 0) reasons.push(`Blocks ${dependentCount} tasks`);
+
+          return { task, score, reasons };
+        });
+
+        scored.sort((a, b) => b.score - a.score);
+        const best = scored[0];
+
+        return {
+          recommendation: {
+            task_id: best.task.id,
+            title: best.task.title,
+            role: best.task.role,
+            score: Math.round(best.score),
+            reasons: best.reasons,
+          },
+          alternatives: scored.slice(1, 4).map((s) => ({
+            task_id: s.task.id,
+            title: s.task.title,
+            score: Math.round(s.score),
+          })),
+        };
+      }
+
+      case 'eh_write_shared': {
+        const { sharedKnowledge } = this.deps;
+        const agentId = args.agent_id as string;
+        const agentName = (args.agent_name as string) ?? agentId;
+        const key = args.key as string;
+        const value = args.value as string;
+        const scope = (args.scope as 'workspace' | 'plan') ?? 'plan';
+        const planId = args.plan_id as string | undefined;
+        const entry = sharedKnowledge.write(key, value, scope, agentName, agentId, planId);
+        return { written: true, key: entry.key, scope: entry.scope, author: entry.author };
+      }
+
+      case 'eh_read_shared': {
+        const { sharedKnowledge } = this.deps;
+        const key = args.key as string | undefined;
+        const planId = args.plan_id as string | undefined;
+        const entries = sharedKnowledge.read(key, planId);
+        return {
+          entries: entries.map((e) => ({
+            key: e.key,
+            value: e.value,
+            scope: e.scope,
+            author: e.author,
+            updatedAt: e.updatedAt,
+          })),
+          count: entries.length,
+        };
+      }
+
+      case 'eh_get_shared_summary': {
+        const { sharedKnowledge } = this.deps;
+        const planId = args.plan_id as string | undefined;
+        return { summary: sharedKnowledge.getSummary(planId) };
+      }
+
+      case 'eh_delete_shared': {
+        const { sharedKnowledge } = this.deps;
+        const agentId = args.agent_id as string;
+        const key = args.key as string;
+        const scope = args.scope as 'workspace' | 'plan';
+        const planId = args.plan_id as string | undefined;
+        const deleted = sharedKnowledge.delete(key, scope, agentId, planId);
+        return { deleted, key, scope };
       }
 
       default:

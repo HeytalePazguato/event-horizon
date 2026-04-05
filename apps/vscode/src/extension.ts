@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -99,7 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const agentStateManager = new AgentStateManager();
 
   // Initialize MCP server with runtime dependencies
-  initMcpServer({ agentStateManager });
+  initMcpServer({ agentStateManager, metricsEngine });
 
   // Restore plans from globalState (survives window reload)
   // Migration: old single-plan 'planBoard' → new multi-plan 'planBoards'
@@ -124,6 +124,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
   if (savedProfiles) agentProfiler.restore(savedProfiles);
 
+  // Restore shared knowledge from globalState
+  const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
+  if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
+
+  // Persist shared knowledge on change
+  sharedKnowledge.onChange(() => {
+    void context.globalState.update('sharedKnowledge', sharedKnowledge.serializeWorkspace());
+    // Broadcast knowledge to webview
+    const entries = sharedKnowledge.getAllEntries();
+    webviewRef.current?.postMessage({ type: 'knowledge-update', workspace: entries.workspace, plan: entries.plan });
+  });
+
   /** Serialize a PlanBoard to the webview plan-update format. */
   function planToView(board: PlanBoard) {
     return {
@@ -142,6 +154,8 @@ export function activate(context: vscode.ExtensionContext): void {
         blockedBy: t.blockedBy,
         notes: t.notes,
         role: t.role,
+        retryCount: t.retryCount ?? 0,
+        failedReason: t.failedReason ?? null,
       })),
     };
   }

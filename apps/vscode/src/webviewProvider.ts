@@ -11,7 +11,7 @@ import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHo
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge } from './eventServer.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -530,6 +530,12 @@ function wireUniverseWebview(
       } catch { /* ignore invalid role edit */ }
     } else if (msg?.type === 'delete-role') {
       roleManager.removeCustomRole(msg.roleId as string);
+    } else if (msg?.type === 'knowledge-add') {
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+    } else if (msg?.type === 'knowledge-edit') {
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+    } else if (msg?.type === 'knowledge-delete') {
+      sharedKnowledge.delete(msg.key as string, msg.scope as 'workspace' | 'plan', 'user');
     }
   });
 }

@@ -162,7 +162,13 @@ export function SingularityIcon({ size = 52 }: { size?: number }) {
   );
 }
 
-export const AgentIdentity: FC<{ role?: string | null }> = ({ role }) => {
+export interface AgentIdentityProps {
+  role?: string | null;
+  knowledgeCount?: { workspace: number; plan: number };
+  recentKnowledge?: Array<{ key: string; value: string; scope: string }>;
+}
+
+export const AgentIdentity: FC<AgentIdentityProps> = ({ role, knowledgeCount, recentKnowledge }) => {
   const selectedAgent = useCommandCenterStore((s) => s.selectedAgent);
   const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
 
@@ -221,6 +227,19 @@ export const AgentIdentity: FC<{ role?: string | null }> = ({ role }) => {
               marginTop: 2,
             }}>
               ROLE: {role}
+            </div>
+          )}
+          {/* Knowledge mini-section */}
+          {knowledgeCount && (knowledgeCount.workspace > 0 || knowledgeCount.plan > 0) && (
+            <div style={{ marginTop: 4, width: '100%', borderTop: '1px solid #1a3020', paddingTop: 3 }}>
+              <div style={{ fontSize: 7, color: '#4a6a58', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'center', marginBottom: 2 }}>
+                Knowledge: {knowledgeCount.workspace}W / {knowledgeCount.plan}P
+              </div>
+              {recentKnowledge && recentKnowledge.slice(0, 3).map((k, i) => (
+                <div key={i} style={{ fontSize: 7, color: '#5a7a6a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', lineHeight: 1.3 }}>
+                  <span style={{ color: '#6a9a78' }}>{k.key}:</span> {k.value.length > 80 ? k.value.slice(0, 80) + '...' : k.value}
+                </div>
+              ))}
             </div>
           )}
         </>

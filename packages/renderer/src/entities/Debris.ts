@@ -59,6 +59,8 @@ export type ExtendedDebris = Container & {
   __gfx?: Graphics;
   __baseAlpha?: number;
   __flashPhase?: number;
+  __retryCount?: number;
+  __failedReason?: string | null;
 };
 
 const MIN_SIZE = 2;

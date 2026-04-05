@@ -20,6 +20,7 @@ export interface UniverseSlice {
   boostedAgentIds: Record<string, boolean>;
   exportRequestedAt: number;
   screenshotRequestedAt: number;
+  tellAllRequestedAt: number;
   demoRequested: boolean;
   demoMode: boolean;
   demoStartedAt: number;
@@ -33,6 +34,7 @@ export interface UniverseSlice {
   requestResetLayout: () => void;
   requestExport: () => void;
   requestScreenshot: () => void;
+  requestTellAll: () => void;
   togglePause: (id: string) => void;
   toggleIsolate: (id: string) => void;
   triggerBoost: (id: string) => void;
@@ -65,6 +67,7 @@ export function createUniverseSlice(set: SetFn, get: GetFn): UniverseSlice {
     boostedAgentIds: {},
     exportRequestedAt: 0,
     screenshotRequestedAt: 0,
+    tellAllRequestedAt: 0,
     demoRequested: false,
     demoMode: false,
     demoStartedAt: 0,
@@ -93,6 +96,7 @@ export function createUniverseSlice(set: SetFn, get: GetFn): UniverseSlice {
     requestResetLayout: () => set(() => ({ resetLayoutRequestedAt: Date.now() })),
     requestExport: () => set(() => ({ exportRequestedAt: Date.now() })),
     requestScreenshot: () => set(() => ({ screenshotRequestedAt: Date.now() })),
+    requestTellAll: () => set(() => ({ tellAllRequestedAt: Date.now() })),
     togglePause: (id) => set((s) => ({ pausedAgentIds: { ...s.pausedAgentIds, [id]: !s.pausedAgentIds[id] } })),
     toggleIsolate: (id) => set((s) => ({ isolatedAgentId: s.isolatedAgentId === id ? null : id })),
     triggerBoost: (id) => {

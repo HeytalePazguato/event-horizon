@@ -22,6 +22,9 @@ export interface PlanTaskView {
   role?: string | null;
   blockedBy: string[];
   notes: Array<{ agentId: string; agentName: string; text: string; ts: number }>;
+  retryCount?: number;
+  failedReason?: string | null;
+  recommendedFor?: string;
 }
 
 export interface PlanView {
@@ -311,21 +314,67 @@ const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
         </div>
       )}
 
-      {/* Status badge */}
-      <div style={{
-        display: 'inline-block',
-        marginTop: sizes.spacing.xs,
-        padding: '1px 5px',
-        fontSize: 8,
-        fontWeight: 600,
-        letterSpacing: '0.08em',
-        color: statusCol,
-        border: `1px solid ${statusCol}`,
-        borderRadius: 2,
-        opacity: 0.8,
-      }}>
-        {taskStatusLabel(task.status)}
+      {/* Status badge + retry badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: sizes.spacing.xs }}>
+        <div style={{
+          display: 'inline-block',
+          padding: '1px 5px',
+          fontSize: 8,
+          fontWeight: 600,
+          letterSpacing: '0.08em',
+          color: statusCol,
+          border: `1px solid ${statusCol}`,
+          borderRadius: 2,
+          opacity: 0.8,
+        }}>
+          {taskStatusLabel(task.status)}
+        </div>
+        {(task.retryCount ?? 0) > 0 && (
+          <div style={{
+            display: 'inline-block',
+            padding: '1px 5px',
+            fontSize: 8,
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            color: '#ff8844',
+            border: '1px solid #ff8844',
+            borderRadius: 2,
+            opacity: 0.8,
+          }}>
+            RETRY x{task.retryCount}
+          </div>
+        )}
       </div>
+
+      {/* Recommended-for badge */}
+      {task.status === 'pending' && task.recommendedFor && (
+        <div style={{
+          display: 'inline-block',
+          padding: '1px 5px',
+          fontSize: 8,
+          fontWeight: 600,
+          letterSpacing: '0.06em',
+          color: '#4a8a68',
+          border: '1px dotted #4a8a68',
+          borderRadius: 2,
+          marginTop: 2,
+          opacity: 0.85,
+        }}>
+          REC: {task.recommendedFor}
+        </div>
+      )}
+
+      {/* Failed reason */}
+      {task.status === 'failed' && task.failedReason && (
+        <div style={{
+          fontSize: sizes.text.xs,
+          color: '#a04040',
+          marginTop: 2,
+          lineHeight: 1.3,
+        }}>
+          {task.failedReason}
+        </div>
+      )}
 
       {/* Notes */}
       {task.notes.length > 0 && (

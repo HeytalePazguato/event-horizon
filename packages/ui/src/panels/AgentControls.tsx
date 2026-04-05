@@ -89,6 +89,13 @@ const IconScreenshot: FC = () => (
   </svg>
 );
 
+const IconTellAll: FC = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <path d="M1 3l6 4 6-4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="1" y="3" width="12" height="8" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" />
+  </svg>
+);
+
 const IconResetLayout: FC = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
     <path d="M3 7a4 4 0 0 1 7.5-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -137,7 +144,7 @@ const GRID: Array<CmdBtn | null> = [
   { id: 'spawn',   label: 'Spawn',   desc: 'Open a terminal with an agent CLI.',    icon: IconSpawn,    alwaysActive: true },
   { id: 'export',  label: 'Export',  desc: 'Export session stats as JSON.',          icon: IconExport,      alwaysActive: true },
   { id: 'screenshot', label: 'Screenshot', desc: 'Save the universe as an image.', icon: IconScreenshot,  alwaysActive: true },
-  null,
+  { id: 'tellAll', label: 'Tell All', desc: 'Broadcast a message to all agents.', icon: IconTellAll, alwaysActive: true },
   // Row 3 — meta/utility (bottom-right)
   { id: 'marketplace', label: 'Marketplace', desc: 'Browse skill marketplaces.', icon: IconMarketplace, alwaysActive: true },
   { id: 'resetLayout', label: 'Reset Layout', desc: 'Reset planets to auto-layout.', icon: IconResetLayout, alwaysActive: true },
@@ -254,6 +261,7 @@ export const AgentControls: FC = () => {
     requestScreenshot,
     toggleMarketplace,
     marketplaceOpen,
+    requestTellAll,
     requestResetLayout,
   } = useCommandCenterStore(useShallow((s) => ({
     selectedAgentId: s.selectedAgentId,
@@ -274,6 +282,7 @@ export const AgentControls: FC = () => {
     requestScreenshot: s.requestScreenshot,
     toggleMarketplace: s.toggleMarketplace,
     marketplaceOpen: s.marketplaceOpen,
+    requestTellAll: s.requestTellAll,
     requestResetLayout: s.requestResetLayout,
   })));
   const [hovered, setHovered] = useState<string | null>(null);
@@ -292,6 +301,7 @@ export const AgentControls: FC = () => {
     else if (id === 'screenshot') requestScreenshot();
     else if (id === 'marketplace') toggleMarketplace();
     else if (id === 'resetLayout') requestResetLayout();
+    else if (id === 'tellAll') requestTellAll();
   }
 
   function isActive(btn: CmdBtn): boolean {

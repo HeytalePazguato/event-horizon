@@ -2,6 +2,33 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.2.0] — 2026-04-04
+
+### Added
+- **Cascade failure system**: when a task fails, all transitive dependents are automatically marked as failed with root cause messages. Configurable per-plan via `onDependencyFailure: cascade | block | ignore` metadata
+- **Task retry with backoff**: new `eh_retry_task` MCP tool resets failed tasks to pending, increments retry count, and un-cascades dependents. Supports `maxRetries` per task
+- **Dependency cycle detection**: plans are validated for circular dependencies on load using DFS coloring — cycles reported with full path
+- **Task recommendations**: new `eh_recommend_task` MCP tool scores available tasks by role keyword match (40%), agent profiler success rate (30%), current load (20%), and dependency priority (10%)
+- **Shared Knowledge Store**: layered knowledge base with workspace scope (persistent) and plan scope (contextual). Both humans and agents can contribute. New MCP tools: `eh_write_shared`, `eh_read_shared`, `eh_get_shared_summary`, `eh_delete_shared`
+- **7 new Claude Code hook events**: `PermissionDenied`, `StopFailure`, `CwdChanged`, `FileChanged`, `TaskCreated`, `PostCompact`, `Elicitation`/`ElicitationResult` — enriched with payload data (token counts, denied tools, error messages, file paths)
+- **6 new MCP tools**: `eh_retry_task`, `eh_recommend_task`, `eh_write_shared`, `eh_read_shared`, `eh_get_shared_summary`, `eh_delete_shared` — total: 25 MCP tools
+
+### Improved
+- **Plan task model**: tasks now track `retryCount`, `maxRetries`, and `failedReason` for richer status reporting
+- **MCP server telemetry**: metrics engine now available to MCP tools for load-aware task recommendations
+- **Auto-claim with recommendation**: `eh_claim_task` with no task_id auto-selects the best task for the calling agent using the 4-factor scoring algorithm
+- **Retry badge on Kanban cards**: failed tasks with retries show orange "RETRY xN" badge
+- **Failed reason on Kanban cards**: failed tasks show their failure reason in dim red below the status badge
+- **Debris retry pulse**: retried tasks show alternating red/gold tint animation in Universe view
+- **Debris cascade visual**: cascade-failed debris shows distinct rapid dim-red pulse (darker than root failure)
+- **Knowledge Panel**: new Operations Dashboard tab with two collapsible sections (Workspace + Plan), inline add/edit/delete, relative timestamps, expandable values
+- **Knowledge webview integration**: user can add/edit/delete knowledge entries from UI; changes broadcast to all agents in real-time via postMessage
+- **Auto-retry per plan**: `<!-- maxAutoRetries: 2 -->` in plan metadata enables automatic retry of failed tasks up to N times before cascading failure
+- **Task recommendation badges**: pending Kanban cards show "REC: [agent-type]" teal badge when a role assignment matches the task's role
+- **Knowledge search/filter**: search input in Knowledge Panel filters entries by key, author, value, or exact scope match
+- **Knowledge in CommandCenter**: AgentIdentity panel shows knowledge counts (W/P) and 3 most recent entries when an agent is selected
+- **"Tell All" button**: new command in AgentControls grid — prompts for a message and broadcasts it as a workspace knowledge entry visible to all agents
+
 ## [1.1.0] — 2026-04-03
 
 ### Added

@@ -10,6 +10,7 @@ import { AgentStateManager } from '@event-horizon/core';
 import { MessageQueue } from '../messageQueue.js';
 import { RoleManager } from '../roleManager.js';
 import { AgentProfiler } from '../agentProfiler.js';
+import { SharedKnowledgeStore } from '../sharedKnowledge.js';
 
 // ── Markdown Parser ─────────────────────────────────────────────────────────
 
@@ -312,7 +313,7 @@ describe('Plan MCP tools', () => {
     const agentStateManager = new AgentStateManager();
     const fileActivityTracker = new FileActivityTracker();
     planBoardManager = new PlanBoardManager();
-    mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager, messageQueue: new MessageQueue(), roleManager: new RoleManager(), agentProfiler: new AgentProfiler() });
+    mcp = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager, messageQueue: new MessageQueue(), roleManager: new RoleManager(), agentProfiler: new AgentProfiler(), sharedKnowledge: new SharedKnowledgeStore() });
   });
 
   function rpc(method: string, params?: Record<string, unknown>, id: number | string = 1) {
@@ -336,7 +337,7 @@ describe('Plan MCP tools', () => {
     expect(names).toContain('eh_get_plan');
     expect(names).toContain('eh_claim_task');
     expect(names).toContain('eh_update_task');
-    expect(result.tools).toHaveLength(19); // 6 lock + 7 plan + 2 messaging + 4 roles
+    expect(result.tools).toHaveLength(25); // 6 lock + 7 plan + 2 messaging + 4 roles + 6 phase1 (retry, recommend, shared knowledge)
   });
 
   describe('eh_load_plan', () => {
@@ -398,10 +399,12 @@ describe('Plan MCP tools', () => {
       expect(parsed).toMatchObject({ claimed: false });
     });
 
-    it('validates required params', async () => {
+    it('requires agent_type when task_id is omitted (auto-select)', async () => {
+      await callTool('eh_load_plan', { agent_id: 'a1', content: planMarkdown });
       const res = await callTool('eh_claim_task', { agent_id: 'a1' });
       expect(res.error).toBeDefined();
-      expect(res.error!.code).toBe(-32602);
+      expect(res.error!.code).toBe(-32000);
+      expect(res.error!.message).toContain('agent_type');
     });
   });
 

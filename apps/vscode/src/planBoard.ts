@@ -17,6 +17,8 @@ export interface TaskNote {
 export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked';
 export type PlanStatus = 'active' | 'completed' | 'archived';
 
+export type DependencyFailurePolicy = 'cascade' | 'block' | 'ignore';
+
 export interface PlanTask {
   id: string;
   title: string;
@@ -29,6 +31,9 @@ export interface PlanTask {
   blockedBy: string[];
   role: string | null;
   notes: TaskNote[];
+  retryCount: number;
+  maxRetries: number;
+  failedReason: string | null;
 }
 
 export interface PlanBoard {
@@ -39,6 +44,8 @@ export interface PlanBoard {
   tasks: PlanTask[];
   createdAt: number;
   lastUpdatedAt: number;
+  onDependencyFailure: DependencyFailurePolicy;
+  maxAutoRetries: number;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -55,12 +62,26 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
   const lines = markdown.split(/\r?\n/);
   const tasks: PlanTask[] = [];
   let planName = 'Untitled Plan';
+  let onDependencyFailure: DependencyFailurePolicy = 'cascade';
+  let maxAutoRetries = 0;
 
   for (const line of lines) {
     const h1Match = line.match(/^#\s+(.+)/);
     if (h1Match) {
       planName = h1Match[1].trim();
       break;
+    }
+  }
+
+  // Parse plan metadata from HTML comments: <!-- onDependencyFailure: cascade --> <!-- maxAutoRetries: 2 -->
+  for (const line of lines) {
+    const policyMatch = line.match(/onDependencyFailure:\s*(cascade|block|ignore)/i);
+    if (policyMatch) {
+      onDependencyFailure = policyMatch[1].toLowerCase() as DependencyFailurePolicy;
+    }
+    const retryMatch = line.match(/maxAutoRetries:\s*(\d+)/i);
+    if (retryMatch) {
+      maxAutoRetries = parseInt(retryMatch[1], 10);
     }
   }
 
@@ -140,6 +161,9 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
       blockedBy,
       role,
       notes: [],
+      retryCount: 0,
+      maxRetries: 0,
+      failedReason: null,
     });
   }
 
@@ -154,6 +178,8 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
     tasks,
     createdAt: now,
     lastUpdatedAt: now,
+    onDependencyFailure,
+    maxAutoRetries,
   };
 }
 
@@ -311,6 +337,22 @@ export class PlanBoardManager {
       if (status === 'done') {
         this.unblockDependents(board, taskId);
         this.checkAutoComplete(board);
+      } else if (status === 'failed') {
+        if (note) {
+          task.failedReason = note;
+        }
+        // Auto-retry: if the plan has maxAutoRetries configured and the task hasn't exceeded it
+        if (board.maxAutoRetries > 0 && task.retryCount < board.maxAutoRetries) {
+          // Don't cascade — schedule an auto-retry instead
+          if (note) {
+            task.notes.push({ agentId, agentName: agentName ?? agentId, text: note, ts: Date.now() });
+          }
+          board.lastUpdatedAt = Date.now();
+          this.notifyChange(board.id);
+          this.retryTask(taskId, board.id);
+          return { success: true, task, planId: board.id };
+        }
+        this.cascadeFailure(board, taskId);
       }
       for (const fn of this.taskCompleteListeners) fn(task, board.id);
     }
@@ -381,6 +423,159 @@ export class PlanBoardManager {
     if (allDone) {
       board.status = 'completed';
     }
+  }
+
+  /**
+   * Cascade failure: when a task fails, recursively mark all transitive dependents as failed.
+   * Respects the plan's onDependencyFailure policy.
+   */
+  private cascadeFailure(board: PlanBoard, failedTaskId: string): string[] {
+    if (board.onDependencyFailure !== 'cascade') return [];
+
+    const cascaded: string[] = [];
+    const queue = [failedTaskId];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      for (const task of board.tasks) {
+        if (task.status === 'done' || task.status === 'failed') continue;
+        if (!task.blockedBy.includes(currentId)) continue;
+        task.status = 'failed';
+        task.completedAt = Date.now();
+        task.failedReason = `Cascade: dependency '${currentId}' failed`;
+        cascaded.push(task.id);
+        queue.push(task.id);
+      }
+    }
+
+    return cascaded;
+  }
+
+  /**
+   * Un-cascade: when a root task is retried, reset all cascade-failed dependents back to blocked.
+   */
+  private uncascade(board: PlanBoard, retriedTaskId: string): string[] {
+    const uncascaded: string[] = [];
+    const queue = [retriedTaskId];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      for (const task of board.tasks) {
+        if (task.status !== 'failed') continue;
+        if (!task.failedReason?.includes(`'${currentId}'`)) continue;
+        task.status = 'blocked';
+        task.completedAt = null;
+        task.failedReason = null;
+        uncascaded.push(task.id);
+        queue.push(task.id);
+      }
+    }
+
+    return uncascaded;
+  }
+
+  /**
+   * Retry a failed task: reset it to pending, increment retry count,
+   * and un-cascade any dependents that were failed due to this task.
+   */
+  retryTask(
+    taskId: string,
+    planId?: string,
+  ): { success: boolean; error?: string; task?: PlanTask; uncascaded?: string[]; planId?: string; retryAfterMs?: number } {
+    const board = this.resolvePlan(planId);
+    if (!board) {
+      return { success: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+    }
+
+    const task = board.tasks.find((t) => t.id === taskId);
+    if (!task) {
+      return { success: false, error: `Task not found: ${taskId}` };
+    }
+
+    if (task.status !== 'failed') {
+      return { success: false, error: `Task is not failed (status: ${task.status})` };
+    }
+
+    if (task.maxRetries > 0 && task.retryCount >= task.maxRetries) {
+      return { success: false, error: `Max retries (${task.maxRetries}) exceeded` };
+    }
+
+    task.retryCount++;
+    task.status = 'pending';
+    task.assignee = null;
+    task.assigneeName = null;
+    task.claimedAt = null;
+    task.completedAt = null;
+    task.failedReason = null;
+
+    // Re-check if this task should be blocked (its own deps may not be done)
+    const allDepsComplete = task.blockedBy.every((dep) => {
+      const depTask = board.tasks.find((t) => t.id === dep);
+      return depTask?.status === 'done';
+    });
+    if (!allDepsComplete && task.blockedBy.length > 0) {
+      task.status = 'blocked';
+    }
+
+    // Un-cascade: reset dependents that were cascade-failed
+    const uncascaded = this.uncascade(board, taskId);
+
+    // Plan may have been completed — re-activate
+    if (board.status === 'completed') {
+      board.status = 'active';
+    }
+
+    board.lastUpdatedAt = Date.now();
+    this.notifyChange(board.id);
+    const retryAfterMs = Math.min(1000 * Math.pow(2, task.retryCount - 1), 30000);
+    return { success: true, task, uncascaded, planId: board.id, retryAfterMs };
+  }
+
+  /**
+   * Validate task dependencies: detect cycles using DFS coloring.
+   * Returns array of cycle descriptions, empty if no cycles.
+   */
+  validateDependencies(planId?: string): string[] {
+    const board = this.resolvePlan(planId);
+    if (!board) return [];
+
+    const WHITE = 0, GRAY = 1, BLACK = 2;
+    const color = new Map<string, number>();
+    const cycles: string[] = [];
+
+    for (const task of board.tasks) {
+      color.set(task.id, WHITE);
+    }
+
+    const taskById = new Map(board.tasks.map((t) => [t.id, t]));
+
+    function dfs(taskId: string, path: string[]): void {
+      color.set(taskId, GRAY);
+      path.push(taskId);
+
+      const task = taskById.get(taskId);
+      if (task) {
+        for (const dep of task.blockedBy) {
+          if (color.get(dep) === GRAY) {
+            const cycleStart = path.indexOf(dep);
+            cycles.push(`Cycle: ${path.slice(cycleStart).join(' → ')} → ${dep}`);
+          } else if (color.get(dep) === WHITE) {
+            dfs(dep, path);
+          }
+        }
+      }
+
+      path.pop();
+      color.set(taskId, BLACK);
+    }
+
+    for (const task of board.tasks) {
+      if (color.get(task.id) === WHITE) {
+        dfs(task.id, []);
+      }
+    }
+
+    return cycles;
   }
 
   /** Get source file and task statuses for a specific plan (for checkbox sync). */

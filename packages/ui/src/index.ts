@@ -16,5 +16,7 @@ export { GuidedTour, restartTour } from './GuidedTour.js';
 export { OperationsView } from './OperationsView.js';
 export type { PlanView, PlanTaskView, PlanTaskStatus, PlanSummary } from './panels/PlanPanel.js';
 export { taskStatusColor } from './panels/PlanPanel.js';
+export { KnowledgePanel } from './panels/KnowledgePanel.js';
+export type { KnowledgeEntry, KnowledgePanelProps } from './panels/KnowledgePanel.js';
 export { AchievementToasts, AchievementsBar, ACHIEVEMENTS, TIER_LABELS, tierBorderColor, getMedal } from './achievements/index.js';
 export type { Achievement } from './achievements/index.js';

@@ -18,8 +18,10 @@ import { SkillsPanel } from './panels/SkillsPanel.js';
 import { PlanPanel } from './panels/PlanPanel.js';
 import type { PlanView, PlanSummary } from './panels/PlanPanel.js';
 import { RolesPanel } from './panels/RolesPanel.js';
+import { KnowledgePanel } from './panels/KnowledgePanel.js';
+import type { KnowledgeEntry } from './panels/KnowledgePanel.js';
 
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan' | 'roles';
+type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan' | 'roles' | 'knowledge';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -55,6 +57,12 @@ export interface OperationsViewProps {
   onCreateRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
   onEditRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
   onDeleteRole?: (roleId: string) => void;
+  knowledgeWorkspace?: KnowledgeEntry[];
+  knowledgePlan?: KnowledgeEntry[];
+  knowledgePlanName?: string;
+  onKnowledgeAdd?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onKnowledgeEdit?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onKnowledgeDelete?: (key: string, scope: 'workspace' | 'plan') => void;
 }
 
 const OPS_TOOLTIP_STYLE: React.CSSProperties = {
@@ -72,7 +80,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
@@ -142,6 +150,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             <button type="button" style={tabStyle(activeTab === 'roles')} onClick={() => setActiveTab('roles')}>
               Roles{roles && roles.length > 0 ? ` (${roles.length})` : ''}
             </button>
+            <button type="button" style={tabStyle(activeTab === 'knowledge')} onClick={() => setActiveTab('knowledge')}>
+              Knowledge{(knowledgeWorkspace.length + knowledgePlan.length) > 0 ? ` (${knowledgeWorkspace.length + knowledgePlan.length})` : ''}
+            </button>
 
             {/* Command buttons — right-aligned */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: '0 8px' }}>
@@ -206,6 +217,11 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             {activeTab === 'roles' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
                 <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
+              </div>
+            )}
+            {activeTab === 'knowledge' && (
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                <KnowledgePanel workspace={knowledgeWorkspace} plan={knowledgePlan} planName={knowledgePlanName} onAdd={onKnowledgeAdd ?? (() => {})} onEdit={onKnowledgeEdit ?? (() => {})} onDelete={onKnowledgeDelete ?? (() => {})} />
               </div>
             )}
           </div>

@@ -45,6 +45,8 @@ export interface WebviewMessageDeps {
   setRoles: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>>>;
   setRoleAssignments: React.Dispatch<React.SetStateAction<Array<{ roleId: string; agentType: string | null; agentId: string | null }>>>;
   setAgentProfiles: React.Dispatch<React.SetStateAction<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>>;
+  setKnowledgeWorkspace: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
+  setKnowledgePlan: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -143,6 +145,13 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.roles) depsRef.current.setRoles(data.roles);
         if (data.assignments) depsRef.current.setRoleAssignments(data.assignments);
         if (data.profiles) depsRef.current.setAgentProfiles(data.profiles);
+        return;
+      }
+      if (msg?.type === 'knowledge-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (data.workspace) depsRef.current.setKnowledgeWorkspace(data.workspace);
+        if (data.plan) depsRef.current.setKnowledgePlan(data.plan);
         return;
       }
       if (msg?.type === 'skills-update') {

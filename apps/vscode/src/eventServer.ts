@@ -43,6 +43,7 @@ import { PlanBoardManager } from './planBoard.js';
 import { MessageQueue } from './messageQueue.js';
 import { RoleManager } from './roleManager.js';
 import { AgentProfiler } from './agentProfiler.js';
+import { SharedKnowledgeStore } from './sharedKnowledge.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -50,12 +51,16 @@ export const planBoardManager = new PlanBoardManager();
 export const messageQueue = new MessageQueue();
 export const roleManager = new RoleManager();
 export const agentProfiler = new AgentProfiler();
+export const sharedKnowledge = new SharedKnowledgeStore();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
 
 /** Initialize the MCP server with runtime dependencies. Must be called after extension activates. */
-export function initMcpServer(deps: { agentStateManager: import('@event-horizon/core').AgentStateManager }): void {
+export function initMcpServer(deps: {
+  agentStateManager: import('@event-horizon/core').AgentStateManager;
+  metricsEngine?: import('@event-horizon/core').MetricsEngine;
+}): void {
   mcpServer = new McpServer({
     lockManager,
     agentStateManager: deps.agentStateManager,
@@ -64,6 +69,10 @@ export function initMcpServer(deps: { agentStateManager: import('@event-horizon/
     messageQueue,
     roleManager,
     agentProfiler,
+    sharedKnowledge,
+    getMetrics: deps.metricsEngine
+      ? (agentId: string) => deps.metricsEngine!.getMetrics(agentId) ?? undefined
+      : undefined,
   });
 }
 

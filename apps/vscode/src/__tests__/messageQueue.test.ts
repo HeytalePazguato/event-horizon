@@ -10,6 +10,7 @@ import { AgentStateManager } from '@event-horizon/core';
 import { PlanBoardManager } from '../planBoard.js';
 import { RoleManager } from '../roleManager.js';
 import { AgentProfiler } from '../agentProfiler.js';
+import { SharedKnowledgeStore } from '../sharedKnowledge.js';
 
 // ── MessageQueue unit tests ─────────────────────────────────────────────────
 
@@ -155,6 +156,7 @@ describe('Messaging MCP tools', () => {
       messageQueue: new MessageQueue(),
       roleManager: new RoleManager(),
       agentProfiler: new AgentProfiler(),
+      sharedKnowledge: new SharedKnowledgeStore(),
     });
   });
 

@@ -14,6 +14,8 @@ export interface PlanTaskDebris {
   status: DebrisStatus;
   assigneeId: string | null;
   role: string | null;
+  retryCount?: number;
+  failedReason?: string | null;
 }
 
 export interface DebrisPlan {
@@ -118,6 +120,10 @@ export function updateDebris(
     // Update status visuals if changed
     updateDebrisStatus(debris, task.status);
 
+    // Track retry count for animation
+    debris.__retryCount = task.retryCount ?? 0;
+    debris.__failedReason = task.failedReason ?? null;
+
     // Update parent agent assignment
     if (task.assigneeId && posMap.has(task.assigneeId)) {
       debris.__parentAgentId = task.assigneeId;
@@ -147,8 +153,19 @@ export function updateDebris(
       // Pulsing glow — breathing effect
       debris.alpha = 0.7 + 0.3 * Math.sin(tickTime * 3 + phase);
     } else if (task.status === 'failed') {
-      // Flash red
-      debris.alpha = 0.4 + 0.5 * Math.abs(Math.sin(tickTime * 6 + phase));
+      if ((debris.__retryCount ?? 0) > 0) {
+        // Retry pulse — alternating red and gold (task was retried before, may retry again)
+        const pulse = Math.sin(tickTime * 4 + phase);
+        debris.alpha = 0.6 + 0.4 * Math.abs(pulse);
+        debris.tint = pulse > 0 ? 0xff8844 : 0xc65858; // gold / red
+      } else if (debris.__failedReason?.startsWith('Cascade')) {
+        // Cascade failure — rapid red pulse, dimmer than root failure (propagated failure)
+        debris.alpha = 0.3 + 0.4 * Math.abs(Math.sin(tickTime * 8 + phase));
+        debris.tint = 0xaa3333; // darker red for cascade
+      } else {
+        // Flash red — standard failure (root cause)
+        debris.alpha = 0.4 + 0.5 * Math.abs(Math.sin(tickTime * 6 + phase));
+      }
     } else if (task.status === 'done') {
       // Slow drift outward + fade (completed tasks slowly dissipate)
       debris.alpha = Math.max(0.15, (debris.__baseAlpha ?? 0.5) - 0.001);

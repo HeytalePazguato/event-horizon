@@ -147,6 +147,8 @@ function App() {
   const [roles, setRoles] = useState<Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>>([]);
   const [roleAssignments, setRoleAssignments] = useState<Array<{ roleId: string; agentType: string | null; agentId: string | null }>>([]);
   const [agentProfiles, setAgentProfiles] = useState<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>([]);
+  const [knowledgeWorkspace, setKnowledgeWorkspace] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
+  const [knowledgePlan, setKnowledgePlan] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -201,6 +203,7 @@ function App() {
     activeFilesRef, recentSparkPairsRef, activeSkillsRef, invokedSkillNamesRef,
     shipTimerIdsRef, addLog, incrementTiered, setPlan, setPlans,
     setRoles, setRoleAssignments, setAgentProfiles,
+    setKnowledgeWorkspace, setKnowledgePlan,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -375,6 +378,8 @@ function App() {
         status: t.status as 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked',
         assigneeId: t.assigneeId ?? null,
         role: t.role ?? null,
+        retryCount: (t as Record<string, unknown>).retryCount as number | undefined,
+        failedReason: (t as Record<string, unknown>).failedReason as string | null | undefined,
       })),
     };
   }, [plan]);
@@ -383,6 +388,45 @@ function App() {
     const task = plan.tasks.find(t => t.assigneeId === selectedAgentId && (t.status === 'claimed' || t.status === 'in_progress') && t.role);
     return task?.role ?? null;
   }, [plan, selectedAgentId]);
+
+  // Compute recommendedFor for plan tasks based on roleAssignments
+  const planTasksWithRecommendations = useMemo(() => {
+    if (!plan.loaded || !plan.tasks) return plan;
+    const updated = plan.tasks.map((t) => {
+      if (t.role && roleAssignments.length > 0) {
+        const assignment = roleAssignments.find((ra) => ra.roleId === t.role);
+        if (assignment?.agentType) {
+          return { ...t, recommendedFor: assignment.agentType };
+        }
+      }
+      return t;
+    });
+    return { ...plan, tasks: updated };
+  }, [plan, roleAssignments]);
+
+  // Knowledge counts and recent entries for AgentIdentity
+  const knowledgeCount = useMemo(() => ({
+    workspace: knowledgeWorkspace.length,
+    plan: knowledgePlan.length,
+  }), [knowledgeWorkspace, knowledgePlan]);
+
+  const recentKnowledge = useMemo(() => {
+    const all = [...knowledgeWorkspace, ...knowledgePlan]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 3)
+      .map((k) => ({ key: k.key, value: k.value, scope: k.scope }));
+    return all;
+  }, [knowledgeWorkspace, knowledgePlan]);
+
+  // Tell All: prompt user and broadcast as knowledge
+  const tellAllRequestedAt = useCommandCenterStore((s) => s.tellAllRequestedAt);
+  useEffect(() => {
+    if (!tellAllRequestedAt) return;
+    const msg = window.prompt('Broadcast message to all agents:');
+    if (msg && msg.trim()) {
+      vscodeApi?.postMessage({ type: 'knowledge-add', key: `broadcast-${Date.now()}`, value: msg.trim(), scope: 'workspace' });
+    }
+  }, [tellAllRequestedAt]);
 
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
   const hoveredMetrics = hoveredAgentId ? metricsMap[hoveredAgentId] : null;
@@ -426,17 +470,21 @@ function App() {
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
-        <CommandCenter role={selectedAgentRole} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+        <CommandCenter role={selectedAgentRole} knowledgeCount={knowledgeCount} recentKnowledge={recentKnowledge} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       </div>
 
       {viewMode === 'operations' && (
         <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
-          plan={plan} plans={plans} selectedPlanId={selectedPlanId}
+          plan={planTasksWithRecommendations} plans={plans} selectedPlanId={selectedPlanId}
           roles={roles} roleAssignments={roleAssignments} agentProfiles={agentProfiles}
           onAssignRole={handleAssignRole} onCreateRole={handleCreateRole} onEditRole={handleEditRole} onDeleteRole={handleDeleteRole}
           onSelectPlan={(id) => { setSelectedPlanId(id); vscodeApi?.postMessage({ type: 'request-plan', planId: id }); }}
           onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace}
-          onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+          onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill}
+          knowledgeWorkspace={knowledgeWorkspace} knowledgePlan={knowledgePlan} knowledgePlanName={plan?.name}
+          onKnowledgeAdd={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-add', key, value, scope })}
+          onKnowledgeEdit={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope })}
+          onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })} />
       )}
 
       <AchievementToasts />
