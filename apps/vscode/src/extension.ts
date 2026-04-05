@@ -128,92 +128,99 @@ export function activate(context: vscode.ExtensionContext): void {
   const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
   if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
 
-  // Auto-seed workspace knowledge from CLAUDE.md (and similar project docs) on first activation
-  // Only seeds entries that don't already exist — never overwrites user edits
+  // Auto-seed workspace knowledge from project instruction files on first activation.
+  // Scans all workspace folders + immediate subdirectories for CLAUDE.md, .cursorrules, AGENTS.md, etc.
+  // Only seeds entries that don't already exist — never overwrites user edits.
   void (async () => {
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) return;
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return;
 
-    const claudeMdPaths = [
-      path.join(workspaceRoot, 'CLAUDE.md'),
-      path.join(workspaceRoot, '.claude', 'CLAUDE.md'),
-    ];
+    // Already seeded? Skip scan entirely.
+    if (sharedKnowledge.read('project-instructions').length > 0) return;
 
-    for (const mdPath of claudeMdPaths) {
+    // Instruction file names to look for (order = priority)
+    const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md'];
+
+    // Build candidate paths: root, .claude/, and one level of subdirs (backend/, frontend/, etc.)
+    const candidatePaths: Array<{ filePath: string; label: string }> = [];
+    for (const folder of folders) {
+      const root = folder.uri.fsPath;
+      for (const fname of INSTRUCTION_FILES) {
+        candidatePaths.push({ filePath: path.join(root, fname), label: fname });
+        candidatePaths.push({ filePath: path.join(root, '.claude', fname), label: `.claude/${fname}` });
+      }
+      // Scan immediate subdirectories (backend/, frontend/, packages/*, apps/*, etc.)
       try {
-        const content = await fsp.readFile(mdPath, 'utf8');
-        if (!content.trim()) continue;
-
-        // Only seed if no 'project-instructions' key exists yet
-        const existing = sharedKnowledge.read('project-instructions');
-        if (existing.length > 0) break;
-
-        // Extract meaningful sections from CLAUDE.md
-        const sections: string[] = [];
-        const lines = content.split(/\r?\n/);
-        let currentSection = '';
-        let currentBody: string[] = [];
-
-        for (const line of lines) {
-          const heading = line.match(/^#{1,3}\s+(.+)/);
-          if (heading) {
-            if (currentSection && currentBody.length > 0) {
-              sections.push(`**${currentSection}**: ${currentBody.join(' ').slice(0, 300)}`);
-            }
-            currentSection = heading[1].trim();
-            currentBody = [];
-          } else if (line.trim() && !line.startsWith('```') && !line.startsWith('<!--')) {
-            currentBody.push(line.trim());
+        const entries = await fsp.readdir(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'out') continue;
+          for (const fname of INSTRUCTION_FILES) {
+            candidatePaths.push({ filePath: path.join(root, entry.name, fname), label: `${entry.name}/${fname}` });
           }
         }
-        if (currentSection && currentBody.length > 0) {
-          sections.push(`**${currentSection}**: ${currentBody.join(' ').slice(0, 300)}`);
-        }
+      } catch { /* readdir failed — skip */ }
+    }
 
-        if (sections.length > 0) {
-          const summary = sections.slice(0, 15).join('\n');
-          sharedKnowledge.write(
-            'project-instructions',
-            `Auto-imported from CLAUDE.md:\n${summary}`,
-            'workspace',
-            'Event Horizon',
-            'system',
-          );
-        }
+    // Read all found files and seed knowledge
+    const foundFiles: Array<{ label: string; content: string }> = [];
+    for (const { filePath, label } of candidatePaths) {
+      try {
+        const content = await fsp.readFile(filePath, 'utf8');
+        if (content.trim()) foundFiles.push({ label, content });
+      } catch { /* not found */ }
+    }
 
-        // Also extract commands section if present
-        const commandsMatch = content.match(/## Commands\n([\s\S]*?)(?=\n## |\n$)/);
-        if (commandsMatch) {
-          const existing2 = sharedKnowledge.read('project-commands');
-          if (existing2.length === 0) {
-            sharedKnowledge.write(
-              'project-commands',
-              commandsMatch[1].trim().slice(0, 500),
-              'workspace',
-              'Event Horizon',
-              'system',
-            );
+    if (foundFiles.length === 0) return;
+
+    // Extract sections from each file
+    const allSections: string[] = [];
+    for (const { label, content } of foundFiles) {
+      const lines = content.split(/\r?\n/);
+      let currentSection = '';
+      let currentBody: string[] = [];
+
+      for (const line of lines) {
+        const heading = line.match(/^#{1,3}\s+(.+)/);
+        if (heading) {
+          if (currentSection && currentBody.length > 0) {
+            allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
           }
+          currentSection = heading[1].trim();
+          currentBody = [];
+        } else if (line.trim() && !line.startsWith('```') && !line.startsWith('<!--')) {
+          currentBody.push(line.trim());
         }
+      }
+      if (currentSection && currentBody.length > 0) {
+        allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
+      }
+      // For files without headings (like .cursorrules), seed the whole content
+      if (allSections.length === 0 && content.trim()) {
+        allSections.push(`**${label}**: ${content.trim().slice(0, 400)}`);
+      }
+    }
 
-        // Extract architecture section if present
-        const archMatch = content.match(/## Architecture\n([\s\S]*?)(?=\n## |\n$)/);
-        if (archMatch) {
-          const existing3 = sharedKnowledge.read('project-architecture');
-          if (existing3.length === 0) {
-            sharedKnowledge.write(
-              'project-architecture',
-              archMatch[1].trim().slice(0, 500),
-              'workspace',
-              'Event Horizon',
-              'system',
-            );
-          }
-        }
+    if (allSections.length > 0) {
+      sharedKnowledge.write(
+        'project-instructions',
+        `Auto-imported from ${foundFiles.length} instruction file${foundFiles.length > 1 ? 's' : ''} (${foundFiles.map((f) => f.label).join(', ')}):\n${allSections.slice(0, 20).join('\n')}`,
+        'workspace',
+        'Event Horizon',
+        'system',
+      );
+    }
 
-        break; // Only read first found CLAUDE.md
-      } catch {
-        // File not found — continue to next path
+    // Extract commands sections from any CLAUDE.md
+    for (const { label, content } of foundFiles) {
+      if (!label.includes('CLAUDE')) continue;
+      const commandsMatch = content.match(/## Commands\n([\s\S]*?)(?=\n## |\n$)/);
+      if (commandsMatch && sharedKnowledge.read('project-commands').length === 0) {
+        sharedKnowledge.write('project-commands', commandsMatch[1].trim().slice(0, 500), 'workspace', 'Event Horizon', 'system');
+      }
+      const archMatch = content.match(/## Architecture\n([\s\S]*?)(?=\n## |\n$)/);
+      if (archMatch && sharedKnowledge.read('project-architecture').length === 0) {
+        sharedKnowledge.write('project-architecture', archMatch[1].trim().slice(0, 500), 'workspace', 'Event Horizon', 'system');
       }
     }
   })();

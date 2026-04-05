@@ -20,9 +20,7 @@ import type { PlanView, PlanSummary } from './panels/PlanPanel.js';
 import { RolesPanel } from './panels/RolesPanel.js';
 import { KnowledgePanel } from './panels/KnowledgePanel.js';
 import type { KnowledgeEntry } from './panels/KnowledgePanel.js';
-import { DependencyPanel } from './panels/DependencyPanel.js';
-
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan' | 'roles' | 'knowledge' | 'dependencies';
+type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan' | 'roles' | 'knowledge';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -154,9 +152,6 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             <button type="button" style={tabStyle(activeTab === 'knowledge')} onClick={() => setActiveTab('knowledge')}>
               Knowledge{(knowledgeWorkspace.length + knowledgePlan.length) > 0 ? ` (${knowledgeWorkspace.length + knowledgePlan.length})` : ''}
             </button>
-            <button type="button" style={tabStyle(activeTab === 'dependencies')} onClick={() => setActiveTab('dependencies')}>
-              Dependencies
-            </button>
 
             {/* Command buttons — right-aligned */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: '0 8px' }}>
@@ -227,9 +222,6 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 <KnowledgePanel workspace={knowledgeWorkspace} plan={knowledgePlan} planName={knowledgePlanName} onAdd={onKnowledgeAdd ?? (() => {})} onEdit={onKnowledgeEdit ?? (() => {})} onDelete={onKnowledgeDelete ?? (() => {})} />
               </div>
-            )}
-            {activeTab === 'dependencies' && (
-              <DependencyPanel plan={plan ?? { loaded: false }} />
             )}
           </div>
         </div>
