@@ -16,6 +16,8 @@ export interface SpawnOpts {
   planId?: string;
   taskId?: string;
   envVars?: Record<string, string>;
+  /** When 'worktree', create a git worktree before spawning and set cwd to it. */
+  isolation?: 'none' | 'worktree';
 }
 
 export interface SpawnResult {
@@ -81,6 +83,9 @@ export class SpawnRegistry {
     this.backends.set(backend.type, backend);
   }
 
+  /** Worktree manager reference — set externally by eventServer initMcpServer. */
+  worktreeManager?: import('./worktreeManager.js').WorktreeManager;
+
   async spawn(type: string, opts: SpawnOpts): Promise<SpawnResult> {
     const backend = this.backends.get(type);
     if (!backend) {
@@ -90,6 +95,21 @@ export class SpawnRegistry {
     if (!available) {
       return { agentId: '', type, status: 'unavailable', message: `${type} CLI is not available in PATH` };
     }
+
+    // Worktree isolation: create worktree and override cwd
+    if (opts.isolation === 'worktree' && opts.taskId && this.worktreeManager) {
+      const cwd = opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (cwd) {
+        try {
+          const agentId = `${type}-${Date.now()}`; // temporary for worktree naming
+          const wt = await this.worktreeManager.create(agentId, opts.taskId, cwd);
+          opts = { ...opts, cwd: wt.path };
+        } catch {
+          // Fall through — spawn without worktree
+        }
+      }
+    }
+
     const result = await backend.spawn(opts);
     return result;
   }

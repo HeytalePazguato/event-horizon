@@ -250,6 +250,14 @@
           "additionalProperties": { "type": "string" },
           "markdownDescription": "Map role IDs to default agent types. Example: `{ \"researcher\": \"claude-code\", \"reviewer\": \"copilot\" }`",
           "order": 21
+        },
+        "eventHorizon.budgetWarningThreshold": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0.1,
+          "maximum": 1.0,
+          "description": "Budget warning threshold (0.1 to 1.0). A warning is shown when spending reaches this percentage of the plan budget.",
+          "order": 7
         }
       }
     },

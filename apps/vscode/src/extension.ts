@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -235,6 +235,8 @@ export function activate(context: vscode.ExtensionContext): void {
       status: board.status,
       sourceFile: board.sourceFile,
       lastUpdatedAt: board.lastUpdatedAt,
+      strategy: board.strategy,
+      maxBudgetUsd: board.maxBudgetUsd,
       tasks: board.tasks.map((t) => ({
         id: t.id,
         title: t.title,
@@ -342,6 +344,68 @@ export function activate(context: vscode.ExtensionContext): void {
   // Restore session store from globalState
   const savedSessions = context.globalState.get<Record<string, string>>('sessionStore');
   if (savedSessions) sessionStore.restore(savedSessions);
+
+  // Restore budget state from globalState
+  const savedBudget = context.globalState.get<ReturnType<typeof budgetManager.serialize>>('budgetState');
+  if (savedBudget) budgetManager.restore(savedBudget);
+
+  // Apply budget warning threshold from settings
+  const budgetThreshold = vscode.workspace.getConfiguration('eventHorizon').get<number>('budgetWarningThreshold', 0.8);
+  budgetManager.setWarningThreshold(budgetThreshold);
+
+  // Set budget limits from plan metadata when plans load
+  planBoardManager.onChange((boards) => {
+    for (const board of boards.values()) {
+      if (board.maxBudgetUsd != null && board.maxBudgetUsd > 0) {
+        budgetManager.setLimit(board.id, board.maxBudgetUsd);
+      }
+    }
+    void context.globalState.update('budgetState', budgetManager.serialize());
+  });
+
+  // Wire showBudgetRequest callback — will be passed to MCP server via initMcpServer deps
+  // The MCP server is already initialized above, so we set the callback on the deps directly
+  import('./eventServer.js').then((es) => {
+    const mcp = es._getMcpServer();
+    if (mcp) {
+      (mcp as unknown as { deps: Record<string, unknown> }).deps.showBudgetRequest = async (planId: string, currentLimit: number, requestedAmount: number, reason: string) => {
+        const answer = await vscode.window.showInformationMessage(
+          `Budget increase requested for plan "${planId}": $${currentLimit.toFixed(2)} -> $${requestedAmount.toFixed(2)}. Reason: ${reason}`,
+          'Yes', 'No',
+        );
+        return answer === 'Yes';
+      };
+    }
+  }).catch(() => { /* ignore */ });
+
+  // ── Heartbeat checking interval ──────────────────────────────────────────
+  const heartbeatCheckInterval = setInterval(() => {
+    const allBeats = heartbeatManager.getAll();
+    if (allBeats.length === 0) return;
+
+    // Update agent states with heartbeat status
+    for (const beat of allBeats) {
+      const agent = agentStateManager.getAgent(beat.agentId);
+      if (agent) {
+        // Directly modify the heartbeatStatus on the agent state
+        const current = agentStateManager.getAgent(beat.agentId);
+        if (current && current.heartbeatStatus !== beat.status) {
+          // Use a lightweight update — set on the object directly
+          (current as { heartbeatStatus: string }).heartbeatStatus = beat.status;
+        }
+      }
+    }
+
+    // Forward heartbeat statuses to webview
+    if (webviewRef.current) {
+      const heartbeats: Record<string, string> = {};
+      for (const beat of allBeats) {
+        heartbeats[beat.agentId] = beat.status;
+      }
+      webviewRef.current.postMessage({ type: 'heartbeat-update', heartbeats });
+    }
+  }, 30_000);
+  context.subscriptions.push({ dispose: () => clearInterval(heartbeatCheckInterval) });
 
   // ── Status bar — live agent count ──────────────────────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -571,6 +635,40 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     }
 
+    // Record heartbeat on any event (agent is clearly alive if sending events)
+    heartbeatManager.beat(event.agentId);
+
+    // Track cost events for budget management
+    if (event.payload?.costUsd && typeof event.payload.costUsd === 'number') {
+      const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
+      for (const plan of activePlans) {
+        const isAgentInPlan = plan.tasks.some((t) => t.assignee === event.agentId);
+        if (isAgentInPlan) {
+          const tokens = ((event.payload.inputTokens as number) ?? 0) + ((event.payload.outputTokens as number) ?? 0);
+          budgetManager.recordCost(plan.id, event.agentId, event.payload.costUsd as number, tokens);
+          void context.globalState.update('budgetState', budgetManager.serialize());
+
+          // Check budget and warn/pause
+          if (budgetManager.isExceeded(plan.id)) {
+            void vscode.window.showWarningMessage(
+              `Budget exceeded for plan "${plan.name}". Agent ${event.agentName} auto-paused.`,
+            );
+            // Forward budget-exceeded to webview
+            webviewRef.current?.postMessage({
+              type: 'budget-exceeded',
+              planId: plan.id,
+              agentId: event.agentId,
+            });
+          } else if (budgetManager.isWarning(plan.id)) {
+            const summary = budgetManager.getRemaining(plan.id);
+            void vscode.window.showWarningMessage(
+              `Budget warning for plan "${plan.name}": ${Math.round(summary.percentUsed * 100)}% used ($${summary.spent.toFixed(2)} of $${summary.limit.toFixed(2)}).`,
+            );
+          }
+        }
+      }
+    }
+
     // Parse Copilot transcript on Stop events for richer metrics (tokens, cost)
     if (event.agentType === 'copilot' && event.type === 'agent.idle') {
       const copilotTranscript = event.payload?.transcriptPath as string | undefined;
@@ -686,6 +784,11 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration('eventHorizon.fileLockingEnabled')) {
         setFileLockingEnabled(
           vscode.workspace.getConfiguration('eventHorizon').get<boolean>('fileLockingEnabled', false),
+        );
+      }
+      if (e.affectsConfiguration('eventHorizon.budgetWarningThreshold')) {
+        budgetManager.setWarningThreshold(
+          vscode.workspace.getConfiguration('eventHorizon').get<number>('budgetWarningThreshold', 0.8),
         );
       }
     }),

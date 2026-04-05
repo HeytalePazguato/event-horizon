@@ -29,6 +29,16 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Knowledge in CommandCenter**: AgentIdentity panel shows knowledge counts (W/P) and 3 most recent entries when an agent is selected
 - **"Tell All" button**: new command in AgentControls grid — prompts for a message and broadcasts it as a workspace knowledge entry visible to all agents
 
+### Added — Phase 3: Scheduling, DAG, Isolation, Heartbeat, Telemetry, Budget
+- **Scheduling strategies**: plans support `<!-- strategy: round-robin -->` metadata. Auto-assign uses the plan's configured strategy by default, with 4 strategies: `round-robin`, `least-busy`, `capability-match`, `dependency-first`. Strategy badge shown on plan header in Kanban view
+- **Task DAG visualization**: new "Dependencies" tab in Operations View renders a directed acyclic graph of task dependencies using topological sort (Kahn's algorithm), highlights the critical path in red, and warns about dependency cycles
+- **Git worktree isolation**: `WorktreeManager` creates per-agent per-task worktrees (`git worktree add .eh-worktrees/<agent>-<task>`). New MCP tools `eh_create_worktree` and `eh_remove_worktree` (orchestrator-only). SpawnRegistry supports `isolation: 'worktree'` option
+- **Heartbeat system**: `HeartbeatManager` tracks agent liveness with configurable intervals. New `eh_heartbeat` MCP tool. Extension host checks status every 30s and forwards to webview. Planets show a pulsing ring — green for alive, amber for stale, grey for lost
+- **Richer telemetry**: Claude Code Stop hook captures `duration_ms`, `duration_api_ms`, `num_turns`, `stop_reason`. PermissionDenied captures `permission_denials` array. All hooks capture `model` name. AgentState now includes `modelName` and `heartbeatStatus` fields. Model name shown in AgentIdentity panel
+- **Budget controls**: `BudgetManager` tracks per-plan spending with per-agent breakdown. `<!-- maxBudgetUsd: 5.00 -->` metadata sets plan budget. Warning at configurable threshold (default 80%), auto-notification on exceed. New MCP tools `eh_get_budget` and `eh_request_budget_increase`. Budget state persisted in globalState
+- **5 new MCP tools**: `eh_heartbeat`, `eh_create_worktree`, `eh_remove_worktree`, `eh_get_budget`, `eh_request_budget_increase` — total: 38 MCP tools
+- **New VS Code setting**: `eventHorizon.budgetWarningThreshold` (default 0.8)
+
 ### Added — Phase 2: Agent Spawning Infrastructure
 - **Orchestrator role**: 7th built-in role auto-promoted when an agent loads a plan via `eh_load_plan`. Decomposes goals, spawns workers, monitors team progress
 - **SpawnRegistry**: pluggable backend system for spawning AI agents in VS Code terminals — ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner

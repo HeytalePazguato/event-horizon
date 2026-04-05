@@ -149,6 +149,7 @@ function App() {
   const [agentProfiles, setAgentProfiles] = useState<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>([]);
   const [knowledgeWorkspace, setKnowledgeWorkspace] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
   const [knowledgePlan, setKnowledgePlan] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
+  const [heartbeatStatuses, setHeartbeatStatuses] = useState<Record<string, string>>({});
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -204,6 +205,7 @@ function App() {
     shipTimerIdsRef, addLog, incrementTiered, setPlan, setPlans,
     setRoles, setRoleAssignments, setAgentProfiles,
     setKnowledgeWorkspace, setKnowledgePlan,
+    setHeartbeatStatuses,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -467,6 +469,7 @@ function App() {
             onShootingStarClicked={achievementCallbacks.handleShootingStarClicked}
             planTasks={planDebris}
             visible={viewMode === 'universe'}
+            heartbeatStatuses={heartbeatStatuses}
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}

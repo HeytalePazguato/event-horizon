@@ -16,3 +16,4 @@ export { PlanetIcon, SingularityIcon } from './AgentIdentity.js';
 export { FileHeatmapFull } from './FileHeatmapFull.js';
 export { LogsPanel } from './LogsPanel.js';
 export { TimelinePanel } from './TimelinePanel.js';
+export { DependencyPanel } from './DependencyPanel.js';

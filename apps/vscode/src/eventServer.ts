@@ -47,6 +47,9 @@ import { SharedKnowledgeStore } from './sharedKnowledge.js';
 import { SpawnRegistry, ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner } from './spawnRegistry.js';
 import { SessionStore } from './sessionStore.js';
 import { syncSkillsForAgent } from './skillSync.js';
+import { HeartbeatManager } from './heartbeatManager.js';
+import { WorktreeManager } from './worktreeManager.js';
+import { BudgetManager } from './budgetManager.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -57,6 +60,9 @@ export const agentProfiler = new AgentProfiler();
 export const sharedKnowledge = new SharedKnowledgeStore();
 export const spawnRegistry = new SpawnRegistry();
 export const sessionStore = new SessionStore();
+export const heartbeatManager = new HeartbeatManager();
+export const worktreeManager = new WorktreeManager();
+export const budgetManager = new BudgetManager();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -71,6 +77,7 @@ export function initMcpServer(deps: {
   spawnRegistry.register(new ClaudeCodeSpawner(spawnRegistry, DEFAULT_PORT, getToken));
   spawnRegistry.register(new OpenCodeSpawner(spawnRegistry, DEFAULT_PORT, getToken));
   spawnRegistry.register(new CursorSpawner(spawnRegistry, DEFAULT_PORT, getToken));
+  spawnRegistry.worktreeManager = worktreeManager;
 
   mcpServer = new McpServer({
     lockManager,
@@ -87,6 +94,9 @@ export function initMcpServer(deps: {
     spawnRegistry,
     sessionStore,
     syncSkills: syncSkillsForAgent,
+    heartbeatManager,
+    worktreeManager,
+    budgetManager,
   });
 }
 

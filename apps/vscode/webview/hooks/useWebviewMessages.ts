@@ -47,6 +47,7 @@ export interface WebviewMessageDeps {
   setAgentProfiles: React.Dispatch<React.SetStateAction<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>>;
   setKnowledgeWorkspace: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
   setKnowledgePlan: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
+  setHeartbeatStatuses?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -145,6 +146,13 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.roles) depsRef.current.setRoles(data.roles);
         if (data.assignments) depsRef.current.setRoleAssignments(data.assignments);
         if (data.profiles) depsRef.current.setAgentProfiles(data.profiles);
+        return;
+      }
+      if (msg?.type === 'heartbeat-update') {
+        const data = msg as unknown as { heartbeats: Record<string, string> };
+        if (data.heartbeats && depsRef.current.setHeartbeatStatuses) {
+          depsRef.current.setHeartbeatStatuses(data.heartbeats);
+        }
         return;
       }
       if (msg?.type === 'knowledge-update') {

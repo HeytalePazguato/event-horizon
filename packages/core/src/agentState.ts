@@ -15,6 +15,10 @@ export interface AgentState {
   currentTaskId: string | null;
   /** Working directory reported by the agent — used for cooperation detection. */
   cwd?: string;
+  /** Model name reported by the agent (e.g. "claude-sonnet-4-20250514"). */
+  modelName?: string | null;
+  /** Heartbeat status forwarded from heartbeatManager. */
+  heartbeatStatus?: 'alive' | 'stale' | 'lost';
 }
 
 export interface TaskState {
@@ -146,6 +150,14 @@ export class AgentStateManager {
       const a = this.agents.get(agentId);
       if (a && !a.cwd) {
         this.agents.set(agentId, { ...a, cwd: payload.cwd as string });
+      }
+    }
+
+    // Update modelName on any event if the agent exists and payload includes it
+    if (payload?.modelName && type !== 'agent.terminate') {
+      const a = this.agents.get(agentId);
+      if (a && !a.modelName) {
+        this.agents.set(agentId, { ...a, modelName: payload.modelName as string });
       }
     }
   }

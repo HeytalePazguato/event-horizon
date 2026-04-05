@@ -13,6 +13,7 @@ export interface AnimatedPlanet {
   __thinkingRing?: Container & { rotation: number; alpha: number; visible: boolean };
   __errorGlow?: Graphics & { alpha: number; visible: boolean };
   __waitingRing?: Container & { alpha: number; visible: boolean; scale: { set: (v: number) => void } };
+  __heartbeatRing?: Graphics & { alpha: number; visible: boolean; scale: { set: (v: number) => void }; tint: number };
   __radius?: number;
   alpha: number;
   scale: { set: (v: number) => void };
@@ -25,6 +26,7 @@ export interface PlanetAnimationContext {
   pausedAgentIds: Record<string, boolean>;
   boostedAgentIds: Record<string, boolean>;
   isolatedAgentId: string | null;
+  heartbeatStatuses?: Record<string, string>;
 }
 
 /** Animate all planets — pulse, thinking ring, error glow, waiting ring. */
@@ -93,6 +95,32 @@ export function animatePlanets(planets: AnimatedPlanet[], ctx: PlanetAnimationCo
         const breathe = Math.sin(t * 1.8);
         wr.scale.set(0.95 + 0.1 * breathe);
         wr.alpha = 0.45 + 0.35 * breathe;
+      }
+    }
+
+    // Heartbeat pulse ring
+    const hb = p.__heartbeatRing;
+    if (hb) {
+      const hbStatus = ctx.heartbeatStatuses?.[agentId];
+      if (hbStatus === 'alive') {
+        hb.visible = true;
+        hb.tint = 0x40a060; // green
+        // Expanding ring that fades every 4 seconds
+        const phase = (t % 4) / 4;
+        hb.scale.set(1 + phase * 0.5);
+        hb.alpha = 0.5 * (1 - phase);
+      } else if (hbStatus === 'stale') {
+        hb.visible = true;
+        hb.tint = 0xd4944a; // amber
+        hb.scale.set(1);
+        hb.alpha = 0.3 + 0.15 * Math.sin(t * 2);
+      } else if (hbStatus === 'lost') {
+        hb.visible = true;
+        hb.tint = 0x555555; // grey
+        hb.scale.set(1);
+        hb.alpha = 0.15;
+      } else {
+        hb.visible = false;
       }
     }
   }

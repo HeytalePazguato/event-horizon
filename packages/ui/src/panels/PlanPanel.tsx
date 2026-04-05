@@ -35,6 +35,8 @@ export interface PlanView {
   sourceFile?: string;
   lastUpdatedAt?: number;
   tasks?: PlanTaskView[];
+  strategy?: string;
+  maxBudgetUsd?: number | null;
 }
 
 export interface PlanSummary {
@@ -139,6 +141,22 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         <div style={{ fontSize: sizes.text.xl, color: colors.text.primary, fontWeight: 600 }}>
           {plan.name}
         </div>
+        {plan.strategy && plan.strategy !== 'manual' && (
+          <div style={{
+            display: 'inline-block',
+            padding: '2px 6px',
+            fontSize: 8,
+            fontWeight: 600,
+            letterSpacing: '0.06em',
+            color: '#6aa0d4',
+            background: 'rgba(106,160,212,0.1)',
+            border: '1px solid rgba(106,160,212,0.3)',
+            borderRadius: sizes.radius.sm,
+            textTransform: 'uppercase',
+          }}>
+            {plan.strategy}
+          </div>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: sizes.spacing.sm }}>
           <span style={{ fontSize: sizes.text.sm, color: colors.text.dim }}>
             {doneTasks}/{totalTasks} tasks

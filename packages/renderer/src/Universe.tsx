@@ -126,6 +126,8 @@ export interface UniverseProps {
   visible?: boolean;
   /** Agent IDs that are orchestrators — renders star glow behind their planets. */
   orchestratorAgentIds?: Record<string, boolean>;
+  /** Heartbeat status per agent: 'alive' | 'stale' | 'lost'. */
+  heartbeatStatuses?: Record<string, string>;
 }
 
 // --- constants -----------------------------------------------------------
@@ -322,6 +324,7 @@ export const Universe: FC<UniverseProps> = ({
   planTasks = null,
   visible = true,
   orchestratorAgentIds = {},
+  heartbeatStatuses = {},
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -407,6 +410,7 @@ export const Universe: FC<UniverseProps> = ({
   const settingsRevRef = useRef(0);
   const animationSpeedRef = useRef(animationSpeed);
   const orchestratorIdsRef = useRef(orchestratorAgentIds);
+  const heartbeatStatusesRef = useRef(heartbeatStatuses);
   const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
@@ -483,6 +487,7 @@ export const Universe: FC<UniverseProps> = ({
   }, [visualSettings]);
   useEffect(() => { animationSpeedRef.current = animationSpeed; }, [animationSpeed]);
   useEffect(() => { orchestratorIdsRef.current = orchestratorAgentIds; }, [orchestratorAgentIds]);
+  useEffect(() => { heartbeatStatusesRef.current = heartbeatStatuses; }, [heartbeatStatuses]);
   useEffect(() => { visibleRef.current = visible; }, [visible]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
@@ -1430,6 +1435,7 @@ export const Universe: FC<UniverseProps> = ({
         pausedAgentIds: pausedRef.current,
         boostedAgentIds: boostedRef.current,
         isolatedAgentId: isolatedRef.current,
+        heartbeatStatuses: heartbeatStatusesRef.current,
       });
 
       // Animate skill orbit rings

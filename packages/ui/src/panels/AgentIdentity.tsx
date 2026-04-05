@@ -207,6 +207,11 @@ export const AgentIdentity: FC<AgentIdentityProps> = ({ role, knowledgeCount, re
           <span style={{ fontSize: 8, color: '#4a6a58', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {selectedAgent.type}
           </span>
+          {selectedAgent.modelName && (
+            <span style={{ fontSize: 7, color: '#5a7a6a', marginTop: 1, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {selectedAgent.modelName}
+            </span>
+          )}
           {selectedAgent.cwd && (
             <span style={{ fontSize: 8, color: '#5a7a6a', marginTop: 1, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {folderName(selectedAgent.cwd)}

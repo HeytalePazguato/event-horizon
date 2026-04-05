@@ -19,6 +19,8 @@ export type PlanStatus = 'active' | 'completed' | 'archived';
 
 export type DependencyFailurePolicy = 'cascade' | 'block' | 'ignore';
 
+export type SchedulingStrategy = 'manual' | 'round-robin' | 'least-busy' | 'capability-match' | 'dependency-first';
+
 export interface PlanTask {
   id: string;
   title: string;
@@ -47,6 +49,8 @@ export interface PlanBoard {
   onDependencyFailure: DependencyFailurePolicy;
   maxAutoRetries: number;
   orchestratorAgentId: string | null;
+  strategy: SchedulingStrategy;
+  maxBudgetUsd: number | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -65,6 +69,8 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
   let planName = 'Untitled Plan';
   let onDependencyFailure: DependencyFailurePolicy = 'cascade';
   let maxAutoRetries = 0;
+  let strategy: SchedulingStrategy = 'manual';
+  let maxBudgetUsd: number | null = null;
 
   for (const line of lines) {
     const h1Match = line.match(/^#\s+(.+)/);
@@ -83,6 +89,14 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
     const retryMatch = line.match(/maxAutoRetries:\s*(\d+)/i);
     if (retryMatch) {
       maxAutoRetries = parseInt(retryMatch[1], 10);
+    }
+    const strategyMatch = line.match(/strategy:\s*(manual|round-robin|least-busy|capability-match|dependency-first)/i);
+    if (strategyMatch) {
+      strategy = strategyMatch[1].toLowerCase() as SchedulingStrategy;
+    }
+    const budgetMatch = line.match(/maxBudgetUsd:\s*([\d.]+)/i);
+    if (budgetMatch) {
+      maxBudgetUsd = parseFloat(budgetMatch[1]);
     }
   }
 
@@ -182,6 +196,8 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
     onDependencyFailure,
     maxAutoRetries,
     orchestratorAgentId: null,
+    strategy,
+    maxBudgetUsd,
   };
 }
 

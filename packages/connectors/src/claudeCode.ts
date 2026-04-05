@@ -112,6 +112,18 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
       if (typeof usage.input_tokens === 'number') safePayload.inputTokens = usage.input_tokens;
       if (typeof usage.output_tokens === 'number') safePayload.outputTokens = usage.output_tokens;
     }
+    // Richer telemetry: duration, turns, stop reason
+    if (typeof p.duration_ms === 'number') safePayload.durationMs = p.duration_ms;
+    if (typeof p.duration_api_ms === 'number') safePayload.durationApiMs = p.duration_api_ms;
+    if (typeof p.num_turns === 'number') safePayload.numTurns = p.num_turns;
+    if (typeof p.stop_reason === 'string') safePayload.stopReason = String(p.stop_reason).slice(0, 128);
+    // Also check nested payload
+    if (nested) {
+      if (typeof nested.duration_ms === 'number' && !safePayload.durationMs) safePayload.durationMs = nested.duration_ms;
+      if (typeof nested.duration_api_ms === 'number' && !safePayload.durationApiMs) safePayload.durationApiMs = nested.duration_api_ms;
+      if (typeof nested.num_turns === 'number' && !safePayload.numTurns) safePayload.numTurns = nested.num_turns;
+      if (typeof nested.stop_reason === 'string' && !safePayload.stopReason) safePayload.stopReason = String(nested.stop_reason).slice(0, 128);
+    }
   }
 
   // Extract file_path from tool_input for file-touching tools (never content/strings)
@@ -165,6 +177,13 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     if (p.tool_name) safePayload.deniedTool = String(p.tool_name).slice(0, 128);
     const reason = p.reason ?? nested?.reason;
     if (typeof reason === 'string') safePayload.deniedReason = reason.slice(0, 256);
+    // Capture permission denials array if present
+    const denials = p.permission_denials ?? nested?.permission_denials;
+    if (Array.isArray(denials)) {
+      safePayload.permissionDenials = denials.slice(0, 10).map((d: unknown) =>
+        typeof d === 'string' ? d.slice(0, 128) : String(d).slice(0, 128),
+      );
+    }
   }
   if (hookEvent === 'StopFailure') {
     safePayload.hookType = 'stop_failure';
@@ -181,6 +200,10 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     const taskId = p.task_id ?? nested?.task_id;
     if (typeof taskId === 'string') safePayload.taskId = taskId.slice(0, 128);
   }
+
+  // Capture model name if present in payload (any hook)
+  const model = p.model ?? nested?.model;
+  if (typeof model === 'string') safePayload.modelName = model.slice(0, 128);
 
   return {
     id: nextId(),

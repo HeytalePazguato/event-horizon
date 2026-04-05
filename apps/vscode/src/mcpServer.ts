@@ -15,6 +15,9 @@ import type { AgentProfiler } from './agentProfiler.js';
 import type { SharedKnowledgeStore } from './sharedKnowledge.js';
 import type { SpawnRegistry } from './spawnRegistry.js';
 import type { SessionStore } from './sessionStore.js';
+import type { HeartbeatManager } from './heartbeatManager.js';
+import type { WorktreeManager } from './worktreeManager.js';
+import type { BudgetManager } from './budgetManager.js';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -449,7 +452,7 @@ export const MCP_TOOLS: McpToolDef[] = [
       properties: {
         agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
         plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
-        strategy: { type: 'string', enum: ['round-robin', 'least-busy', 'capability-match'], description: 'Assignment strategy (default: capability-match)' },
+        strategy: { type: 'string', enum: ['round-robin', 'least-busy', 'capability-match', 'dependency-first'], description: 'Assignment strategy. If omitted, uses the plan\'s configured strategy (or capability-match as fallback).' },
       },
       required: ['agent_id'],
     },
@@ -476,6 +479,75 @@ export const MCP_TOOLS: McpToolDef[] = [
         target_agent_type: { type: 'string', description: 'Agent type to sync skills for (claude-code, opencode)' },
       },
       required: ['agent_id', 'target_agent_type'],
+    },
+  },
+
+  // ── Phase 3: Heartbeat, worktree, budget tools ────────��─────────────────
+
+  {
+    name: 'eh_heartbeat',
+    description: 'Report alive status. Call periodically to prevent being marked as stale or lost.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_create_worktree',
+    description: 'Create a git worktree for workspace isolation. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        target_agent_id: { type: 'string', description: 'Agent ID that will use the worktree' },
+        task_id: { type: 'string', description: 'Task ID for the worktree branch name' },
+        cwd: { type: 'string', description: 'Working directory (git repo root)' },
+      },
+      required: ['agent_id', 'target_agent_id', 'task_id'],
+    },
+  },
+  {
+    name: 'eh_remove_worktree',
+    description: 'Remove a git worktree. Optionally merge the branch first. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        target_agent_id: { type: 'string', description: 'Agent ID whose worktree to remove' },
+        task_id: { type: 'string', description: 'Task ID of the worktree' },
+        cwd: { type: 'string', description: 'Working directory (git repo root)' },
+        merge: { type: 'boolean', description: 'Whether to merge the branch before removing (default false)' },
+      },
+      required: ['agent_id', 'target_agent_id', 'task_id'],
+    },
+  },
+  {
+    name: 'eh_get_budget',
+    description: 'Get remaining budget for a plan, including per-agent cost breakdown.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_request_budget_increase',
+    description: 'Request a budget increase from the user. Shows a VS Code notification with Yes/No.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        plan_id: { type: 'string', description: 'Plan ID' },
+        requested_amount_usd: { type: 'number', description: 'New budget limit requested (USD)' },
+        reason: { type: 'string', description: 'Why the increase is needed' },
+      },
+      required: ['agent_id', 'plan_id', 'requested_amount_usd'],
     },
   },
 ];
@@ -530,6 +602,10 @@ export interface McpServerDeps {
   spawnRegistry?: SpawnRegistry;
   sessionStore?: SessionStore;
   syncSkills?: (agentType: string) => Promise<{ synced: boolean; path?: string; error?: string }>;
+  heartbeatManager?: HeartbeatManager;
+  worktreeManager?: WorktreeManager;
+  budgetManager?: BudgetManager;
+  showBudgetRequest?: (planId: string, currentLimit: number, requestedAmount: number, reason: string) => Promise<boolean>;
 }
 
 export class McpServer {
@@ -1249,18 +1325,20 @@ export class McpServer {
           return { error: 'Only the orchestrator can auto-assign tasks.' };
         }
         const planId = args.plan_id as string | undefined;
-        const strategy = (args.strategy as string) ?? 'capability-match';
         const board = planBoardManager.getPlan(planId);
         if (!board) {
           return { assigned: [], error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
         }
+
+        // Use plan's configured strategy, or override via param, fallback to capability-match
+        const strategy = (args.strategy as string) ?? (board.strategy !== 'manual' ? board.strategy : 'capability-match');
 
         const agents = this.deps.agentStateManager.getAllAgents();
         if (agents.length === 0) {
           return { assigned: [], error: 'No agents connected' };
         }
 
-        const pending = board.tasks.filter((t) => t.status === 'pending' && !t.assignee);
+        let pending = board.tasks.filter((t) => t.status === 'pending' && !t.assignee);
         if (pending.length === 0) {
           return { assigned: [], message: 'No unassigned pending tasks' };
         }
@@ -1270,14 +1348,41 @@ export class McpServer {
         const assignments: Array<{ taskId: string; assignedTo: string; assignedToName: string; reason: string }> = [];
         let agentIndex = 0;
 
+        // dependency-first: BFS to count transitive blocked dependents per task, sort by criticality
+        if (strategy === 'dependency-first') {
+          const criticalityMap = new Map<string, number>();
+          for (const task of pending) {
+            // BFS: count transitive dependents
+            let count = 0;
+            const queue = [task.id];
+            const visited = new Set<string>();
+            while (queue.length > 0) {
+              const currentId = queue.shift()!;
+              for (const t of board.tasks) {
+                if (visited.has(t.id)) continue;
+                if (t.blockedBy.includes(currentId)) {
+                  count++;
+                  visited.add(t.id);
+                  queue.push(t.id);
+                }
+              }
+            }
+            criticalityMap.set(task.id, count);
+          }
+          // Sort by criticality (descending)
+          pending = [...pending].sort((a, b) => (criticalityMap.get(b.id) ?? 0) - (criticalityMap.get(a.id) ?? 0));
+        }
+
         for (const task of pending) {
           let bestAgent = agents[0];
           let bestScore = -1;
           let bestReason = 'default';
 
-          if (strategy === 'round-robin') {
+          if (strategy === 'round-robin' || strategy === 'dependency-first') {
             bestAgent = agents[agentIndex % agents.length];
-            bestReason = 'round-robin';
+            bestReason = strategy === 'dependency-first'
+              ? `dependency-first (round-robin, criticality: ${board.tasks.filter((t) => t.blockedBy.includes(task.id)).length} direct dependents)`
+              : 'round-robin';
             agentIndex++;
           } else if (strategy === 'least-busy') {
             let minLoad = Infinity;
@@ -1297,8 +1402,8 @@ export class McpServer {
               const reasons: string[] = [];
 
               if (task.role) {
-                const assignments = rm.getAllAssignments();
-                const assignedType = assignments.find((asgn) => asgn.roleId === task.role)?.agentType;
+                const roleAssignments = rm.getAllAssignments();
+                const assignedType = roleAssignments.find((asgn) => asgn.roleId === task.role)?.agentType;
                 if (assignedType === a.type) {
                   score += 40;
                   reasons.push(`Role match: ${task.role}`);
@@ -1333,7 +1438,7 @@ export class McpServer {
           }
         }
 
-        return { assigned: assignments, count: assignments.length };
+        return { assigned: assignments, count: assignments.length, strategy };
       }
 
       case 'eh_get_session': {
@@ -1360,6 +1465,90 @@ export class McpServer {
         }
         const result = await this.deps.syncSkills(targetType);
         return result;
+      }
+
+      // ── Phase 3: Heartbeat, worktree, budget tools ──────────────────────
+
+      case 'eh_heartbeat': {
+        const agentId = args.agent_id as string;
+        const { heartbeatManager } = this.deps;
+        if (!heartbeatManager) return { error: 'Heartbeat manager not available' };
+        heartbeatManager.beat(agentId);
+        return { status: 'alive', agent_id: agentId, timestamp: Date.now() };
+      }
+
+      case 'eh_create_worktree': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can create worktrees.' };
+        }
+        const { worktreeManager } = this.deps;
+        if (!worktreeManager) return { error: 'Worktree manager not available' };
+        const targetAgentId = args.target_agent_id as string;
+        const taskId = args.task_id as string;
+        const cwd = args.cwd as string | undefined;
+        if (!cwd) return { error: 'cwd is required for worktree creation' };
+        try {
+          const wt = await worktreeManager.create(targetAgentId, taskId, cwd);
+          return { created: true, path: wt.path, branch: wt.branch, agent_id: targetAgentId, task_id: taskId };
+        } catch (e) {
+          return { created: false, error: (e as Error).message };
+        }
+      }
+
+      case 'eh_remove_worktree': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can remove worktrees.' };
+        }
+        const { worktreeManager } = this.deps;
+        if (!worktreeManager) return { error: 'Worktree manager not available' };
+        const targetAgentId = args.target_agent_id as string;
+        const taskId = args.task_id as string;
+        const cwd = args.cwd as string | undefined;
+        if (!cwd) return { error: 'cwd is required for worktree removal' };
+        const merge = (args.merge as boolean) ?? false;
+        try {
+          await worktreeManager.remove(targetAgentId, taskId, cwd, merge);
+          return { removed: true, agent_id: targetAgentId, task_id: taskId, merged: merge };
+        } catch (e) {
+          return { removed: false, error: (e as Error).message };
+        }
+      }
+
+      case 'eh_get_budget': {
+        const planId = args.plan_id as string | undefined;
+        const { budgetManager } = this.deps;
+        if (!budgetManager) return { error: 'Budget manager not available' };
+        const board = planBoardManager.getPlan(planId);
+        if (!board) return { error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+        const summary = budgetManager.getRemaining(board.id);
+        const breakdown = budgetManager.getBreakdown(board.id);
+        return {
+          plan_id: board.id,
+          ...summary,
+          warning: budgetManager.isWarning(board.id),
+          exceeded: budgetManager.isExceeded(board.id),
+          breakdown,
+        };
+      }
+
+      case 'eh_request_budget_increase': {
+        const planId = args.plan_id as string;
+        const requestedAmount = args.requested_amount_usd as number;
+        const reason = (args.reason as string) ?? 'No reason provided';
+        const { budgetManager, showBudgetRequest } = this.deps;
+        if (!budgetManager) return { error: 'Budget manager not available' };
+        const currentLimit = budgetManager.getLimit(planId) ?? 0;
+        if (showBudgetRequest) {
+          const approved = await showBudgetRequest(planId, currentLimit, requestedAmount, reason);
+          if (approved) {
+            budgetManager.setLimit(planId, requestedAmount);
+            return { approved: true, new_limit: requestedAmount };
+          }
+          return { approved: false, message: 'User declined the budget increase' };
+        }
+        return { error: 'Budget request UI not available' };
       }
 
       default:

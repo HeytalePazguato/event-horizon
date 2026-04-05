@@ -76,6 +76,7 @@ export type ExtendedPlanet = Container & {
   __waitingRing?: Graphics;
   __aura?: Graphics;
   __orchestratorGlow?: Graphics;
+  __heartbeatRing?: Graphics;
 };
 
 /** Resolve the effective size multiplier (exported for testing). */
@@ -157,6 +158,14 @@ export function createPlanet(props: PlanetProps): ExtendedPlanet {
   waitingRing.visible = false;
   container.addChild(waitingRing);
   container.__waitingRing = waitingRing;
+
+  // ── Heartbeat pulse ring (alive=teal, stale=amber, lost=grey, hidden by default) ──
+  const heartbeatRing = new Graphics();
+  heartbeatRing.circle(0, 0, r * 1.6).stroke({ width: 1.5, color: 0x40a060, alpha: 0.5 });
+  heartbeatRing.visible = false;
+  heartbeatRing.alpha = 0;
+  container.addChild(heartbeatRing);
+  container.__heartbeatRing = heartbeatRing;
 
   // ── Thinking ring (orbiting dots, hidden by default) ────────────────────
   const ringColor = resolveRingColor(agentType, ringColorOverride);
