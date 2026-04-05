@@ -48,6 +48,10 @@ export interface WebviewMessageDeps {
   setKnowledgeWorkspace: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
   setKnowledgePlan: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
   setHeartbeatStatuses?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setTraceSpans?: React.Dispatch<React.SetStateAction<Array<{ id: string; runId: string; spanType: string; name: string; agentId: string; parentSpanId?: string; startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown> }>>>;
+  setTraceAggregate?: React.Dispatch<React.SetStateAction<Record<string, number>>>;
+  setMcpServers?: React.Dispatch<React.SetStateAction<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>>;
+  setCompactingAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -160,6 +164,76 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         const data = msg as any;
         if (data.workspace) depsRef.current.setKnowledgeWorkspace(data.workspace);
         if (data.plan) depsRef.current.setKnowledgePlan(data.plan);
+        return;
+      }
+      if (msg?.type === 'traces-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (data.spans && depsRef.current.setTraceSpans) {
+          depsRef.current.setTraceSpans(data.spans);
+        }
+        if (data.aggregate && depsRef.current.setTraceAggregate) {
+          depsRef.current.setTraceAggregate(data.aggregate);
+        }
+        return;
+      }
+      if (msg?.type === 'mcp-servers-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (data.agentId && data.servers && depsRef.current.setMcpServers) {
+          depsRef.current.setMcpServers((prev: Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>) => ({
+            ...prev,
+            [data.agentId]: (data.servers as Array<{ name: string; status?: string; connected?: boolean; toolCount?: number }>).map((s: { name: string; status?: string; connected?: boolean; toolCount?: number }) => ({
+              name: s.name,
+              connected: s.connected ?? s.status === 'connected',
+              toolCount: s.toolCount ?? 0,
+            })),
+          }));
+        }
+        return;
+      }
+      if (msg?.type === 'compaction-event') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        const agentId = data.agentId as string;
+        const preTokens = data.preTokens as number | undefined;
+        const postTokens = data.postTokens as number | undefined;
+
+        // Add compaction log entry
+        const store = useCommandCenterStore.getState();
+        store.addLog({
+          id: `compaction-${Date.now()}-${agentId}`,
+          ts: new Date().toLocaleTimeString(),
+          agentId,
+          agentName: agentId.slice(0, 12),
+          type: 'compaction',
+        });
+
+        // Add compaction timeline entry
+        const agentState = depsRef.current.agentMapRef.current[agentId];
+        store.addTimelineEntry({
+          ts: Date.now(),
+          agentId,
+          agentName: agentState?.name ?? agentId,
+          agentType: agentState?.type ?? 'unknown',
+          kind: 'compaction',
+          label: preTokens && postTokens
+            ? `Context compacted: ${preTokens} -> ${postTokens} tokens`
+            : 'Context compacted',
+        });
+
+        // Trigger compaction visual on planet
+        if (depsRef.current.setCompactingAgentIds) {
+          depsRef.current.setCompactingAgentIds((prev: Record<string, boolean>) => ({ ...prev, [agentId]: true }));
+          // Clear after animation duration (1.5s)
+          setTimeout(() => {
+            depsRef.current.setCompactingAgentIds?.((prev: Record<string, boolean>) => {
+              const next = { ...prev };
+              delete next[agentId];
+              return next;
+            });
+          }, 1600);
+        }
         return;
       }
       if (msg?.type === 'skills-update') {

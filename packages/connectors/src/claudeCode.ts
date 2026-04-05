@@ -201,6 +201,22 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     if (typeof taskId === 'string') safePayload.taskId = taskId.slice(0, 128);
   }
 
+  // Capture MCP servers from SessionStart payload if present
+  if (hookEvent === 'SessionStart') {
+    const mcpServers = p.mcp_servers ?? nested?.mcp_servers;
+    if (Array.isArray(mcpServers)) {
+      safePayload.mcpServers = mcpServers.slice(0, 20).map((srv: unknown) => {
+        if (!srv || typeof srv !== 'object') return { name: 'unknown', status: 'unknown' };
+        const s = srv as Record<string, unknown>;
+        return {
+          name: String(s.name ?? 'unknown').slice(0, 128),
+          status: String(s.status ?? 'unknown').slice(0, 32),
+          toolCount: typeof s.tool_count === 'number' ? s.tool_count : (typeof s.toolCount === 'number' ? s.toolCount : undefined),
+        };
+      });
+    }
+  }
+
   // Capture model name if present in payload (any hook)
   const model = p.model ?? nested?.model;
   if (typeof model === 'string') safePayload.modelName = model.slice(0, 128);

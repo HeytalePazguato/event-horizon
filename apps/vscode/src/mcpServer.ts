@@ -18,6 +18,7 @@ import type { SessionStore } from './sessionStore.js';
 import type { HeartbeatManager } from './heartbeatManager.js';
 import type { WorktreeManager } from './worktreeManager.js';
 import type { BudgetManager } from './budgetManager.js';
+import type { TraceStore, SpanType } from './traceStore.js';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -550,6 +551,23 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id', 'plan_id', 'requested_amount_usd'],
     },
   },
+
+  // ── Phase 4: Observability tools ──────────────────────────────────────────
+
+  {
+    name: 'eh_get_traces',
+    description: 'Get structured trace spans for agent activity. Returns spans with timing, type, and metadata, plus aggregate time distribution.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        filter_agent_id: { type: 'string', description: 'Filter spans by agent ID (optional)' },
+        span_type: { type: 'string', description: 'Filter by span type: tool_call, task, agent_session, hook, llm_call (optional)' },
+        limit: { type: 'number', description: 'Max spans to return (default 50)' },
+      },
+      required: ['agent_id'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -606,6 +624,7 @@ export interface McpServerDeps {
   worktreeManager?: WorktreeManager;
   budgetManager?: BudgetManager;
   showBudgetRequest?: (planId: string, currentLimit: number, requestedAmount: number, reason: string) => Promise<boolean>;
+  traceStore?: TraceStore;
 }
 
 export class McpServer {
@@ -1549,6 +1568,19 @@ export class McpServer {
           return { approved: false, message: 'User declined the budget increase' };
         }
         return { error: 'Budget request UI not available' };
+      }
+
+      // ── Phase 4: Observability tools ───────────────────────────────────
+
+      case 'eh_get_traces': {
+        const { traceStore } = this.deps;
+        if (!traceStore) return { error: 'Trace store not available' };
+        const filterAgentId = args.filter_agent_id as string | undefined;
+        const spanType = args.span_type as SpanType | undefined;
+        const limit = typeof args.limit === 'number' ? Math.min(args.limit, 200) : 50;
+        const spans = traceStore.getSpans(filterAgentId, spanType, limit);
+        const aggregate = traceStore.getAggregate(filterAgentId);
+        return { spans, aggregate, totalSpans: traceStore.size, openSpans: traceStore.openCount };
       }
 
       default:

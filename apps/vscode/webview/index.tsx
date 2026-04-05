@@ -150,6 +150,10 @@ function App() {
   const [knowledgeWorkspace, setKnowledgeWorkspace] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
   const [knowledgePlan, setKnowledgePlan] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
   const [heartbeatStatuses, setHeartbeatStatuses] = useState<Record<string, string>>({});
+  const [traceSpans, setTraceSpans] = useState<Array<{ id: string; runId: string; spanType: string; name: string; agentId: string; parentSpanId?: string; startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown> }>>([]);
+  const [traceAggregate, setTraceAggregate] = useState<Record<string, number>>({});
+  const [mcpServers, setMcpServers] = useState<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>({});
+  const [compactingAgentIds, setCompactingAgentIds] = useState<Record<string, boolean>>({});
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -206,6 +210,8 @@ function App() {
     setRoles, setRoleAssignments, setAgentProfiles,
     setKnowledgeWorkspace, setKnowledgePlan,
     setHeartbeatStatuses,
+    setTraceSpans, setTraceAggregate,
+    setMcpServers, setCompactingAgentIds,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -470,6 +476,8 @@ function App() {
             planTasks={planDebris}
             visible={viewMode === 'universe'}
             heartbeatStatuses={heartbeatStatuses}
+            mcpServers={mcpServers}
+            compactingAgentIds={compactingAgentIds}
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
@@ -487,7 +495,9 @@ function App() {
           knowledgeWorkspace={knowledgeWorkspace} knowledgePlan={knowledgePlan} knowledgePlanName={plan?.name}
           onKnowledgeAdd={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-add', key, value, scope })}
           onKnowledgeEdit={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope })}
-          onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })} />
+          onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })}
+          traceSpans={traceSpans as import('@event-horizon/ui').OperationsViewProps['traceSpans']}
+          traceAggregate={traceAggregate} />
       )}
 
       <AchievementToasts />

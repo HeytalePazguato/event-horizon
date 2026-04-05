@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -414,6 +414,20 @@ export function activate(context: vscode.ExtensionContext): void {
   }, 30_000);
   context.subscriptions.push({ dispose: () => clearInterval(heartbeatCheckInterval) });
 
+  // ── Periodic trace broadcast (every 5s) ────────────────────────────────────
+  const traceBroadcastInterval = setInterval(() => {
+    if (!webviewRef.current) return;
+    if (traceStore.size === 0) return;
+    const spans = traceStore.getSpans(undefined, undefined, 100);
+    const aggregate = traceStore.getAggregate();
+    webviewRef.current.postMessage({
+      type: 'traces-update',
+      spans,
+      aggregate,
+    });
+  }, 5_000);
+  context.subscriptions.push({ dispose: () => clearInterval(traceBroadcastInterval) });
+
   // ── Status bar — live agent count ──────────────────────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBarItem.command = 'eventHorizon.focusWaitingAgent';
@@ -595,6 +609,58 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
+
+    // ── Trace span tracking ──
+    const runId = event.agentId; // session_id for correlation
+    if (event.type === 'tool.call') {
+      const toolName = (event.payload?.toolName as string) ?? 'unknown';
+      traceStore.startSpan('tool_call', toolName, event.agentId, runId, {
+        toolName,
+        filePath: event.payload?.filePath,
+        isSkill: event.payload?.isSkill,
+      });
+    } else if (event.type === 'tool.result') {
+      const toolName = (event.payload?.toolName as string) ?? 'unknown';
+      const spanId = traceStore.findInflight(event.agentId, 'tool_call', toolName);
+      if (spanId) traceStore.endSpan(spanId, { result: 'completed' });
+    } else if (event.type === 'task.start') {
+      const taskName = (event.payload?.taskId as string) ?? 'task';
+      traceStore.startSpan('task', taskName, event.agentId, runId, {
+        isSubagent: event.payload?.isSubagent,
+      });
+    } else if (event.type === 'task.complete' || event.type === 'task.fail') {
+      const taskName = (event.payload?.taskId as string) ?? 'task';
+      const spanId = traceStore.findInflight(event.agentId, 'task', taskName);
+      if (spanId) traceStore.endSpan(spanId, { status: event.type === 'task.complete' ? 'completed' : 'failed' });
+    } else if (event.type === 'agent.spawn') {
+      traceStore.startSpan('agent_session', event.agentName, event.agentId, runId, {
+        agentType: event.agentType,
+        cwd: event.payload?.cwd,
+      });
+    } else if (event.type === 'agent.idle' || event.type === 'agent.terminate') {
+      const spanId = traceStore.findInflight(event.agentId, 'agent_session', event.agentName);
+      if (spanId) traceStore.endSpan(spanId, { reason: event.type });
+    }
+
+    // ── Compaction event forwarding ──
+    if (event.payload?.hookType === 'context_compaction') {
+      webviewRef.current?.postMessage({
+        type: 'compaction-event',
+        agentId: event.agentId,
+        preTokens: event.payload.preTokens,
+        postTokens: event.payload.postTokens,
+        timestamp: event.timestamp,
+      });
+    }
+
+    // ── MCP server data forwarding (on agent spawn with mcp_servers) ──
+    if (event.type === 'agent.spawn' && event.payload?.mcpServers) {
+      webviewRef.current?.postMessage({
+        type: 'mcp-servers-update',
+        agentId: event.agentId,
+        servers: event.payload.mcpServers,
+      });
+    }
 
     // Focus-on-interaction: auto-focus terminal when agent enters waiting state
     if (event.type === 'agent.waiting') {

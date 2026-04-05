@@ -17,3 +17,5 @@ export { FileHeatmapFull } from './FileHeatmapFull.js';
 export { LogsPanel } from './LogsPanel.js';
 export { TimelinePanel } from './TimelinePanel.js';
 export { DependencyPanel } from './DependencyPanel.js';
+export { TracesPanel } from './TracesPanel.js';
+export type { TraceSpanView, TracesPanelProps } from './TracesPanel.js';

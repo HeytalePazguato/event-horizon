@@ -20,7 +20,9 @@ import type { PlanView, PlanSummary } from './panels/PlanPanel.js';
 import { RolesPanel } from './panels/RolesPanel.js';
 import { KnowledgePanel } from './panels/KnowledgePanel.js';
 import type { KnowledgeEntry } from './panels/KnowledgePanel.js';
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan' | 'roles' | 'knowledge';
+import { TracesPanel } from './panels/TracesPanel.js';
+import type { TraceSpanView } from './panels/TracesPanel.js';
+type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'traces' | 'skills' | 'plan' | 'roles' | 'knowledge';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -62,6 +64,8 @@ export interface OperationsViewProps {
   onKnowledgeAdd?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
   onKnowledgeEdit?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
   onKnowledgeDelete?: (key: string, scope: 'workspace' | 'plan') => void;
+  traceSpans?: TraceSpanView[];
+  traceAggregate?: Record<string, number>;
 }
 
 const OPS_TOOLTIP_STYLE: React.CSSProperties = {
@@ -79,7 +83,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {} }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
@@ -140,6 +144,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             <button type="button" style={tabStyle(activeTab === 'files')} onClick={() => setActiveTab('files')}>Files</button>
             <button type="button" style={tabStyle(activeTab === 'logs')} onClick={() => setActiveTab('logs')}>Logs</button>
             <button type="button" style={tabStyle(activeTab === 'timeline')} onClick={() => setActiveTab('timeline')}>Timeline</button>
+            <button type="button" style={tabStyle(activeTab === 'traces')} onClick={() => setActiveTab('traces')}>
+              Traces{traceSpans.length > 0 ? ` (${traceSpans.length})` : ''}
+            </button>
             <button type="button" style={tabStyle(activeTab === 'skills')} onClick={() => setActiveTab('skills')}>
               Skills{skillsCount > 0 ? ` (${skillsCount})` : ''}
             </button>
@@ -204,6 +211,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
                 <TimelinePanel agentCwds={agentCwds} />
               </div>
+            )}
+            {activeTab === 'traces' && (
+              <TracesPanel spans={traceSpans} aggregate={traceAggregate} agents={agents.map((a) => ({ id: a.id, name: a.name }))} />
             )}
             {activeTab === 'skills' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

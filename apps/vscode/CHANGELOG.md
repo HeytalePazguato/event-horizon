@@ -29,6 +29,16 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Knowledge in CommandCenter**: AgentIdentity panel shows knowledge counts (W/P) and 3 most recent entries when an agent is selected
 - **"Tell All" button**: new command in AgentControls grid — prompts for a message and broadcasts it as a workspace knowledge entry visible to all agents
 
+### Added — Phase 4: Advanced Observability
+- **Structured trace spans**: `TraceStore` records tool_call, task, agent_session, hook, and llm_call spans with timing, metadata, and parent-child nesting. Circular buffer of last 1000 spans. Start/end pairing via composite key lookup
+- **Traces panel**: new "Traces" tab in Operations View with waterfall timeline visualization. Color-coded bars by span type (blue for tools, green for tasks, orange for sessions, purple for hooks). Filter by agent, span type, and time range (5m/15m/1h/all). Click to expand full metadata. Aggregate time distribution bar at bottom
+- **MCP server status visualization**: Stations — hexagonal entities orbiting parent planets. Size proportional to toolCount, color reflects connected (green) vs disconnected (red) status. Pulse animation when tools are being called. StationSystem manages lifecycle and orbit animation
+- **Context compaction visualization**: planets briefly shrink to 0.7x then re-inflate over 1.5s when a PostCompact event fires. Compaction events logged to the activity log and shown as vertical orange markers on the timeline
+- **MCP server capture in Claude Code connector**: SessionStart hook now captures `mcp_servers` array from payload with name, status, and toolCount per server
+- **New MCP tool**: `eh_get_traces` — query trace spans with optional agent/type filters and limit. Returns spans + aggregate time distribution. Total: 39 MCP tools
+- **Periodic trace broadcast**: extension host sends trace updates to webview every 5 seconds (not per-event) to avoid chattiness
+- **Compaction event forwarding**: PostCompact events immediately broadcast to webview with preTokens/postTokens for visual feedback
+
 ### Added — Phase 3: Scheduling, DAG, Isolation, Heartbeat, Telemetry, Budget
 - **Scheduling strategies**: plans support `<!-- strategy: round-robin -->` metadata. Auto-assign uses the plan's configured strategy by default, with 4 strategies: `round-robin`, `least-busy`, `capability-match`, `dependency-first`. Strategy badge shown on plan header in Kanban view
 - **Task DAG visualization**: new "Dependencies" tab in Operations View renders a directed acyclic graph of task dependencies using topological sort (Kahn's algorithm), highlights the critical path in red, and warns about dependency cycles

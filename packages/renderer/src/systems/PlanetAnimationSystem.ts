@@ -15,6 +15,7 @@ export interface AnimatedPlanet {
   __waitingRing?: Container & { alpha: number; visible: boolean; scale: { set: (v: number) => void } };
   __heartbeatRing?: Graphics & { alpha: number; visible: boolean; scale: { set: (v: number) => void }; tint: number };
   __radius?: number;
+  __compactionStartTime?: number;
   alpha: number;
   scale: { set: (v: number) => void };
 }
@@ -27,6 +28,7 @@ export interface PlanetAnimationContext {
   boostedAgentIds: Record<string, boolean>;
   isolatedAgentId: string | null;
   heartbeatStatuses?: Record<string, string>;
+  compactingAgentIds?: Record<string, boolean>;
 }
 
 /** Animate all planets — pulse, thinking ring, error glow, waiting ring. */
@@ -64,8 +66,31 @@ export function animatePlanets(planets: AnimatedPlanet[], ctx: PlanetAnimationCo
       else if (variant === 'volcanic') pulse = 1 + 0.022 * Math.abs(Math.sin(t * 2.8));
       else                             pulse = 1 + 0.015 * Math.sin(t * 2.2);
     }
-    if (!isPaused) p.scale.set(pulse * (isBoosted ? 1.22 : 1));
-    if (isPaused) p.scale.set(1);
+    // Compaction animation: shrink to 0.7x then re-inflate over ~1.5s
+    let compactionScale = 1;
+    if (ctx.compactingAgentIds?.[agentId]) {
+      if (!p.__compactionStartTime) {
+        p.__compactionStartTime = t;
+      }
+      const elapsed = t - p.__compactionStartTime;
+      const COMPACTION_DURATION = 1.5;
+      if (elapsed < COMPACTION_DURATION) {
+        // First half: shrink to 0.7, second half: re-inflate to 1.0
+        const progress = elapsed / COMPACTION_DURATION;
+        if (progress < 0.4) {
+          compactionScale = 1 - 0.3 * (progress / 0.4);
+        } else {
+          compactionScale = 0.7 + 0.3 * ((progress - 0.4) / 0.6);
+        }
+      } else {
+        p.__compactionStartTime = undefined;
+      }
+    } else {
+      p.__compactionStartTime = undefined;
+    }
+
+    if (!isPaused) p.scale.set(pulse * (isBoosted ? 1.22 : 1) * compactionScale);
+    if (isPaused) p.scale.set(1 * compactionScale);
 
     // Thinking ring
     const ring = p.__thinkingRing;

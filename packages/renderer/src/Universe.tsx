@@ -39,6 +39,7 @@ import type { DebrisPlan } from './systems/DebrisSystem.js';
 import { updateLightning } from './systems/LightningSystem.js';
 import { handleWheel, handlePointerDown, handlePointerMove, handlePointerUp } from './systems/InputHandler.js';
 import type { InputRefs } from './systems/InputHandler.js';
+import { StationSystem } from './systems/StationSystem.js';
 
 export interface MetricsView {
   load: number;
@@ -128,6 +129,10 @@ export interface UniverseProps {
   orchestratorAgentIds?: Record<string, boolean>;
   /** Heartbeat status per agent: 'alive' | 'stale' | 'lost'. */
   heartbeatStatuses?: Record<string, string>;
+  /** MCP server data per agent — rendered as orbiting stations. */
+  mcpServers?: Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>;
+  /** Agent IDs currently undergoing context compaction. */
+  compactingAgentIds?: Record<string, boolean>;
 }
 
 // --- constants -----------------------------------------------------------
@@ -325,6 +330,8 @@ export const Universe: FC<UniverseProps> = ({
   visible = true,
   orchestratorAgentIds = {},
   heartbeatStatuses = {},
+  mcpServers = {},
+  compactingAgentIds = {},
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -411,6 +418,8 @@ export const Universe: FC<UniverseProps> = ({
   const animationSpeedRef = useRef(animationSpeed);
   const orchestratorIdsRef = useRef(orchestratorAgentIds);
   const heartbeatStatusesRef = useRef(heartbeatStatuses);
+  const compactingAgentIdsRef = useRef(compactingAgentIds);
+  const mcpServersRef = useRef(mcpServers);
   const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
@@ -418,6 +427,7 @@ export const Universe: FC<UniverseProps> = ({
   const agentSkillCountsRef = useRef<Record<string, number>>(agentSkillCounts);
   const activeSkillsRef = useRef<Record<string, { name: string; index: number }>>(activeSkills);
   const tickTimeRef = useRef(0);
+  const stationSystemRef = useRef<StationSystem | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
 
@@ -488,6 +498,8 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { animationSpeedRef.current = animationSpeed; }, [animationSpeed]);
   useEffect(() => { orchestratorIdsRef.current = orchestratorAgentIds; }, [orchestratorAgentIds]);
   useEffect(() => { heartbeatStatusesRef.current = heartbeatStatuses; }, [heartbeatStatuses]);
+  useEffect(() => { compactingAgentIdsRef.current = compactingAgentIds; }, [compactingAgentIds]);
+  useEffect(() => { mcpServersRef.current = mcpServers; }, [mcpServers]);
   useEffect(() => { visibleRef.current = visible; }, [visible]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
@@ -595,6 +607,10 @@ export const Universe: FC<UniverseProps> = ({
         world.addChild(shipsContainer);
         shipsContainerRef.current = shipsContainer;
 
+        const stationsContainer = new Container();
+        world.addChild(stationsContainer);
+        stationSystemRef.current = new StationSystem(stationsContainer);
+
         const spiralContainer = new Container();
         world.addChild(spiralContainer);
         spiralContainerRef.current = spiralContainer;
@@ -681,6 +697,10 @@ export const Universe: FC<UniverseProps> = ({
       debrisContainerRef.current = null;
       debrisTaskIdsRef.current = new Set();
       shipsContainerRef.current = null;
+      if (stationSystemRef.current) {
+        stationSystemRef.current.destroy();
+        stationSystemRef.current = null;
+      }
       spiralContainerRef.current = null;
       astronautsContainerRef.current = null;
       for (const a of astronautsRef.current) {
@@ -1436,6 +1456,7 @@ export const Universe: FC<UniverseProps> = ({
         boostedAgentIds: boostedRef.current,
         isolatedAgentId: isolatedRef.current,
         heartbeatStatuses: heartbeatStatusesRef.current,
+        compactingAgentIds: compactingAgentIdsRef.current,
       });
 
       // Animate skill orbit rings
@@ -1456,6 +1477,20 @@ export const Universe: FC<UniverseProps> = ({
       const debrisContainer = debrisContainerRef.current;
       if (debrisContainer) {
         updateDebris(debrisContainer, planetPositionsRef.current, planTasksRef.current, debrisTaskIdsRef.current, t);
+      }
+
+      // Station system (MCP servers orbiting planets)
+      const stationSys = stationSystemRef.current;
+      if (stationSys) {
+        const mcpData = mcpServersRef.current;
+        if (mcpData) {
+          const posObj: Record<string, { x: number; y: number }> = {};
+          for (const [id, pos] of planetPositionsRef.current) {
+            posObj[id] = pos;
+          }
+          stationSys.sync(mcpData, posObj);
+          stationSys.update(dt, t, posObj);
+        }
       }
 
       // Animate ships along bezier arcs (delegated to ShipSystem)

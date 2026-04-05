@@ -20,3 +20,6 @@ export { KnowledgePanel } from './panels/KnowledgePanel.js';
 export type { KnowledgeEntry, KnowledgePanelProps } from './panels/KnowledgePanel.js';
 export { AchievementToasts, AchievementsBar, ACHIEVEMENTS, TIER_LABELS, tierBorderColor, getMedal } from './achievements/index.js';
 export type { Achievement } from './achievements/index.js';
+export { TracesPanel } from './panels/TracesPanel.js';
+export type { TraceSpanView, TracesPanelProps } from './panels/TracesPanel.js';
+export type { OperationsViewProps } from './OperationsView.js';

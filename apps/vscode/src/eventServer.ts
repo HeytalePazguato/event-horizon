@@ -50,6 +50,7 @@ import { syncSkillsForAgent } from './skillSync.js';
 import { HeartbeatManager } from './heartbeatManager.js';
 import { WorktreeManager } from './worktreeManager.js';
 import { BudgetManager } from './budgetManager.js';
+import { TraceStore } from './traceStore.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -63,6 +64,7 @@ export const sessionStore = new SessionStore();
 export const heartbeatManager = new HeartbeatManager();
 export const worktreeManager = new WorktreeManager();
 export const budgetManager = new BudgetManager();
+export const traceStore = new TraceStore();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -97,6 +99,7 @@ export function initMcpServer(deps: {
     heartbeatManager,
     worktreeManager,
     budgetManager,
+    traceStore,
   });
 }
 
