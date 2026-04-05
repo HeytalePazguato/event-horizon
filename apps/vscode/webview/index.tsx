@@ -176,7 +176,7 @@ function App() {
   const toggleMarketplace    = useCommandCenterStore((s) => s.toggleMarketplace);
   const selectSingularity    = useCommandCenterStore((s) => s.selectSingularity);
   const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
-  const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
+  const _singularityStats    = useCommandCenterStore((s) => s.singularityStats);
   const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
   const screenshotRequestedAt = useCommandCenterStore((s) => s.screenshotRequestedAt);
   const viewMode             = useCommandCenterStore((s) => s.viewMode);

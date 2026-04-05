@@ -1002,7 +1002,7 @@ export class McpServer {
         // Score each task
         const scored = available.map((task) => {
           let score = 0;
-          let reasons: string[] = [];
+          const reasons: string[] = [];
 
           // 1. Role keyword match (40%)
           if (task.role) {

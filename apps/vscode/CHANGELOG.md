@@ -2,37 +2,9 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [1.3.0] — 2026-04-05
+## [1.2.0] — 2026-04-05
 
-### Added — Phase 2: Agent Spawning Infrastructure
-
-- **Orchestrator role**: 7th built-in role that decomposes goals into plans, spawns workers, monitors team progress, and synthesizes results. Auto-promoted when an agent loads a plan via `eh_load_plan`
-- **SpawnRegistry**: pluggable backend system for spawning AI agents in VS Code terminals. Ships with three backends: ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner
-- **Claude Code spawner**: launches `claude -p "..." --output-format stream-json` with role injection via `--append-system-prompt`, resume support via `--resume <sessionId>`
-- **OpenCode spawner**: launches `opencode -p "..." -f json -q` (or `crush` fallback) in a new terminal
-- **Cursor spawner**: launches `cursor --cli -p "..."` in a new terminal
-- **5 orchestrator-only MCP tools**: `eh_spawn_agent`, `eh_stop_agent`, `eh_reassign_task`, `eh_get_team_status`, `eh_auto_assign` — only executable by the plan's orchestrator agent
-- **`eh_claim_orchestrator`**: allows any agent to claim orchestrator role for a plan if the current orchestrator is disconnected
-- **`eh_get_session`**: agents can check if a task has a prior session for resumption
-- **`eh_sync_skills`**: orchestrator can sync bundled EH skills to a target agent's skill directory
-- **Session persistence**: `SessionStore` saves agent session IDs per task, persisted to VS Code globalState, enabling `--resume` on subsequent spawns
-- **Skill syncing**: before spawning, bundled Event Horizon skills are copied to the agent's skill directory (`~/.claude/skills/event-horizon/` for Claude Code, `~/.config/opencode/plugins/skills/event-horizon/` for OpenCode)
-- **Auto-assign strategies**: `eh_auto_assign` supports `round-robin`, `least-busy`, and `capability-match` (default) strategies for bulk task assignment
-- **Status bar click-to-terminal**: clicking the status bar when agents are waiting shows a QuickPick to focus the agent's terminal; with 1 waiting agent, focuses directly; with 0, opens Universe panel
-- **Spawn terminal focus setting**: `eventHorizon.spawnTerminalFocus` configuration — `background`, `focus`, or `focus-on-interaction` (default, auto-focuses terminal when agent enters waiting state)
-- **Enhanced Spawn UI**: SpawnModal now has two modes — Quick Launch (simple CLI) and With Prompt (advanced spawn with agent type, role, and custom prompt)
-- **Multi-plan orchestration**: `orchestratorAgentId` is per-plan, multiple plans can have different orchestrators, orchestrator tools accept `plan_id` parameter
-- **8 new MCP tools total**: `eh_claim_orchestrator`, `eh_spawn_agent`, `eh_stop_agent`, `eh_reassign_task`, `eh_get_team_status`, `eh_auto_assign`, `eh_get_session`, `eh_sync_skills` — total: 33 MCP tools
-
-### Improved
-- **Plan board**: `orchestratorAgentId` field tracks which agent is orchestrator per plan
-- **`eh_load_plan`**: automatically promotes the loading agent to orchestrator for that plan
-- **Status bar**: shows waiting agent names in tooltip, click navigates to agent terminal
-- **Terminal management**: spawned agent terminals are tracked and cleaned up on close
-
-## [1.2.0] — 2026-04-04
-
-### Added
+### Added — Phase 1: Coordination Core
 - **Cascade failure system**: when a task fails, all transitive dependents are automatically marked as failed with root cause messages. Configurable per-plan via `onDependencyFailure: cascade | block | ignore` metadata
 - **Task retry with backoff**: new `eh_retry_task` MCP tool resets failed tasks to pending, increments retry count, and un-cascades dependents. Supports `maxRetries` per task
 - **Dependency cycle detection**: plans are validated for circular dependencies on load using DFS coloring — cycles reported with full path
@@ -56,6 +28,21 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Knowledge search/filter**: search input in Knowledge Panel filters entries by key, author, value, or exact scope match
 - **Knowledge in CommandCenter**: AgentIdentity panel shows knowledge counts (W/P) and 3 most recent entries when an agent is selected
 - **"Tell All" button**: new command in AgentControls grid — prompts for a message and broadcasts it as a workspace knowledge entry visible to all agents
+
+### Added — Phase 2: Agent Spawning Infrastructure
+- **Orchestrator role**: 7th built-in role auto-promoted when an agent loads a plan via `eh_load_plan`. Decomposes goals, spawns workers, monitors team progress
+- **SpawnRegistry**: pluggable backend system for spawning AI agents in VS Code terminals — ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner
+- **Claude Code spawner**: `claude -p --output-format stream-json` with role injection, session resume via `--resume`
+- **OpenCode spawner**: `opencode -p -f json -q` (or `crush` fallback)
+- **Cursor spawner**: `cursor --cli -p` (learned from Paperclip's adapter)
+- **8 new MCP tools**: `eh_claim_orchestrator`, `eh_spawn_agent`, `eh_stop_agent`, `eh_reassign_task`, `eh_get_team_status`, `eh_auto_assign`, `eh_get_session`, `eh_sync_skills` — total: 33 MCP tools
+- **Session persistence**: SessionStore saves agent session IDs per task in globalState, enabling `--resume` on subsequent spawns
+- **Skill syncing**: bundled EH skills auto-copied to agent's skill directory before spawning
+- **Status bar click-to-terminal**: click when agents waiting → QuickPick to focus agent's terminal
+- **Spawn terminal focus setting**: `eventHorizon.spawnTerminalFocus` — background, focus, or focus-on-interaction
+- **Spawn UI**: SpawnModal with Quick Launch + With Prompt modes
+- **Multi-plan orchestration**: `orchestratorAgentId` per plan, tools accept `plan_id`
+- **Orchestrator star visual**: planets with orchestrator role rendered with golden glow + emission rays
 
 ## [1.1.0] — 2026-04-03
 
