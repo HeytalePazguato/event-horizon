@@ -851,13 +851,20 @@ export function activate(context: vscode.ExtensionContext): void {
   const configuredPort = ehConfig.get<number>('port', 28765);
   setFileLockingEnabled(ehConfig.get<boolean>('fileLockingEnabled', false));
 
-  // Re-read file locking setting when changed
+  // Set default worktree isolation from config
+  spawnRegistry.setDefaultIsolation(ehConfig.get<boolean>('worktreeIsolation', false) ? 'worktree' : 'none');
+
+  // Re-read settings when changed
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('eventHorizon.fileLockingEnabled')) {
         setFileLockingEnabled(
           vscode.workspace.getConfiguration('eventHorizon').get<boolean>('fileLockingEnabled', false),
         );
+      }
+      if (e.affectsConfiguration('eventHorizon.worktreeIsolation')) {
+        const enabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('worktreeIsolation', false);
+        spawnRegistry.setDefaultIsolation(enabled ? 'worktree' : 'none');
       }
       if (e.affectsConfiguration('eventHorizon.budgetWarningThreshold')) {
         budgetManager.setWarningThreshold(

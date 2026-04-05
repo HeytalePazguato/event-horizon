@@ -104,6 +104,12 @@
           "description": "Enable file locking to prevent multiple agents from writing to the same file simultaneously. When enabled, agents must acquire a lock before writing — conflicting writes are blocked. Requires reinstalling hooks.",
           "order": 2
         },
+        "eventHorizon.worktreeIsolation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable git worktree isolation for spawned agents. Each agent gets its own copy of the repository — eliminates file conflicts entirely. Works with any git host (GitHub, GitLab, Bitbucket). Disable if you don't want extra branches.",
+          "order": 2
+        },
         "eventHorizon.animationSpeed": {
           "type": "number",
           "default": 1.0,

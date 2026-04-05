@@ -91,6 +91,8 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
   const setFileLockingEnabled = useCommandCenterStore((s) => s.setFileLockingEnabled);
+  const worktreeIsolation = useCommandCenterStore((s) => s.worktreeIsolation);
+  const setWorktreeIsolation = useCommandCenterStore((s) => s.setWorktreeIsolation);
   const demoMode = useCommandCenterStore((s) => s.demoMode);
   const demoStartedAt = useCommandCenterStore((s) => s.demoStartedAt);
   const requestDemo = useCommandCenterStore((s) => s.requestDemo);
@@ -297,6 +299,29 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
           onMouseLeave={() => setHoveredTooltip(null)}
         >
           {fileLockingEnabled ? 'Locks ON' : 'Locks OFF'}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setWorktreeIsolation(!worktreeIsolation)}
+          style={{
+            padding: '2px 8px',
+            border: `1px solid ${worktreeIsolation ? '#4a7a9a' : '#1a3020'}`,
+            borderRadius: 2,
+            background: worktreeIsolation ? 'rgba(40,70,100,0.4)' : 'transparent',
+            color: worktreeIsolation ? '#6ab0d4' : '#3a6a48',
+            fontSize: 11,
+            fontFamily: 'Consolas, monospace',
+            cursor: 'pointer',
+            fontWeight: 500,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+          onMouseEnter={() => setHoveredTooltip('Worktree Isolation: spawned agents get their own git worktree — no file conflicts')}
+          onMouseLeave={() => setHoveredTooltip(null)}
+        >
+          {worktreeIsolation ? 'Worktrees ON' : 'Worktrees OFF'}
         </button>
 
         {demoMode && (

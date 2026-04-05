@@ -86,6 +86,17 @@ export class SpawnRegistry {
   /** Worktree manager reference — set externally by eventServer initMcpServer. */
   worktreeManager?: import('./worktreeManager.js').WorktreeManager;
 
+  /** Default isolation mode — controlled by VS Code setting. */
+  private defaultIsolation: 'none' | 'worktree' = 'none';
+
+  setDefaultIsolation(mode: 'none' | 'worktree'): void {
+    this.defaultIsolation = mode;
+  }
+
+  getDefaultIsolation(): 'none' | 'worktree' {
+    return this.defaultIsolation;
+  }
+
   async spawn(type: string, opts: SpawnOpts): Promise<SpawnResult> {
     const backend = this.backends.get(type);
     if (!backend) {
@@ -96,8 +107,11 @@ export class SpawnRegistry {
       return { agentId: '', type, status: 'unavailable', message: `${type} CLI is not available in PATH` };
     }
 
+    // Apply default isolation if not explicitly specified
+    const isolation = opts.isolation ?? (this.defaultIsolation === 'worktree' ? 'worktree' : undefined);
+
     // Worktree isolation: create worktree and override cwd
-    if (opts.isolation === 'worktree' && opts.taskId && this.worktreeManager) {
+    if (isolation === 'worktree' && opts.taskId && this.worktreeManager) {
       const cwd = opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (cwd) {
         try {

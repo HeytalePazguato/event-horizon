@@ -206,6 +206,7 @@ function readVscodeConfig(): {
   animationSpeed: number;
   eventServerPort: number;
   fileLockingEnabled: boolean;
+  worktreeIsolation: boolean;
   viewMode: 'universe' | 'operations';
   planShowAllColumns: boolean;
   fontSize: 'small' | 'default' | 'large';
@@ -224,6 +225,7 @@ function readVscodeConfig(): {
     animationSpeed: cfg.get<number>('animationSpeed', 1.0),
     eventServerPort: cfg.get<number>('port', 28765),
     fileLockingEnabled: cfg.get<boolean>('fileLockingEnabled', false),
+    worktreeIsolation: cfg.get<boolean>('worktreeIsolation', false),
     viewMode: cfg.get<'universe' | 'operations'>('defaultView', 'universe'),
     planShowAllColumns: cfg.get<boolean>('planShowAllColumns', false),
     fontSize: cfg.get<'small' | 'default' | 'large'>('fontSize', 'default'),
@@ -237,6 +239,7 @@ async function writeVscodeConfig(msg: {
   animationSpeed?: number;
   eventServerPort?: number;
   fileLockingEnabled?: boolean;
+  worktreeIsolation?: boolean;
   viewMode?: 'universe' | 'operations';
   planShowAllColumns?: boolean;
   fontSize?: 'small' | 'default' | 'large';
@@ -253,6 +256,9 @@ async function writeVscodeConfig(msg: {
   }
   if (msg.fileLockingEnabled !== undefined) {
     await cfg.update('fileLockingEnabled', msg.fileLockingEnabled, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.worktreeIsolation !== undefined) {
+    await cfg.update('worktreeIsolation', msg.worktreeIsolation, vscode.ConfigurationTarget.Global);
   }
   if (msg.viewMode !== undefined) {
     await cfg.update('defaultView', msg.viewMode, vscode.ConfigurationTarget.Global);
@@ -431,6 +437,7 @@ function wireUniverseWebview(
         animationSpeed: msg.animationSpeed as number | undefined,
         eventServerPort: msg.eventServerPort as number | undefined,
         fileLockingEnabled: msg.fileLockingEnabled as boolean | undefined,
+        worktreeIsolation: msg.worktreeIsolation as boolean | undefined,
         viewMode: msg.viewMode as 'universe' | 'operations' | undefined,
         planShowAllColumns: msg.planShowAllColumns as boolean | undefined,
         fontSize: msg.fontSize as 'small' | 'default' | 'large' | undefined,

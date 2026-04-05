@@ -29,6 +29,8 @@ export interface SettingsSlice {
   setEventServerPort: (port: number) => void;
   fileLockingEnabled: boolean;
   setFileLockingEnabled: (enabled: boolean) => void;
+  worktreeIsolation: boolean;
+  setWorktreeIsolation: (enabled: boolean) => void;
   fileLocks: Record<string, { agentId: string; agentName: string; acquiredAt: number }>;
   setFileLocks: (locks: Record<string, { agentId: string; agentName: string; acquiredAt: number }>) => void;
   skills: SkillInfo[];
@@ -88,6 +90,8 @@ export function createSettingsSlice(set: SetFn): SettingsSlice {
     setEventServerPort: (port) => set(() => ({ eventServerPort: Math.max(1024, Math.min(65535, port)) })),
     fileLockingEnabled: false,
     setFileLockingEnabled: (enabled) => set(() => ({ fileLockingEnabled: enabled })),
+    worktreeIsolation: false,
+    setWorktreeIsolation: (enabled) => set(() => ({ worktreeIsolation: enabled })),
     fileLocks: {},
     setFileLocks: (locks) => set(() => ({ fileLocks: locks })),
     skills: [],
