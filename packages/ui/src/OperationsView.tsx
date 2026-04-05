@@ -22,7 +22,8 @@ import { KnowledgePanel } from './panels/KnowledgePanel.js';
 import type { KnowledgeEntry } from './panels/KnowledgePanel.js';
 import { TracesPanel } from './panels/TracesPanel.js';
 import type { TraceSpanView } from './panels/TracesPanel.js';
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'traces' | 'skills' | 'plan' | 'roles' | 'knowledge';
+type OpsTab = 'overview' | 'activity' | 'files' | 'skills' | 'plan' | 'roles' | 'knowledge';
+type ActivityView = 'timeline' | 'traces' | 'logs';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -85,6 +86,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
 
 export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {} }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
+  const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
@@ -141,12 +143,8 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             flexShrink: 0,
           }}>
             <button type="button" style={tabStyle(activeTab === 'overview')} onClick={() => setActiveTab('overview')}>Overview</button>
+            <button type="button" style={tabStyle(activeTab === 'activity')} onClick={() => setActiveTab('activity')}>Activity</button>
             <button type="button" style={tabStyle(activeTab === 'files')} onClick={() => setActiveTab('files')}>Files</button>
-            <button type="button" style={tabStyle(activeTab === 'logs')} onClick={() => setActiveTab('logs')}>Logs</button>
-            <button type="button" style={tabStyle(activeTab === 'timeline')} onClick={() => setActiveTab('timeline')}>Timeline</button>
-            <button type="button" style={tabStyle(activeTab === 'traces')} onClick={() => setActiveTab('traces')}>
-              Traces{traceSpans.length > 0 ? ` (${traceSpans.length})` : ''}
-            </button>
             <button type="button" style={tabStyle(activeTab === 'skills')} onClick={() => setActiveTab('skills')}>
               Skills{skillsCount > 0 ? ` (${skillsCount})` : ''}
             </button>
@@ -202,18 +200,41 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
                 <FileHeatmapFull />
               </div>
             )}
-            {activeTab === 'logs' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                <LogsPanel />
+            {activeTab === 'activity' && (
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+                {/* Activity sub-toggle */}
+                <div style={{ display: 'flex', gap: 0, flexShrink: 0, padding: '8px 16px 0', background: 'rgba(8,16,10,0.5)' }}>
+                  {([
+                    { id: 'timeline' as ActivityView, label: 'Timeline' },
+                    { id: 'traces' as ActivityView, label: 'Traces' },
+                    { id: 'logs' as ActivityView, label: 'Logs' },
+                  ]).map((v) => (
+                    <button key={v.id} type="button" onClick={() => setActivityView(v.id)} style={{
+                      padding: '4px 12px', border: 'none', fontSize: 11, fontFamily: 'Consolas, monospace', cursor: 'pointer',
+                      background: activityView === v.id ? 'rgba(30,70,45,0.4)' : 'transparent',
+                      color: activityView === v.id ? '#90d898' : '#4a7a58',
+                      borderBottom: activityView === v.id ? '2px solid #40a060' : '2px solid transparent',
+                      fontWeight: activityView === v.id ? 600 : 400,
+                    }}>{v.label}{v.id === 'traces' && traceSpans.length > 0 ? ` (${traceSpans.length})` : ''}</button>
+                  ))}
+                </div>
+                {/* Activity content */}
+                <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                  {activityView === 'timeline' && (
+                    <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                      <TimelinePanel agentCwds={agentCwds} />
+                    </div>
+                  )}
+                  {activityView === 'traces' && (
+                    <TracesPanel spans={traceSpans} aggregate={traceAggregate} agents={agents.map((a) => ({ id: a.id, name: a.name }))} />
+                  )}
+                  {activityView === 'logs' && (
+                    <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                      <LogsPanel />
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-            {activeTab === 'timeline' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                <TimelinePanel agentCwds={agentCwds} />
-              </div>
-            )}
-            {activeTab === 'traces' && (
-              <TracesPanel spans={traceSpans} aggregate={traceAggregate} agents={agents.map((a) => ({ id: a.id, name: a.name }))} />
             )}
             {activeTab === 'skills' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
