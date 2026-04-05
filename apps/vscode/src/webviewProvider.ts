@@ -548,6 +548,14 @@ function wireUniverseWebview(
       } catch { /* ignore invalid role edit */ }
     } else if (msg?.type === 'delete-role') {
       roleManager.removeCustomRole(msg.roleId as string);
+    } else if (msg?.type === 'tell-all-prompt') {
+      void vscode.window.showInputBox({ prompt: 'Broadcast message to all agents', placeHolder: 'Enter a message...' }).then((value) => {
+        if (value && value.trim()) {
+          sharedKnowledge.write(`broadcast-${Date.now()}`, value.trim(), 'workspace', 'user', 'user');
+          // Notify webview so it can refresh knowledge state
+          void webview.postMessage({ type: 'tell-all-result', success: true });
+        }
+      });
     } else if (msg?.type === 'knowledge-add') {
       sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
     } else if (msg?.type === 'knowledge-edit') {

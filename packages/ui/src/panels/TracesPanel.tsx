@@ -5,8 +5,11 @@
  */
 
 import type { FC } from 'react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useCommandCenterStore } from '../store.js';
+
+type WaterfallMode = 'compact' | 'proportional';
 
 export type SpanType = 'llm_call' | 'tool_call' | 'task' | 'agent_session' | 'hook';
 
@@ -89,7 +92,9 @@ const filterButtonStyle = (active: boolean): React.CSSProperties => ({
 });
 
 export const TracesPanel: FC<TracesPanelProps> = ({ spans, aggregate, agents = [] }) => {
-  const [agentFilter, setAgentFilter] = useState<string>('all');
+  // Use the sidebar's selected agent instead of a separate dropdown
+  const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
+  const agentFilter = selectedAgentId ?? 'all';
   const [typeFilters, setTypeFilters] = useState<Record<string, boolean>>({
     tool_call: true,
     task: true,
@@ -100,6 +105,11 @@ export const TracesPanel: FC<TracesPanelProps> = ({ spans, aggregate, agents = [
   const [timeRange, setTimeRange] = useState<number>(5 * 60 * 1000);
   const [expandedSpanId, setExpandedSpanId] = useState<string | null>(null);
   const [hoveredSpan, setHoveredSpan] = useState<TraceSpanView | null>(null);
+  const [waterfallMode, setWaterfallMode] = useState<WaterfallMode>('compact');
+
+  const toggleWaterfallMode = useCallback(() => {
+    setWaterfallMode((prev) => (prev === 'compact' ? 'proportional' : 'compact'));
+  }, []);
 
   const toggleType = (type: string) => {
     setTypeFilters((prev) => ({ ...prev, [type]: !prev[type] }));
@@ -117,10 +127,13 @@ export const TracesPanel: FC<TracesPanelProps> = ({ spans, aggregate, agents = [
     });
   }, [spans, agentFilter, typeFilters, timeRange]);
 
-  // Time range for positioning
+  // Time range for proportional positioning
   const minTs = filteredSpans.length > 0 ? Math.min(...filteredSpans.map((s) => s.startMs)) : Date.now();
   const maxTs = filteredSpans.length > 0 ? Math.max(...filteredSpans.map((s) => s.endMs)) : Date.now();
   const timeSpan = Math.max(maxTs - minTs, 1000);
+
+  // Compact mode: pack bars left-to-right by order, width proportional to duration
+  const maxDuration = filteredSpans.length > 0 ? Math.max(...filteredSpans.map((s) => s.durationMs), 1) : 1;
 
   // Build tree structure for nesting
   const rootSpans = useMemo(() => {
@@ -154,14 +167,6 @@ export const TracesPanel: FC<TracesPanelProps> = ({ spans, aggregate, agents = [
     return result;
   }, [rootSpans]);
 
-  // Unique agent names for the dropdown
-  const agentOptions = useMemo(() => {
-    const ids = new Set(spans.map((s) => s.agentId));
-    return [...ids].map((id) => {
-      const agent = agents.find((a) => a.id === id);
-      return { id, name: agent?.name ?? id.slice(0, 12) };
-    });
-  }, [spans, agents]);
 
   if (spans.length === 0) {
     return (
@@ -202,27 +207,13 @@ export const TracesPanel: FC<TracesPanelProps> = ({ spans, aggregate, agents = [
 
       {/* Filter controls */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
-        {/* Agent filter */}
+        {/* Agent indicator — use sidebar selection */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 11, color: '#4a7a58' }}>Agent:</span>
-          <select
-            value={agentFilter}
-            onChange={(e) => setAgentFilter(e.target.value)}
-            style={{
-              background: '#0c1318',
-              color: '#90d898',
-              border: '1px solid #1a3020',
-              borderRadius: 2,
-              fontSize: 11,
-              fontFamily: 'Consolas, monospace',
-              padding: '2px 4px',
-            }}
-          >
-            <option value="all">All Agents</option>
-            {agentOptions.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+          <span style={{ fontSize: 11, color: '#90d898' }}>
+            {agentFilter === 'all' ? 'All Agents' : (agents.find((a) => a.id === agentFilter)?.name ?? agentFilter.slice(0, 12))}
+          </span>
+          {agentFilter !== 'all' && <span style={{ fontSize: 9, color: '#3a5a48' }}>(select "All" in sidebar to see all)</span>}
         </div>
 
         {/* Span type checkboxes */}
@@ -251,14 +242,34 @@ export const TracesPanel: FC<TracesPanelProps> = ({ spans, aggregate, agents = [
           ))}
         </div>
 
+        {/* Waterfall mode toggle */}
+        <button
+          type="button"
+          style={filterButtonStyle(true)}
+          onClick={toggleWaterfallMode}
+        >
+          {waterfallMode === 'compact' ? 'Compact' : 'Proportional'}
+        </button>
+
         <span style={{ marginLeft: 'auto', fontSize: 11, color: '#3a6a48' }}>{filteredSpans.length} spans</span>
       </div>
 
       {/* Waterfall view */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
-        {flatList.map(({ span, depth }) => {
-          const leftPercent = ((span.startMs - minTs) / timeSpan) * 100;
-          const widthPercent = Math.max(0.5, ((span.endMs - span.startMs) / timeSpan) * 100);
+        {flatList.map(({ span, depth }, index) => {
+          let leftPercent: number;
+          let widthPercent: number;
+          if (waterfallMode === 'compact') {
+            // Compact: pack sequentially, width proportional to duration relative to longest
+            const COMPACT_GAP = 0.5; // % gap between bars
+            const totalSlots = flatList.length;
+            const slotWidth = totalSlots > 0 ? (100 - COMPACT_GAP * (totalSlots - 1)) / totalSlots : 100;
+            leftPercent = index * (slotWidth + COMPACT_GAP);
+            widthPercent = Math.max(0.5, (span.durationMs / maxDuration) * slotWidth);
+          } else {
+            leftPercent = ((span.startMs - minTs) / timeSpan) * 100;
+            widthPercent = Math.max(0.5, ((span.endMs - span.startMs) / timeSpan) * 100);
+          }
           const isExpanded = expandedSpanId === span.id;
           const color = SPAN_COLORS[span.spanType] ?? '#4a7a58';
 

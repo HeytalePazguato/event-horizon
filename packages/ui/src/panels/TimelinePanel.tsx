@@ -216,7 +216,7 @@ export const TimelinePanel: FC<TimelinePanelProps> = ({ agentCwds = {} }) => {
 
         {/* Scrollable timeline */}
         <div ref={scrollRef} style={{ flex: 1, overflowX: 'auto', overflowY: 'auto', minWidth: 0 }}>
-          <div style={{ width: totalWidth, position: 'relative' }}>
+          <div style={{ width: totalWidth, minWidth: '100%', position: 'relative' }}>
             {/* Time axis */}
             <div style={{ height: TIME_AXIS_HEIGHT, borderBottom: '1px solid #1a3020', position: 'relative' }}>
               {timeLabels.map((tl, i) => (

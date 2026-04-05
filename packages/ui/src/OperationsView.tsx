@@ -98,6 +98,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
   const toggleSpawn = useCommandCenterStore((s) => s.toggleSpawn);
   const requestExport = useCommandCenterStore((s) => s.requestExport);
   const requestScreenshot = useCommandCenterStore((s) => s.requestScreenshot);
+  const requestTellAll = useCommandCenterStore((s) => s.requestTellAll);
   const toggleInfo = useCommandCenterStore((s) => s.toggleInfo);
   const toggleSettings = useCommandCenterStore((s) => s.toggleSettings);
   const skillsCount = useCommandCenterStore((s) => s.skills.length);
@@ -165,6 +166,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
                 { label: 'Spawn', action: toggleSpawn },
                 { label: 'Export', action: requestExport },
                 { label: 'Screenshot', action: requestScreenshot },
+                { label: 'Tell All', action: requestTellAll },
                 { label: 'Demo', action: requestDemo },
                 { label: 'Info', action: toggleInfo },
                 { label: 'Settings', action: toggleSettings },

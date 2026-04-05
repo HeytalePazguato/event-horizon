@@ -426,14 +426,11 @@ function App() {
     return all;
   }, [knowledgeWorkspace, knowledgePlan]);
 
-  // Tell All: prompt user and broadcast as knowledge
+  // Tell All: ask extension host to prompt user, then broadcast as knowledge
   const tellAllRequestedAt = useCommandCenterStore((s) => s.tellAllRequestedAt);
   useEffect(() => {
     if (!tellAllRequestedAt) return;
-    const msg = window.prompt('Broadcast message to all agents:');
-    if (msg && msg.trim()) {
-      vscodeApi?.postMessage({ type: 'knowledge-add', key: `broadcast-${Date.now()}`, value: msg.trim(), scope: 'workspace' });
-    }
+    vscodeApi?.postMessage({ type: 'tell-all-prompt' });
   }, [tellAllRequestedAt]);
 
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
