@@ -63,10 +63,17 @@ export interface AgentTypeProfile {
   lastUpdated: number;
 }
 
+export interface AgentSummary {
+  id: string;
+  name: string;
+  type: string;
+}
+
 export interface RolesPanelProps {
   roles: RoleDefinition[];
   assignments: RoleAssignment[];
   profiles: AgentTypeProfile[];
+  agents?: AgentSummary[];
   onAssignRole?: (roleId: string, agentType: string) => void;
   onCreateRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
   onEditRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
@@ -76,6 +83,7 @@ export interface RolesPanelProps {
 // ── Role color palette ─────────────────────────────────────────────────────
 
 const ROLE_COLORS: Record<string, string> = {
+  orchestrator: '#ffd700',
   researcher: '#66ccff',
   planner: '#ffaa33',
   implementer: '#88ff88',
@@ -119,7 +127,7 @@ const formInputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 };
 
-export const RolesPanel: FC<RolesPanelProps> = ({ roles, assignments, profiles, onCreateRole, onEditRole, onDeleteRole }) => {
+export const RolesPanel: FC<RolesPanelProps> = ({ roles, assignments, profiles, agents = [], onCreateRole, onEditRole, onDeleteRole }) => {
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
@@ -401,15 +409,118 @@ export const RolesPanel: FC<RolesPanelProps> = ({ roles, assignments, profiles, 
 
       </div>{/* end fixed section */}
 
-      {/* ── Scrollable section: roles + profiles ───────────────────────── */}
+      {/* ── Scrollable section: agent summary + roles + profiles ────────── */}
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: sizes.spacing.lg }}>
+
+      {/* ── Agent Role Summary ──────────────────────────────────────────── */}
+      {(() => {
+        const selectedAgentId = useCommandCenterStore.getState().selectedAgentId;
+        // Build reverse lookup: agentType → roleIds[]
+        const typeToRoles = new Map<string, string[]>();
+        for (const a of assignments) {
+          if (!a.agentType) continue;
+          const list = typeToRoles.get(a.agentType) ?? [];
+          list.push(a.roleId);
+          typeToRoles.set(a.agentType, list);
+        }
+
+        if (selectedAgentId) {
+          // Show roles for selected agent
+          const agent = agents.find((a) => a.id === selectedAgentId);
+          if (agent) {
+            const agentRoles = typeToRoles.get(agent.type) ?? [];
+            return (
+              <div style={{ padding: `${sizes.spacing.sm}px ${sizes.spacing.md}px`, background: 'rgba(15,30,20,0.6)', border: `1px solid ${colors.border.primary}`, borderRadius: sizes.radius.sm }}>
+                <div style={{ fontSize: sizes.text.sm, color: colors.text.secondary, marginBottom: 4 }}>
+                  Roles for <span style={{ color: colors.text.primary }}>{agent.name}</span> <span style={{ color: colors.text.dim }}>({agent.type})</span>
+                </div>
+                {agentRoles.length === 0 ? (
+                  <div style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontStyle: 'italic' }}>No roles assigned yet</div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {agentRoles.map((rid) => {
+                      const role = roles.find((r) => r.id === rid);
+                      return (
+                        <span key={rid} style={{
+                          fontSize: sizes.text.xs, padding: '2px 8px', borderRadius: 2,
+                          background: `${roleColor(rid)}15`, border: `1px solid ${roleColor(rid)}`,
+                          color: roleColor(rid), fontWeight: 600,
+                        }}>
+                          {role?.name ?? rid}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          }
+        }
+
+        // All agents summary
+        if (agents.length === 0) {
+          return (
+            <div style={{ padding: `${sizes.spacing.sm}px ${sizes.spacing.md}px`, background: 'rgba(15,30,20,0.6)', border: `1px solid ${colors.border.primary}`, borderRadius: sizes.radius.sm }}>
+              <div style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontStyle: 'italic' }}>No agents connected</div>
+            </div>
+          );
+        }
+
+        const agentsWithRoles = agents.filter((a) => (typeToRoles.get(a.type)?.length ?? 0) > 0);
+        const agentsWithoutRoles = agents.filter((a) => (typeToRoles.get(a.type)?.length ?? 0) === 0);
+
+        return (
+          <div style={{ padding: `${sizes.spacing.sm}px ${sizes.spacing.md}px`, background: 'rgba(15,30,20,0.6)', border: `1px solid ${colors.border.primary}`, borderRadius: sizes.radius.sm }}>
+            <div style={{ fontSize: sizes.text.sm, color: colors.text.secondary, marginBottom: 6 }}>
+              Agent Assignments <span style={{ color: colors.text.dim }}>({agents.length} agent{agents.length !== 1 ? 's' : ''})</span>
+            </div>
+            {agentsWithRoles.length === 0 ? (
+              <div style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontStyle: 'italic' }}>No roles assigned yet — assign roles below or use the orchestrator to auto-assign</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {agentsWithRoles.map((agent) => {
+                  const agentRoles = typeToRoles.get(agent.type) ?? [];
+                  return (
+                    <div key={agent.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: sizes.text.xs }}>
+                      <span style={{ color: colors.text.primary, minWidth: 80 }}>{agent.name}</span>
+                      <span style={{ color: colors.text.dim }}>→</span>
+                      {agentRoles.map((rid) => (
+                        <span key={rid} style={{
+                          padding: '1px 6px', borderRadius: 2,
+                          background: `${roleColor(rid)}15`, border: `1px solid ${roleColor(rid)}55`,
+                          color: roleColor(rid), fontSize: 9, fontWeight: 600,
+                        }}>
+                          {roles.find((r) => r.id === rid)?.name ?? rid}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })}
+                {agentsWithoutRoles.length > 0 && (
+                  <div style={{ fontSize: sizes.text.xs, color: colors.text.dim, marginTop: 2 }}>
+                    {agentsWithoutRoles.length} agent{agentsWithoutRoles.length !== 1 ? 's' : ''} without roles: {agentsWithoutRoles.map((a) => a.name).join(', ')}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ── Roles Grid ─────────────────────────────────────────────────── */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(2, 1fr)',
         gap: sizes.spacing.sm,
       }}>
-        {roles.map((role) => {
+        {[...roles].sort((a, b) => {
+          // Orchestrator always first (highest hierarchy)
+          if (a.id === 'orchestrator') return -1;
+          if (b.id === 'orchestrator') return 1;
+          // Built-in roles before custom
+          if (a.builtIn !== b.builtIn) return a.builtIn ? -1 : 1;
+          return 0;
+        }).map((role) => {
           const assigned = assignmentMap.get(role.id);
           const isSelected = selectedRoleId === role.id;
           const isEditing = editingRoleId === role.id;

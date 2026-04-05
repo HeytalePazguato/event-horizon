@@ -216,7 +216,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             )}
             {activeTab === 'roles' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
+                <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} agents={agents.map((a) => ({ id: a.id, name: a.name, type: a.agentType }))} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
               </div>
             )}
             {activeTab === 'knowledge' && (

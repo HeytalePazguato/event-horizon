@@ -128,6 +128,96 @@ export function activate(context: vscode.ExtensionContext): void {
   const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
   if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
 
+  // Auto-seed workspace knowledge from CLAUDE.md (and similar project docs) on first activation
+  // Only seeds entries that don't already exist — never overwrites user edits
+  void (async () => {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) return;
+
+    const claudeMdPaths = [
+      path.join(workspaceRoot, 'CLAUDE.md'),
+      path.join(workspaceRoot, '.claude', 'CLAUDE.md'),
+    ];
+
+    for (const mdPath of claudeMdPaths) {
+      try {
+        const content = await fsp.readFile(mdPath, 'utf8');
+        if (!content.trim()) continue;
+
+        // Only seed if no 'project-instructions' key exists yet
+        const existing = sharedKnowledge.read('project-instructions');
+        if (existing.length > 0) break;
+
+        // Extract meaningful sections from CLAUDE.md
+        const sections: string[] = [];
+        const lines = content.split(/\r?\n/);
+        let currentSection = '';
+        let currentBody: string[] = [];
+
+        for (const line of lines) {
+          const heading = line.match(/^#{1,3}\s+(.+)/);
+          if (heading) {
+            if (currentSection && currentBody.length > 0) {
+              sections.push(`**${currentSection}**: ${currentBody.join(' ').slice(0, 300)}`);
+            }
+            currentSection = heading[1].trim();
+            currentBody = [];
+          } else if (line.trim() && !line.startsWith('```') && !line.startsWith('<!--')) {
+            currentBody.push(line.trim());
+          }
+        }
+        if (currentSection && currentBody.length > 0) {
+          sections.push(`**${currentSection}**: ${currentBody.join(' ').slice(0, 300)}`);
+        }
+
+        if (sections.length > 0) {
+          const summary = sections.slice(0, 15).join('\n');
+          sharedKnowledge.write(
+            'project-instructions',
+            `Auto-imported from CLAUDE.md:\n${summary}`,
+            'workspace',
+            'Event Horizon',
+            'system',
+          );
+        }
+
+        // Also extract commands section if present
+        const commandsMatch = content.match(/## Commands\n([\s\S]*?)(?=\n## |\n$)/);
+        if (commandsMatch) {
+          const existing2 = sharedKnowledge.read('project-commands');
+          if (existing2.length === 0) {
+            sharedKnowledge.write(
+              'project-commands',
+              commandsMatch[1].trim().slice(0, 500),
+              'workspace',
+              'Event Horizon',
+              'system',
+            );
+          }
+        }
+
+        // Extract architecture section if present
+        const archMatch = content.match(/## Architecture\n([\s\S]*?)(?=\n## |\n$)/);
+        if (archMatch) {
+          const existing3 = sharedKnowledge.read('project-architecture');
+          if (existing3.length === 0) {
+            sharedKnowledge.write(
+              'project-architecture',
+              archMatch[1].trim().slice(0, 500),
+              'workspace',
+              'Event Horizon',
+              'system',
+            );
+          }
+        }
+
+        break; // Only read first found CLAUDE.md
+      } catch {
+        // File not found — continue to next path
+      }
+    }
+  })();
+
   // Persist shared knowledge on change
   sharedKnowledge.onChange(() => {
     void context.globalState.update('sharedKnowledge', sharedKnowledge.serializeWorkspace());
