@@ -4,7 +4,7 @@
  * @event-horizon/renderer
  */
 
-import type { Container } from 'pixi.js';
+import { Container, Graphics } from 'pixi.js';
 import { createStation } from '../entities/Station.js';
 import type { ExtendedStation } from '../entities/Station.js';
 
@@ -26,9 +26,12 @@ const ORBIT_SPEED = 0.3; // radians per second
 export class StationSystem {
   private stations: StationEntry[] = [];
   private container: Container;
+  private dockingTubes: Graphics;
 
   constructor(container: Container) {
     this.container = container;
+    this.dockingTubes = new Graphics();
+    this.container.addChild(this.dockingTubes);
   }
 
   /** Sync stations with current MCP server data. */
@@ -88,12 +91,14 @@ export class StationSystem {
     }
   }
 
-  /** Animate stations — orbit around parent planet + pulse on tool calls. */
+  /** Animate stations — orbit around parent planet + pulse on tool calls + docking tubes. */
   update(
     dt: number,
     tickTime: number,
     planetPositions: Record<string, { x: number; y: number }>,
   ): void {
+    this.dockingTubes.clear();
+
     for (const entry of this.stations) {
       const pos = planetPositions[entry.agentId];
       if (!pos) {
@@ -108,6 +113,15 @@ export class StationSystem {
 
       entry.station.x = pos.x + Math.cos(angle) * ORBIT_DISTANCE;
       entry.station.y = pos.y + Math.sin(angle) * ORBIT_DISTANCE;
+
+      // Docking tube: thin line from station to parent planet
+      this.dockingTubes.moveTo(entry.station.x, entry.station.y);
+      this.dockingTubes.lineTo(pos.x, pos.y);
+      this.dockingTubes.stroke({
+        width: 0.6,
+        color: 0x1a3020,
+        alpha: entry.station.__connected ? 0.4 : 0.2,
+      });
 
       // Pulse animation when tool is being called
       if (entry.station.__isPulsing) {
@@ -140,5 +154,7 @@ export class StationSystem {
       this.container.removeChild(entry.station);
     }
     this.stations = [];
+    this.container.removeChild(this.dockingTubes);
+    this.dockingTubes.destroy();
   }
 }

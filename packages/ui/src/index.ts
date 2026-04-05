@@ -3,6 +3,7 @@
  */
 
 export { CommandCenter } from './CommandCenter.js';
+export type { BudgetInfo, CommandCenterProps } from './CommandCenter.js';
 export { Tooltip } from './Tooltip.js';
 export type { TooltipProps } from './Tooltip.js';
 export { useCommandCenterStore, clearAllBoostTimers } from './store.js';

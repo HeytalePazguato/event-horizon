@@ -4,6 +4,19 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ## [1.2.0] — 2026-04-05
 
+### Added — Phase 5: Universe Enhancements (Visual Polish)
+- **Orchestrator task assignment beams**: when `eh_spawn_agent` fires, the orchestrator star shoots a colored beam to the target planet via the new `BeamSystem`. Beams animate from source to target and fade over ~2 seconds
+- **Synthesis phase beams**: when a plan completes (all tasks done), all worker planets beam results back to the orchestrator star. Extension host detects plan completion transitions and posts `plan-completed` message with orchestrator + worker IDs
+- **Task DAG dependency tethers**: thin lines drawn between orbiting debris particles that have `blockedBy` relationships. Tethers are cleared and redrawn each frame in `DebrisSystem` using a shared `Graphics` container
+- **Critical path glow**: tasks on the critical path (most transitive dependents) glow brighter with gold tint. Brightness proportional to dependency count
+- **Cascade failure zigzag chains**: when a debris has a cascade failure, a red lightning-like zigzag line is drawn between it and its failed dependency, pulsing in intensity
+- **Completed chain stardust**: when both a task and its dependency are done, the tether slowly fades out over time
+- **MCP station docking tubes**: thin connection lines drawn from each station to its parent planet. Color `#1a3020`, brighter for connected stations. Redrawn each frame in `StationSystem`
+- **Shared knowledge constellations**: new `ConstellationSystem` draws lines between planets that share knowledge entries. Workspace links are dim and dotted; plan links are brighter and solid. User-authored entries have gold tint; agent-authored use agent-type colors. Line brightness proportional to shared entry count
+- **Budget fuel gauge**: horizontal progress bar in the CommandCenter center panel showing plan budget spent/total. Color-coded: green (0-60%), yellow (60-80%), red (80%+). Flashing CSS animation at 80%+. Shows formatted "$X.XX / $Y.YY (Z%)"
+- **Planet spawn animation**: new planets animate in from scale 0 with a semi-transparent nebula cloud in the agent's type color. Over ~2 seconds, the planet scales up while the nebula fades. Tracked via `__spawnProgress` in `PlanetAnimationSystem`
+- **Orchestrator ID broadcast**: extension host now broadcasts active orchestrator agent IDs to the webview whenever plan state changes, enabling the golden star glow to update dynamically
+
 ### Added — Phase 1: Coordination Core
 - **Cascade failure system**: when a task fails, all transitive dependents are automatically marked as failed with root cause messages. Configurable per-plan via `onDependencyFailure: cascade | block | ignore` metadata
 - **Task retry with backoff**: new `eh_retry_task` MCP tool resets failed tasks to pending, increments retry count, and un-cascades dependents. Supports `maxRetries` per task

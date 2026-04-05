@@ -151,10 +151,17 @@ const rightPanelStyle: React.CSSProperties = {
 const LED_ON = '#25904a';
 const LED_DIM = '#154a28';
 
+export interface BudgetInfo {
+  spent: number;
+  limit: number;
+  percentUsed: number;
+}
+
 export interface CommandCenterProps {
   role?: string | null;
   knowledgeCount?: { workspace: number; plan: number };
   recentKnowledge?: Array<{ key: string; value: string; scope: string }>;
+  budgetInfo?: BudgetInfo | null;
   onOpenSkill?: (filePath: string) => void;
   onCreateSkill?: () => void;
   onOpenMarketplace?: () => void;
@@ -162,7 +169,33 @@ export interface CommandCenterProps {
   onDuplicateSkill?: (filePath: string, newName: string) => void;
 }
 
-export const CommandCenter: FC<CommandCenterProps> = ({ role, knowledgeCount, recentKnowledge, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
+/** Fuel gauge bar — shows budget spent vs limit with color coding. */
+function FuelGauge({ info }: { info: BudgetInfo }) {
+  const pct = Math.min(100, Math.max(0, info.percentUsed));
+  const barColor = pct >= 80 ? '#cc3333' : pct >= 60 ? '#d4a84a' : '#40a060';
+  const isFlashing = pct >= 80;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Consolas, monospace', fontSize: 9, color: '#7a9a82', marginTop: 4 }}>
+      <span style={{ color: '#4a6a52', flexShrink: 0 }}>BUDGET</span>
+      <div style={{ flex: 1, height: 6, background: 'rgba(20,40,28,0.6)', border: '1px solid #1a3020', position: 'relative', overflow: 'hidden' }}>
+        <div style={{
+          width: `${pct}%`,
+          height: '100%',
+          background: barColor,
+          boxShadow: isFlashing ? `0 0 6px ${barColor}` : undefined,
+          animation: isFlashing ? 'eh-fuel-flash 0.8s ease-in-out infinite' : undefined,
+          transition: 'width 0.3s ease',
+        }} />
+      </div>
+      <span style={{ flexShrink: 0, color: pct >= 80 ? '#cc3333' : '#7a9a82' }}>
+        ${info.spent.toFixed(2)} / ${info.limit.toFixed(2)} ({Math.round(pct)}%)
+      </span>
+      <style>{`@keyframes eh-fuel-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
+    </div>
+  );
+}
+
+export const CommandCenter: FC<CommandCenterProps> = ({ role, knowledgeCount, recentKnowledge, budgetInfo, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill } = {}) => {
   const minimized = useCommandCenterStore((s) => s.ccMinimized);
   const setCcMinimized = useCommandCenterStore((s) => s.setCcMinimized);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
@@ -373,6 +406,7 @@ export const CommandCenter: FC<CommandCenterProps> = ({ role, knowledgeCount, re
           {/* CENTER — metrics / info */}
           <div data-tour="metrics" style={centerPanelStyle}>
             <MetricsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />
+            {budgetInfo && budgetInfo.limit > 0 && <FuelGauge info={budgetInfo} />}
           </div>
 
           {/* RIGHT — command grid */}

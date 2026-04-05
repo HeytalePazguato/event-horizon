@@ -6,7 +6,7 @@
 import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
-import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
+import type { ShipSpawn, SparkSpawn, SpawnBeam, KnowledgeLink } from '@event-horizon/renderer';
 import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, useCommandCenterStore } from '@event-horizon/ui';
 import type { CreateSkillRequest, MarketplaceSkillResult } from '@event-horizon/ui';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
@@ -154,6 +154,8 @@ function App() {
   const [traceAggregate, setTraceAggregate] = useState<Record<string, number>>({});
   const [mcpServers, setMcpServers] = useState<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>({});
   const [compactingAgentIds, setCompactingAgentIds] = useState<Record<string, boolean>>({});
+  const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
+  const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -212,6 +214,7 @@ function App() {
     setHeartbeatStatuses,
     setTraceSpans, setTraceAggregate,
     setMcpServers, setCompactingAgentIds,
+    setSpawnBeams, setOrchestratorAgentIds,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -388,6 +391,7 @@ function App() {
         role: t.role ?? null,
         retryCount: (t as Record<string, unknown>).retryCount as number | undefined,
         failedReason: (t as Record<string, unknown>).failedReason as string | null | undefined,
+        blockedBy: t.blockedBy,
       })),
     };
   }, [plan]);
@@ -425,6 +429,65 @@ function App() {
       .map((k) => ({ key: k.key, value: k.value, scope: k.scope }));
     return all;
   }, [knowledgeWorkspace, knowledgePlan]);
+
+  // Compute knowledge links for constellation visualization
+  const knowledgeLinksComputed = useMemo<KnowledgeLink[]>(() => {
+    const links: KnowledgeLink[] = [];
+    const allEntries = [...knowledgeWorkspace, ...knowledgePlan];
+    // Group by author pairs — each pair of agents that share knowledge gets a link
+    const pairCounts = new Map<string, { fromAgentId: string; toAgentId: string; scope: 'workspace' | 'plan'; authorIsUser: boolean; count: number }>();
+    const agentIdSet = new Set(agents.map(a => a.id));
+
+    for (const entry of allEntries) {
+      const authorId = entry.authorId;
+      if (!authorId) continue;
+      // Create links from author to all other agents
+      for (const agent of agents) {
+        if (agent.id === authorId) continue;
+        const key = [authorId, agent.id].sort().join('::') + '::' + entry.scope;
+        const existing = pairCounts.get(key);
+        const isUser = entry.author === 'user' || !agentIdSet.has(authorId);
+        if (existing) {
+          existing.count++;
+        } else {
+          pairCounts.set(key, {
+            fromAgentId: authorId,
+            toAgentId: agent.id,
+            scope: entry.scope as 'workspace' | 'plan',
+            authorIsUser: isUser,
+            count: 1,
+          });
+        }
+      }
+    }
+    for (const link of pairCounts.values()) {
+      links.push(link);
+    }
+    return links;
+  }, [knowledgeWorkspace, knowledgePlan, agents]);
+
+  // Compute budget info from plan metadata + cost tracking
+  const budgetInfo = useMemo(() => {
+    if (!plan.loaded || !plan.maxBudgetUsd || plan.maxBudgetUsd <= 0) return null;
+    // Sum up cost from all agent metrics
+    let totalSpent = 0;
+    for (const m of Object.values(metricsMap)) {
+      if (m.estimatedCostUsd !== undefined && m.estimatedCostUsd >= 0) {
+        totalSpent += m.estimatedCostUsd;
+      }
+    }
+    const limit = plan.maxBudgetUsd;
+    return { spent: totalSpent, limit, percentUsed: (totalSpent / limit) * 100 };
+  }, [plan, metricsMap]);
+
+  // Agent types map for constellation coloring
+  const agentTypesMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const a of agents) {
+      if (a.agentType) map[a.id] = a.agentType;
+    }
+    return map;
+  }, [agents]);
 
   // Tell All: ask extension host to prompt user, then broadcast as knowledge
   const tellAllRequestedAt = useCommandCenterStore((s) => s.tellAllRequestedAt);
@@ -472,13 +535,17 @@ function App() {
             onShootingStarClicked={achievementCallbacks.handleShootingStarClicked}
             planTasks={planDebris}
             visible={viewMode === 'universe'}
+            orchestratorAgentIds={orchestratorAgentIds}
             heartbeatStatuses={heartbeatStatuses}
             mcpServers={mcpServers}
             compactingAgentIds={compactingAgentIds}
+            spawnBeams={spawnBeams}
+            knowledgeLinks={knowledgeLinksComputed}
+            agentTypesMap={agentTypesMap}
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
-        <CommandCenter role={selectedAgentRole} knowledgeCount={knowledgeCount} recentKnowledge={recentKnowledge} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+        <CommandCenter role={selectedAgentRole} knowledgeCount={knowledgeCount} recentKnowledge={recentKnowledge} budgetInfo={budgetInfo} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       </div>
 
       {viewMode === 'operations' && (

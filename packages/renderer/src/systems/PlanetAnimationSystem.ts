@@ -16,6 +16,10 @@ export interface AnimatedPlanet {
   __heartbeatRing?: Graphics & { alpha: number; visible: boolean; scale: { set: (v: number) => void }; tint: number };
   __radius?: number;
   __compactionStartTime?: number;
+  /** Spawn animation progress: 0 (just spawned) to 1 (fully materialized). */
+  __spawnProgress?: number;
+  /** Spawn nebula cloud graphics (temporary, destroyed after spawn completes). */
+  __spawnNebula?: Graphics & { alpha: number };
   alpha: number;
   scale: { set: (v: number) => void };
 }
@@ -89,8 +93,27 @@ export function animatePlanets(planets: AnimatedPlanet[], ctx: PlanetAnimationCo
       p.__compactionStartTime = undefined;
     }
 
-    if (!isPaused) p.scale.set(pulse * (isBoosted ? 1.22 : 1) * compactionScale);
-    if (isPaused) p.scale.set(1 * compactionScale);
+    // ── Spawn animation ────────────────────────────────────────────────
+    let spawnScale = 1;
+    if (p.__spawnProgress !== undefined && p.__spawnProgress < 1) {
+      p.__spawnProgress = Math.min(1, p.__spawnProgress + (1 / 120)); // ~2s at 60fps
+      spawnScale = p.__spawnProgress;
+
+      // Animate nebula cloud
+      if (p.__spawnNebula) {
+        p.__spawnNebula.alpha = (1 - p.__spawnProgress) * 0.7;
+        const nebulaScale = 1.5 + (1 - p.__spawnProgress) * 2;
+        p.__spawnNebula.scale.set(nebulaScale);
+      }
+
+      // Clean up nebula when spawn is complete
+      if (p.__spawnProgress >= 1 && p.__spawnNebula) {
+        p.__spawnNebula.alpha = 0;
+      }
+    }
+
+    if (!isPaused) p.scale.set(pulse * (isBoosted ? 1.22 : 1) * compactionScale * spawnScale);
+    if (isPaused) p.scale.set(1 * compactionScale * spawnScale);
 
     // Thinking ring
     const ring = p.__thinkingRing;

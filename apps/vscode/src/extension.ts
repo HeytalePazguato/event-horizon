@@ -259,6 +259,9 @@ export function activate(context: vscode.ExtensionContext): void {
     };
   }
 
+  // Track plan statuses so we can detect completion transitions
+  const prevPlanStatuses = new Map<string, string>();
+
   // Forward plan changes to webview + persist to globalState + sync checkboxes to file
   planBoardManager.onChange((_boards, changedPlanId) => {
     // Persist all plans to globalState
@@ -293,6 +296,32 @@ export function activate(context: vscode.ExtensionContext): void {
       // Send the changed plan in full so the Kanban updates
       activePlan: changedPlanId ? planToView(planBoardManager.getPlan(changedPlanId)!) : undefined,
     });
+
+    // Detect plan completion transition → send synthesis beams
+    if (changedPlanId) {
+      const board = planBoardManager.getPlan(changedPlanId);
+      if (board) {
+        const prevStatus = prevPlanStatuses.get(changedPlanId);
+        if (board.status === 'completed' && prevStatus !== 'completed' && board.orchestratorAgentId) {
+          const workerIds = [...new Set(board.tasks.filter(t => t.assignee && t.assignee !== board.orchestratorAgentId).map(t => t.assignee!))];
+          webviewRef.current.postMessage({
+            type: 'plan-completed',
+            orchestratorAgentId: board.orchestratorAgentId,
+            workerAgentIds: workerIds,
+          });
+        }
+        prevPlanStatuses.set(changedPlanId, board.status);
+
+        // Broadcast orchestrator agent IDs
+        const orchIds: Record<string, boolean> = {};
+        for (const p of allPlans) {
+          if (p.orchestratorAgentId && p.status === 'active') {
+            orchIds[p.orchestratorAgentId] = true;
+          }
+        }
+        webviewRef.current.postMessage({ type: 'orchestrator-update', orchestratorAgentIds: orchIds });
+      }
+    }
   });
 
   // Record completed tasks for agent profiling

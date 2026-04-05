@@ -52,6 +52,8 @@ export interface WebviewMessageDeps {
   setTraceAggregate?: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   setMcpServers?: React.Dispatch<React.SetStateAction<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>>;
   setCompactingAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setSpawnBeams?: React.Dispatch<React.SetStateAction<Array<{ fromAgentId: string; toAgentId: string; color: number; startTime: number }>>>;
+  setOrchestratorAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -136,6 +138,28 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       if (msg?.type === 'plan-update') {
         const data = msg as unknown as { plan: PlanView };
         if (data.plan) depsRef.current.setPlan(data.plan);
+        return;
+      }
+      if (msg?.type === 'plan-completed') {
+        // Synthesis beams: all workers beam results back to orchestrator
+        const data = msg as unknown as { orchestratorAgentId: string; workerAgentIds: string[] };
+        if (data.orchestratorAgentId && data.workerAgentIds && depsRef.current.setSpawnBeams) {
+          const now = performance.now() / 1000; // approximate tick time
+          const beams = data.workerAgentIds.map((wId: string) => ({
+            fromAgentId: wId,
+            toAgentId: data.orchestratorAgentId,
+            color: 0x40a060, // green for synthesis
+            startTime: now,
+          }));
+          depsRef.current.setSpawnBeams((prev) => [...prev, ...beams]);
+        }
+        return;
+      }
+      if (msg?.type === 'orchestrator-update') {
+        const data = msg as unknown as { orchestratorAgentIds: Record<string, boolean> };
+        if (data.orchestratorAgentIds && depsRef.current.setOrchestratorAgentIds) {
+          depsRef.current.setOrchestratorAgentIds(data.orchestratorAgentIds);
+        }
         return;
       }
       if (msg?.type === 'plans-update') {
@@ -304,6 +328,25 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         const fp = (raw.payload?.filePath as string) ?? '';
         const fn = fp.split(/[/\\]/).pop() ?? fp;
         store.addTimelineEntry({ ...tlBase, kind: 'file', label: `${type === 'file.write' ? 'W' : 'R'} ${fn}` });
+      }
+
+      // Spawn beam: when an agent spawns with a spawner (orchestrator context), fire a beam
+      if (type === 'agent.spawn' && raw.payload?.spawnedBy && depsRef.current.setSpawnBeams) {
+        const spawnerId = raw.payload.spawnedBy as string;
+        const AGENT_TYPE_BEAM_COLORS: Record<string, number> = {
+          'claude-code': 0x88aaff,
+          'copilot': 0xcc88ff,
+          'opencode': 0x88ffaa,
+          'cursor': 0x44ddcc,
+        };
+        const beamColor = AGENT_TYPE_BEAM_COLORS[agentType] ?? 0xffcc44;
+        const now = performance.now() / 1000;
+        depsRef.current.setSpawnBeams((prev) => [...prev, {
+          fromAgentId: spawnerId,
+          toAgentId: agentId,
+          color: beamColor,
+          startTime: now,
+        }]);
       }
 
       // agent.terminate: clean up all state for this agent
