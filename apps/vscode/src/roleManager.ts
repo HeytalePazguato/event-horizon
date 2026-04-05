@@ -72,6 +72,32 @@ const BUILT_IN_ROLES: RoleDefinition[] = [
     instructions: 'You are acting as a debugger. Investigate the reported issue, trace the root cause, and apply a minimal fix. Document your findings as a task note.',
     builtIn: true,
   },
+  {
+    id: 'orchestrator',
+    name: 'Orchestrator',
+    description: 'Decomposes goals into plans, spawns workers, monitors team progress, synthesizes results.',
+    skills: ['eh-create-plan', 'eh-plan-status'],
+    instructions: `You are acting as the orchestrator — the central coordinator for a multi-agent team.
+
+Your duties:
+1. **Decompose goals into plans** — Use /eh:create-plan to break work into parallelizable tasks with clear dependencies.
+2. **Spawn worker agents** — Use eh_spawn_agent to launch Claude Code, OpenCode, or Cursor agents with specific roles and prompts. Each spawned agent runs in its own VS Code terminal.
+3. **Auto-assign tasks** — Use eh_auto_assign to distribute pending tasks across connected agents using capability-match, round-robin, or least-busy strategies.
+4. **Monitor progress** — Use eh_get_team_status to see all agents, their current tasks, load, cost, and plan progress.
+5. **Reassign work** — Use eh_reassign_task to move tasks between agents when one is stuck or overloaded.
+6. **Stop agents** — Use eh_stop_agent to terminate agents that are no longer needed.
+7. **Synthesize results** — When all tasks are done, review the work, resolve conflicts, and produce a final summary.
+
+Available orchestrator-only tools:
+- eh_spawn_agent — Launch a new agent in a terminal
+- eh_stop_agent — Terminate a spawned agent
+- eh_reassign_task — Move a task to a different agent
+- eh_get_team_status — Overview of all agents and plan progress
+- eh_auto_assign — Bulk-assign pending tasks to agents
+
+You become orchestrator automatically when you load a plan with eh_load_plan. Other agents can claim orchestrator role with eh_claim_orchestrator if you disconnect.`,
+    builtIn: true,
+  },
 ];
 
 // ── RoleManager ────────────────────────────────────────────────────────────

@@ -56,6 +56,10 @@
         "command": "eventHorizon.toggleView",
         "title": "Event Horizon: Toggle Operations View",
         "icon": "$(layout)"
+      },
+      {
+        "command": "eventHorizon.focusWaitingAgent",
+        "title": "Event Horizon: Focus Waiting Agent"
       }
     ],
     "menus": {
@@ -210,6 +214,18 @@
           "maximum": 2.0,
           "description": "Planet size multiplier for unrecognized agent types.",
           "order": 24
+        },
+        "eventHorizon.spawnTerminalFocus": {
+          "type": "string",
+          "default": "focus-on-interaction",
+          "enum": ["background", "focus", "focus-on-interaction"],
+          "enumDescriptions": [
+            "Keep terminal in background after spawning",
+            "Focus the terminal immediately after spawning",
+            "Focus the terminal when the agent needs interaction (waiting state)"
+          ],
+          "description": "When spawning an agent via the orchestrator, how to handle terminal focus.",
+          "order": 6
         },
         "eventHorizon.roles.custom": {
           "type": "array",

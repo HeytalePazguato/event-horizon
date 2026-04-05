@@ -46,6 +46,7 @@ export interface PlanBoard {
   lastUpdatedAt: number;
   onDependencyFailure: DependencyFailurePolicy;
   maxAutoRetries: number;
+  orchestratorAgentId: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -180,6 +181,7 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
     lastUpdatedAt: now,
     onDependencyFailure,
     maxAutoRetries,
+    orchestratorAgentId: null,
   };
 }
 
@@ -221,7 +223,7 @@ export class PlanBoardManager {
   }
 
   /** Load a plan from parsed markdown. Replaces existing plan with same ID. */
-  loadPlan(markdown: string, sourceFile: string): PlanBoard {
+  loadPlan(markdown: string, sourceFile: string, agentId?: string): PlanBoard {
     const board = parsePlanMarkdown(markdown, sourceFile);
 
     // Handle ID collisions from different files
@@ -231,10 +233,49 @@ export class PlanBoardManager {
       board.id = `${board.id}-${suffix}`;
     }
 
+    // Auto-promote the creating agent to orchestrator
+    if (agentId) {
+      board.orchestratorAgentId = agentId;
+    }
+
     this.boards.set(board.id, board);
     this.activePlanId = board.id;
     this.notifyChange(board.id);
     return board;
+  }
+
+  /** Check if an agent is orchestrator for a given plan (or any plan). */
+  isOrchestrator(agentId: string, planId?: string): boolean {
+    if (planId) {
+      const board = this.boards.get(planId);
+      return board?.orchestratorAgentId === agentId;
+    }
+    // Check all plans
+    for (const board of this.boards.values()) {
+      if (board.orchestratorAgentId === agentId) return true;
+    }
+    return false;
+  }
+
+  /** Claim orchestrator role for a plan. Only succeeds if current orchestrator is null or disconnected. */
+  claimOrchestrator(agentId: string, planId?: string, connectedAgentIds?: Set<string>): { success: boolean; error?: string } {
+    const board = this.resolvePlan(planId);
+    if (!board) {
+      return { success: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+    }
+    if (board.orchestratorAgentId === agentId) {
+      return { success: true }; // Already orchestrator
+    }
+    if (board.orchestratorAgentId) {
+      // Only allow claiming if current orchestrator is disconnected
+      if (connectedAgentIds && connectedAgentIds.has(board.orchestratorAgentId)) {
+        return { success: false, error: `Orchestrator ${board.orchestratorAgentId} is still connected` };
+      }
+    }
+    board.orchestratorAgentId = agentId;
+    board.lastUpdatedAt = Date.now();
+    this.notifyChange(board.id);
+    return { success: true };
   }
 
   /** Get a plan by ID, or the active plan if no ID given. */

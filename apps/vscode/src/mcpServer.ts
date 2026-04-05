@@ -13,6 +13,8 @@ import type { MessageQueue } from './messageQueue.js';
 import type { RoleManager } from './roleManager.js';
 import type { AgentProfiler } from './agentProfiler.js';
 import type { SharedKnowledgeStore } from './sharedKnowledge.js';
+import type { SpawnRegistry } from './spawnRegistry.js';
+import type { SessionStore } from './sessionStore.js';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -367,6 +369,115 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id', 'key', 'scope'],
     },
   },
+
+  // ── Phase 2: Orchestrator & spawn tools ─────────────────────────────────
+
+  {
+    name: 'eh_claim_orchestrator',
+    description: 'Claim orchestrator role for a plan. Only succeeds if the current orchestrator is disconnected or unset.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_spawn_agent',
+    description: 'Spawn a new AI agent in a VS Code terminal. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        agent_type: { type: 'string', enum: ['claude-code', 'opencode', 'cursor'], description: 'Type of agent to spawn' },
+        role: { type: 'string', description: 'Role to assign (e.g. implementer, tester)' },
+        prompt: { type: 'string', description: 'Initial prompt for the agent' },
+        cwd: { type: 'string', description: 'Working directory (defaults to workspace root)' },
+        model: { type: 'string', description: 'Model to use (agent-specific, e.g. claude-sonnet-4-20250514)' },
+        plan_id: { type: 'string', description: 'Plan ID to associate with spawned agent' },
+        task_id: { type: 'string', description: 'Task ID for the spawned agent to work on' },
+      },
+      required: ['agent_id', 'agent_type', 'prompt'],
+    },
+  },
+  {
+    name: 'eh_stop_agent',
+    description: 'Stop a spawned agent by terminating its terminal. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        target_agent_id: { type: 'string', description: 'Agent ID to stop' },
+      },
+      required: ['agent_id', 'target_agent_id'],
+    },
+  },
+  {
+    name: 'eh_reassign_task',
+    description: 'Reassign a task to a different agent. Resets the task to pending and claims it for the new agent. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        task_id: { type: 'string', description: 'Task ID to reassign' },
+        new_agent_id: { type: 'string', description: 'New agent ID to assign' },
+        new_agent_name: { type: 'string', description: 'New agent display name' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id', 'task_id', 'new_agent_id'],
+    },
+  },
+  {
+    name: 'eh_get_team_status',
+    description: 'Get a comprehensive team status: all agents, their tasks, load, cost, and plan progress. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_auto_assign',
+    description: 'Auto-assign all unassigned pending tasks to connected agents using a scoring strategy. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+        strategy: { type: 'string', enum: ['round-robin', 'least-busy', 'capability-match'], description: 'Assignment strategy (default: capability-match)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_get_session',
+    description: 'Check if a task has a prior session that can be resumed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        task_id: { type: 'string', description: 'Task ID to check for prior session' },
+      },
+      required: ['agent_id', 'task_id'],
+    },
+  },
+  {
+    name: 'eh_sync_skills',
+    description: 'Sync Event Horizon bundled skills to a target agent type skill directory. Orchestrator-only tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+        target_agent_type: { type: 'string', description: 'Agent type to sync skills for (claude-code, opencode)' },
+      },
+      required: ['agent_id', 'target_agent_type'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -416,6 +527,9 @@ export interface McpServerDeps {
   agentProfiler: AgentProfiler;
   sharedKnowledge: SharedKnowledgeStore;
   getMetrics?: (agentId: string) => AgentMetrics | undefined;
+  spawnRegistry?: SpawnRegistry;
+  sessionStore?: SessionStore;
+  syncSkills?: (agentType: string) => Promise<{ synced: boolean; path?: string; error?: string }>;
 }
 
 export class McpServer {
@@ -582,12 +696,14 @@ export class McpServer {
           throw new Error('No content provided. Pass the markdown content in the "content" parameter.');
         }
 
-        const plan = planBoardManager.loadPlan(markdown, filePath);
+        const agentId = args.agent_id as string;
+        const plan = planBoardManager.loadPlan(markdown, filePath, agentId);
         return {
           loaded: true,
           plan_id: plan.id,
           name: plan.name,
           taskCount: plan.tasks.length,
+          orchestrator: plan.orchestratorAgentId,
           tasks: plan.tasks.map((t) => ({
             id: t.id,
             title: t.title,
@@ -997,6 +1113,253 @@ export class McpServer {
         const planId = args.plan_id as string | undefined;
         const deleted = sharedKnowledge.delete(key, scope, agentId, planId);
         return { deleted, key, scope };
+      }
+
+      // ── Phase 2: Orchestrator & spawn tools ──────────────────────────────
+
+      case 'eh_claim_orchestrator': {
+        const agentId = args.agent_id as string;
+        const planId = args.plan_id as string | undefined;
+        const connectedIds = new Set(this.deps.agentStateManager.getAllAgents().map((a) => a.id));
+        const result = planBoardManager.claimOrchestrator(agentId, planId, connectedIds);
+        if (!result.success) {
+          return { claimed: false, error: result.error };
+        }
+        return { claimed: true, agent_id: agentId };
+      }
+
+      case 'eh_spawn_agent': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can spawn agents. Use eh_claim_orchestrator first.' };
+        }
+        const { spawnRegistry } = this.deps;
+        if (!spawnRegistry) {
+          return { error: 'Spawn registry not available' };
+        }
+        const agentType = args.agent_type as string;
+        const role = args.role as string | undefined;
+        const prompt = args.prompt as string;
+        const cwd = args.cwd as string | undefined;
+        const model = args.model as string | undefined;
+        const planId = args.plan_id as string | undefined;
+        const taskId = args.task_id as string | undefined;
+
+        // Sync skills before spawning
+        if (this.deps.syncSkills) {
+          await this.deps.syncSkills(agentType);
+        }
+
+        const result = await spawnRegistry.spawn(agentType, { prompt, role, cwd, model, planId, taskId });
+        return result;
+      }
+
+      case 'eh_stop_agent': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can stop agents.' };
+        }
+        const { spawnRegistry } = this.deps;
+        if (!spawnRegistry) {
+          return { error: 'Spawn registry not available' };
+        }
+        const targetAgentId = args.target_agent_id as string;
+        const result = await spawnRegistry.stop(targetAgentId);
+        return result;
+      }
+
+      case 'eh_reassign_task': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can reassign tasks.' };
+        }
+        const taskId = args.task_id as string;
+        const newAgentId = args.new_agent_id as string;
+        const newAgentName = (args.new_agent_name as string) ?? newAgentId;
+        const planId = args.plan_id as string | undefined;
+        const board = planBoardManager.getPlan(planId);
+        if (!board) {
+          return { reassigned: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+        }
+        const task = board.tasks.find((t) => t.id === taskId);
+        if (!task) {
+          return { reassigned: false, error: `Task not found: ${taskId}` };
+        }
+        // Reset task to pending
+        task.status = 'pending';
+        task.assignee = null;
+        task.assigneeName = null;
+        task.claimedAt = null;
+        board.lastUpdatedAt = Date.now();
+        // Re-claim for new agent
+        const claimResult = planBoardManager.claimTask(taskId, newAgentId, newAgentName, planId);
+        if (!claimResult.success) {
+          return { reassigned: false, error: claimResult.error };
+        }
+        return {
+          reassigned: true,
+          task: { id: claimResult.task!.id, title: claimResult.task!.title, status: claimResult.task!.status, assignee: newAgentName },
+        };
+      }
+
+      case 'eh_get_team_status': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can get team status.' };
+        }
+        const planId = args.plan_id as string | undefined;
+        const agents = this.deps.agentStateManager.getAllAgents();
+        const getMetrics = this.deps.getMetrics;
+
+        const agentInfos = agents.map((a) => {
+          const m = getMetrics?.(a.id);
+          const currentTask = planId
+            ? planBoardManager.getPlan(planId)?.tasks.find((t) => t.assignee === a.id && (t.status === 'claimed' || t.status === 'in_progress'))
+            : null;
+          return {
+            id: a.id,
+            name: a.name,
+            type: a.type,
+            state: a.state,
+            currentTask: currentTask ? { id: currentTask.id, title: currentTask.title, status: currentTask.status } : null,
+            load: m?.load ?? 0,
+            cost: m?.estimatedCostUsd ?? 0,
+          };
+        });
+
+        let planProgress = null;
+        const board = planBoardManager.getPlan(planId);
+        if (board) {
+          const done = board.tasks.filter((t) => t.status === 'done').length;
+          planProgress = {
+            plan_id: board.id,
+            name: board.name,
+            done,
+            total: board.tasks.length,
+            percent: board.tasks.length > 0 ? Math.round((done / board.tasks.length) * 100) : 0,
+          };
+        }
+
+        return { agents: agentInfos, planProgress };
+      }
+
+      case 'eh_auto_assign': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can auto-assign tasks.' };
+        }
+        const planId = args.plan_id as string | undefined;
+        const strategy = (args.strategy as string) ?? 'capability-match';
+        const board = planBoardManager.getPlan(planId);
+        if (!board) {
+          return { assigned: [], error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+        }
+
+        const agents = this.deps.agentStateManager.getAllAgents();
+        if (agents.length === 0) {
+          return { assigned: [], error: 'No agents connected' };
+        }
+
+        const pending = board.tasks.filter((t) => t.status === 'pending' && !t.assignee);
+        if (pending.length === 0) {
+          return { assigned: [], message: 'No unassigned pending tasks' };
+        }
+
+        const { roleManager: rm, agentProfiler: ap } = this.deps;
+        const getMetrics = this.deps.getMetrics;
+        const assignments: Array<{ taskId: string; assignedTo: string; assignedToName: string; reason: string }> = [];
+        let agentIndex = 0;
+
+        for (const task of pending) {
+          let bestAgent = agents[0];
+          let bestScore = -1;
+          let bestReason = 'default';
+
+          if (strategy === 'round-robin') {
+            bestAgent = agents[agentIndex % agents.length];
+            bestReason = 'round-robin';
+            agentIndex++;
+          } else if (strategy === 'least-busy') {
+            let minLoad = Infinity;
+            for (const a of agents) {
+              const m = getMetrics?.(a.id);
+              const load = m?.load ?? 0;
+              if (load < minLoad) {
+                minLoad = load;
+                bestAgent = a;
+                bestReason = `least busy (load: ${Math.round(load * 100)}%)`;
+              }
+            }
+          } else {
+            // capability-match
+            for (const a of agents) {
+              let score = 0;
+              const reasons: string[] = [];
+
+              if (task.role) {
+                const assignments = rm.getAllAssignments();
+                const assignedType = assignments.find((asgn) => asgn.roleId === task.role)?.agentType;
+                if (assignedType === a.type) {
+                  score += 40;
+                  reasons.push(`Role match: ${task.role}`);
+                }
+              }
+
+              const profile = ap.getProfile(a.type);
+              const byRole = profile?.byRole as Record<string, { successRate?: number }> | undefined;
+              if (byRole && task.role && byRole[task.role]) {
+                score += (byRole[task.role].successRate ?? 0) * 30;
+              }
+
+              if (getMetrics) {
+                const m = getMetrics(a.id);
+                if (m) score += (1 - m.load) * 20;
+              }
+
+              const depCount = board.tasks.filter((t) => t.blockedBy.includes(task.id)).length;
+              score += Math.min(depCount * 5, 10);
+
+              if (score > bestScore) {
+                bestScore = score;
+                bestAgent = a;
+                bestReason = reasons.length > 0 ? reasons.join(', ') : `capability score: ${Math.round(score)}`;
+              }
+            }
+          }
+
+          const result = planBoardManager.claimTask(task.id, bestAgent.id, bestAgent.name, board.id);
+          if (result.success) {
+            assignments.push({ taskId: task.id, assignedTo: bestAgent.id, assignedToName: bestAgent.name, reason: bestReason });
+          }
+        }
+
+        return { assigned: assignments, count: assignments.length };
+      }
+
+      case 'eh_get_session': {
+        const agentId = args.agent_id as string;
+        const taskId = args.task_id as string;
+        const { sessionStore } = this.deps;
+        if (!sessionStore) {
+          return { hasSession: false, message: 'Session store not available' };
+        }
+        const sessionId = sessionStore.get(agentId, taskId);
+        return sessionId
+          ? { hasSession: true, sessionId }
+          : { hasSession: false };
+      }
+
+      case 'eh_sync_skills': {
+        const agentId = args.agent_id as string;
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can sync skills.' };
+        }
+        const targetType = args.target_agent_type as string;
+        if (!this.deps.syncSkills) {
+          return { error: 'Skill sync not available' };
+        }
+        const result = await this.deps.syncSkills(targetType);
+        return result;
       }
 
       default:

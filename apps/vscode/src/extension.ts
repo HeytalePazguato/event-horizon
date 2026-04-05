@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -249,9 +249,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // Restore session store from globalState
+  const savedSessions = context.globalState.get<Record<string, string>>('sessionStore');
+  if (savedSessions) sessionStore.restore(savedSessions);
+
   // ── Status bar — live agent count ──────────────────────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  statusBarItem.command = 'eventHorizon.open';
+  statusBarItem.command = 'eventHorizon.focusWaitingAgent';
   statusBarItem.tooltip = 'Event Horizon — Open Universe';
   statusBarItem.text = '$(rocket) 0 agents';
   statusBarItem.show();
@@ -271,7 +275,8 @@ export function activate(context: vscode.ExtensionContext): void {
         ? `${name} needs input`
         : `${waitingAgents.length} agents need input`;
       statusBarItem.text = `$(bell) ${label}`;
-      statusBarItem.tooltip = `Event Horizon — ${label}`;
+      const waitingNames = waitingAgents.map((a) => a.name ?? a.id).join(', ');
+      statusBarItem.tooltip = `Event Horizon — Waiting: ${waitingNames}\nClick to focus agent terminal`;
       // Start blinking background if not already
       if (!statusBarBlinkTimer) {
         const warningBg = new vscode.ThemeColor('statusBarItem.warningBackground');
@@ -429,6 +434,17 @@ export function activate(context: vscode.ExtensionContext): void {
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
+
+    // Focus-on-interaction: auto-focus terminal when agent enters waiting state
+    if (event.type === 'agent.waiting') {
+      const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
+      if (focusSetting === 'focus-on-interaction') {
+        const terminal = spawnRegistry.findTerminalForAgent(event.agentId);
+        if (terminal) {
+          terminal.show(true); // preserveFocus=true to not steal keyboard focus
+        }
+      }
+    }
 
     // Auto-discovery: notify newly joined agents about active plans
     if (event.type === 'agent.spawn') {
@@ -656,6 +672,50 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  // ── Focus waiting agent terminal ──────────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('eventHorizon.focusWaitingAgent', async () => {
+      const agents = agentStateManager.getAllAgents();
+      const waitingAgents = agents.filter((a) => a.state === 'waiting');
+
+      if (waitingAgents.length === 0) {
+        // No waiting agents — open Universe panel
+        void vscode.commands.executeCommand('eventHorizon.open');
+        return;
+      }
+
+      if (waitingAgents.length === 1) {
+        const terminal = spawnRegistry.findTerminalForAgent(waitingAgents[0].id);
+        if (terminal) {
+          terminal.show();
+        } else {
+          void vscode.commands.executeCommand('eventHorizon.open');
+        }
+        return;
+      }
+
+      // Multiple waiting agents — show QuickPick
+      const items = waitingAgents.map((a) => ({
+        label: a.name ?? a.id,
+        description: `${a.type} — ${a.state}`,
+        agentId: a.id,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a waiting agent to focus',
+      });
+      if (picked) {
+        const terminal = spawnRegistry.findTerminalForAgent(picked.agentId);
+        if (terminal) {
+          terminal.show();
+        } else {
+          void vscode.commands.executeCommand('eventHorizon.open');
+        }
+      }
+    })
+  );
+
+  // Focus-on-interaction is handled in onAgentEvent when agent enters waiting state.
+
 
   // Show one-time welcome notification on first install
   const hasShownWelcome = context.globalState.get<boolean>('welcomeShown');
@@ -754,6 +814,11 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   scheduleCoopShip();
 
+  // Persist session store on plan changes (tasks with session info)
+  planBoardManager.onTaskComplete((_task, _planId) => {
+    void context.globalState.update('sessionStore', sessionStore.serialize());
+  });
+
   context.subscriptions.push({
     dispose: () => {
       if (cooperationTimer) clearTimeout(cooperationTimer);
@@ -766,6 +831,8 @@ export function activate(context: vscode.ExtensionContext): void {
       // Clean up all OpenCode SSE watchers
       for (const w of openCodeSSEWatchers.values()) w.destroy();
       openCodeSSEWatchers.clear();
+      // Clean up spawn registry
+      spawnRegistry.dispose();
       webviewRef.current = null;
     },
   });

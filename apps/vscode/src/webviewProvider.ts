@@ -467,12 +467,30 @@ function wireUniverseWebview(
         void vscode.window.showInformationMessage('Event Horizon: Copilot hooks removed.');
         void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
       });
-    } else if (msg?.type === 'spawn-agent' && msg.command) {
-      const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
-      if (!ALLOWED_COMMANDS.includes(msg.command)) return;
-      const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
-      terminal.sendText(msg.command);
-      terminal.show();
+    } else if (msg?.type === 'spawn-agent' && (msg.command || msg.agentType)) {
+      // Legacy spawn (simple command) or new spawn (agentType + role + prompt)
+      if (msg.agentType && msg.prompt) {
+        // Phase 2 spawn via SpawnRegistry
+        void import('./eventServer.js').then(({ spawnRegistry: sr }) => {
+          void sr.spawn(msg.agentType as string, {
+            prompt: msg.prompt as string,
+            role: msg.role as string | undefined,
+            cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+          }).then((result) => {
+            if (result.status === 'spawned') {
+              void vscode.window.showInformationMessage(`Spawned ${msg.agentType} agent: ${result.terminalName}`);
+            } else {
+              void vscode.window.showWarningMessage(`Spawn failed: ${result.message}`);
+            }
+          });
+        });
+      } else if (msg.command) {
+        const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
+        if (!ALLOWED_COMMANDS.includes(msg.command as string)) return;
+        const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
+        terminal.sendText(msg.command as string);
+        terminal.show();
+      }
     } else if (msg?.type === 'open-skill-file' && typeof msg.filePath === 'string') {
       const uri = vscode.Uri.file(msg.filePath);
       void vscode.workspace.openTextDocument(uri).then((doc) => {

@@ -31,6 +31,8 @@ export interface PlanetProps {
   ringColorOverride?: number;
   /** Override the size multiplier instead of using SIZE_MULT. */
   sizeMultOverride?: number;
+  /** When true, renders a star glow behind the planet (for orchestrator agents). */
+  isOrchestrator?: boolean;
 }
 
 /** Per-variant size multipliers — encodes agent operating profile. */
@@ -73,6 +75,7 @@ export type ExtendedPlanet = Container & {
   __errorGlow?: Graphics;
   __waitingRing?: Graphics;
   __aura?: Graphics;
+  __orchestratorGlow?: Graphics;
 };
 
 /** Resolve the effective size multiplier (exported for testing). */
@@ -86,7 +89,7 @@ export function resolveRingColor(agentType?: string, override?: number): number 
 }
 
 export function createPlanet(props: PlanetProps): ExtendedPlanet {
-  const { x, y, size, brightness, agentId, agentType, ringColorOverride, sizeMultOverride } = props;
+  const { x, y, size, brightness, agentId, agentType, ringColorOverride, sizeMultOverride, isOrchestrator } = props;
 
   const variant: PlanetVariant =
     props.variant ??
@@ -110,6 +113,26 @@ export function createPlanet(props: PlanetProps): ExtendedPlanet {
   errorGlow.visible = false;
   container.addChild(errorGlow);
   container.__errorGlow = errorGlow;
+
+  // ── Orchestrator star glow (bright emission rays behind the planet) ──────
+  if (isOrchestrator) {
+    const starGlow = new Graphics();
+    // Large soft golden glow
+    starGlow.circle(0, 0, r * 2.8).fill({ color: 0xffcc44, alpha: 0.12 });
+    starGlow.circle(0, 0, r * 2.0).fill({ color: 0xffdd66, alpha: 0.18 });
+    // Emission rays (8 lines radiating out)
+    const rayCount = 8;
+    for (let i = 0; i < rayCount; i++) {
+      const angle = (i / rayCount) * Math.PI * 2;
+      const innerR = r * 1.3;
+      const outerR = r * 2.5 + (i % 2 === 0 ? r * 0.5 : 0); // alternating long/short
+      starGlow.moveTo(Math.cos(angle) * innerR, Math.sin(angle) * innerR)
+        .lineTo(Math.cos(angle) * outerR, Math.sin(angle) * outerR)
+        .stroke({ width: 1.5, color: 0xffcc44, alpha: 0.3 });
+    }
+    container.addChild(starGlow);
+    container.__orchestratorGlow = starGlow;
+  }
 
   switch (variant) {
     case 'gas':      drawGasGiant(container, r, brightness, agentId);      break;

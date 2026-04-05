@@ -44,6 +44,9 @@ import { MessageQueue } from './messageQueue.js';
 import { RoleManager } from './roleManager.js';
 import { AgentProfiler } from './agentProfiler.js';
 import { SharedKnowledgeStore } from './sharedKnowledge.js';
+import { SpawnRegistry, ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner } from './spawnRegistry.js';
+import { SessionStore } from './sessionStore.js';
+import { syncSkillsForAgent } from './skillSync.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -52,6 +55,8 @@ export const messageQueue = new MessageQueue();
 export const roleManager = new RoleManager();
 export const agentProfiler = new AgentProfiler();
 export const sharedKnowledge = new SharedKnowledgeStore();
+export const spawnRegistry = new SpawnRegistry();
+export const sessionStore = new SessionStore();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -61,6 +66,12 @@ export function initMcpServer(deps: {
   agentStateManager: import('@event-horizon/core').AgentStateManager;
   metricsEngine?: import('@event-horizon/core').MetricsEngine;
 }): void {
+  // Register spawn backends
+  const getToken = () => authToken;
+  spawnRegistry.register(new ClaudeCodeSpawner(spawnRegistry, DEFAULT_PORT, getToken));
+  spawnRegistry.register(new OpenCodeSpawner(spawnRegistry, DEFAULT_PORT, getToken));
+  spawnRegistry.register(new CursorSpawner(spawnRegistry, DEFAULT_PORT, getToken));
+
   mcpServer = new McpServer({
     lockManager,
     agentStateManager: deps.agentStateManager,
@@ -73,6 +84,9 @@ export function initMcpServer(deps: {
     getMetrics: deps.metricsEngine
       ? (agentId: string) => deps.metricsEngine!.getMetrics(agentId) ?? undefined
       : undefined,
+    spawnRegistry,
+    sessionStore,
+    syncSkills: syncSkillsForAgent,
   });
 }
 

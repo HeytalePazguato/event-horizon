@@ -124,6 +124,8 @@ export interface UniverseProps {
   planTasks?: DebrisPlan | null;
   /** When false, the PixiJS ticker is paused to save CPU (e.g. Operations view is active). */
   visible?: boolean;
+  /** Agent IDs that are orchestrators — renders star glow behind their planets. */
+  orchestratorAgentIds?: Record<string, boolean>;
 }
 
 // --- constants -----------------------------------------------------------
@@ -319,6 +321,7 @@ export const Universe: FC<UniverseProps> = ({
   onShootingStarClicked,
   planTasks = null,
   visible = true,
+  orchestratorAgentIds = {},
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -403,6 +406,7 @@ export const Universe: FC<UniverseProps> = ({
   const visualSettingsRef = useRef(visualSettings);
   const settingsRevRef = useRef(0);
   const animationSpeedRef = useRef(animationSpeed);
+  const orchestratorIdsRef = useRef(orchestratorAgentIds);
   const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
@@ -478,6 +482,7 @@ export const Universe: FC<UniverseProps> = ({
     }
   }, [visualSettings]);
   useEffect(() => { animationSpeedRef.current = animationSpeed; }, [animationSpeed]);
+  useEffect(() => { orchestratorIdsRef.current = orchestratorAgentIds; }, [orchestratorAgentIds]);
   useEffect(() => { visibleRef.current = visible; }, [visible]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
@@ -941,6 +946,7 @@ export const Universe: FC<UniverseProps> = ({
           agentType: agent.agentType,
           ringColorOverride: vs ? parseInt(vs.color.slice(1), 16) : undefined,
           sizeMultOverride: vs?.sizeMult,
+          isOrchestrator: !!orchestratorIdsRef.current[agent.id],
         });
 
         // Name label beneath planet (+ folder name on second line)
