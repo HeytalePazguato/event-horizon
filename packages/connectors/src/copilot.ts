@@ -13,14 +13,19 @@ import type { AgentEvent, AgentEventType } from '@event-horizon/core';
 
 /** Map hook event names to AgentEvent types. */
 const COPILOT_HOOK_TO_EVENT: Record<string, AgentEventType> = {
-  SessionStart:     'agent.spawn',
-  SessionEnd:       'agent.terminate', // never fires as of March 2026 — kept for future compat
-  Stop:             'agent.idle',      // fires per-turn, NOT session end
-  UserPromptSubmit: 'task.start',
-  PreToolUse:       'tool.call',
-  PostToolUse:      'tool.result',
-  SubagentStart:    'task.start',
-  SubagentStop:     'task.complete',
+  SessionStart:        'agent.spawn',
+  SessionEnd:          'agent.terminate', // never fires as of March 2026 — kept for future compat
+  Stop:                'agent.idle',      // fires per-turn, NOT session end
+  UserPromptSubmit:    'task.start',
+  PreToolUse:          'tool.call',
+  PostToolUse:         'tool.result',
+  PostToolUseFailure:  'agent.error',
+  SubagentStart:       'task.start',
+  SubagentStop:        'task.complete',
+  TaskCompleted:       'task.complete',
+  TeammateIdle:        'agent.idle',
+  PermissionRequest:   'agent.waiting',
+  Notification:        'message.receive',
 };
 
 function nextId(): string {
@@ -93,6 +98,68 @@ export function mapCopilotHookToEvent(payload: unknown): AgentEvent | null {
       const skillName = (ti.name as string) ?? (ti.skill as string);
       if (typeof skillName === 'string') safePayload.skillName = skillName.slice(0, 128);
     }
+  }
+
+  // PostToolUseFailure — capture error details (parity with Claude Code)
+  if (hookEvent === 'PostToolUseFailure') {
+    safePayload.isToolFailure = true;
+    if (p.error_message) safePayload.errorMessage = String(p.error_message).slice(0, 256);
+    if (p.failure_type) safePayload.failureType = String(p.failure_type).slice(0, 64);
+  }
+
+  // PermissionRequest — agent is waiting for user permission
+  if (hookEvent === 'PermissionRequest') {
+    safePayload.waitingSource = 'permission_request';
+    if (p.tool_name) safePayload.toolName = String(p.tool_name).slice(0, 128);
+  }
+
+  // Notification — general notification from Copilot
+  if (hookEvent === 'Notification') {
+    const notifType = p.notification_type ?? (p.payload as Record<string, unknown> | undefined)?.notification_type;
+    if (typeof notifType === 'string') safePayload.notificationType = notifType.slice(0, 128);
+    if (p.message) safePayload.message = String(p.message).slice(0, 256);
+  }
+
+  // TeammateIdle — another agent in the team is idle
+  if (hookEvent === 'TeammateIdle') {
+    if (p.teammate_id) safePayload.teammateId = String(p.teammate_id).slice(0, 128);
+    if (p.teammate_session_id) safePayload.teammateSessionId = String(p.teammate_session_id).slice(0, 128);
+  }
+
+  // TaskCompleted — background task completed
+  if (hookEvent === 'TaskCompleted') {
+    safePayload.hookType = 'task_completed';
+    const taskId = p.task_id ?? p.taskId;
+    if (typeof taskId === 'string') safePayload.taskId = taskId.slice(0, 128);
+  }
+
+  // Forward transcript_path on SessionStart too (parity with Claude Code)
+  if (hookEvent === 'SessionStart') {
+    if (typeof p.transcript_path === 'string') safePayload.transcriptPath = String(p.transcript_path).slice(0, 1024);
+    // Capture MCP servers if present
+    const mcpServers = p.mcp_servers;
+    if (Array.isArray(mcpServers)) {
+      safePayload.mcpServers = mcpServers.slice(0, 20).map((srv: unknown) => {
+        if (!srv || typeof srv !== 'object') return { name: 'unknown', status: 'unknown' };
+        const s = srv as Record<string, unknown>;
+        return {
+          name: String(s.name ?? 'unknown').slice(0, 128),
+          status: String(s.status ?? 'unknown').slice(0, 32),
+        };
+      });
+    }
+  }
+
+  // Capture model name if present (parity with Claude Code)
+  const model = p.model;
+  if (typeof model === 'string') safePayload.modelName = model.slice(0, 128);
+
+  // Richer Stop telemetry (parity with Claude Code)
+  if (hookEvent === 'Stop') {
+    if (typeof p.duration_ms === 'number') safePayload.durationMs = p.duration_ms;
+    if (typeof p.duration_api_ms === 'number') safePayload.durationApiMs = p.duration_api_ms;
+    if (typeof p.num_turns === 'number') safePayload.numTurns = p.num_turns;
+    if (typeof p.stop_reason === 'string') safePayload.stopReason = String(p.stop_reason).slice(0, 128);
   }
 
   return {

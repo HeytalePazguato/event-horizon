@@ -18,8 +18,12 @@ import { SkillsPanel } from './panels/SkillsPanel.js';
 import { PlanPanel } from './panels/PlanPanel.js';
 import type { PlanView, PlanSummary } from './panels/PlanPanel.js';
 import { RolesPanel } from './panels/RolesPanel.js';
-
-type OpsTab = 'overview' | 'files' | 'logs' | 'timeline' | 'skills' | 'plan' | 'roles';
+import { KnowledgePanel } from './panels/KnowledgePanel.js';
+import type { KnowledgeEntry } from './panels/KnowledgePanel.js';
+import { TracesPanel } from './panels/TracesPanel.js';
+import type { TraceSpanView } from './panels/TracesPanel.js';
+type OpsTab = 'overview' | 'activity' | 'files' | 'skills' | 'plan' | 'roles' | 'knowledge';
+type ActivityView = 'timeline' | 'traces' | 'logs';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -55,6 +59,14 @@ export interface OperationsViewProps {
   onCreateRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
   onEditRole?: (role: { id: string; name: string; description: string; skills: string[]; instructions: string }) => void;
   onDeleteRole?: (roleId: string) => void;
+  knowledgeWorkspace?: KnowledgeEntry[];
+  knowledgePlan?: KnowledgeEntry[];
+  knowledgePlanName?: string;
+  onKnowledgeAdd?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onKnowledgeEdit?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onKnowledgeDelete?: (key: string, scope: 'workspace' | 'plan') => void;
+  traceSpans?: TraceSpanView[];
+  traceAggregate?: Record<string, number>;
 }
 
 const OPS_TOOLTIP_STYLE: React.CSSProperties = {
@@ -72,12 +84,15 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {} }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
+  const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
   const setFileLockingEnabled = useCommandCenterStore((s) => s.setFileLockingEnabled);
+  const worktreeIsolation = useCommandCenterStore((s) => s.worktreeIsolation);
+  const setWorktreeIsolation = useCommandCenterStore((s) => s.setWorktreeIsolation);
   const demoMode = useCommandCenterStore((s) => s.demoMode);
   const demoStartedAt = useCommandCenterStore((s) => s.demoStartedAt);
   const requestDemo = useCommandCenterStore((s) => s.requestDemo);
@@ -85,6 +100,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
   const toggleSpawn = useCommandCenterStore((s) => s.toggleSpawn);
   const requestExport = useCommandCenterStore((s) => s.requestExport);
   const requestScreenshot = useCommandCenterStore((s) => s.requestScreenshot);
+  const requestTellAll = useCommandCenterStore((s) => s.requestTellAll);
   const toggleInfo = useCommandCenterStore((s) => s.toggleInfo);
   const toggleSettings = useCommandCenterStore((s) => s.toggleSettings);
   const skillsCount = useCommandCenterStore((s) => s.skills.length);
@@ -130,9 +146,8 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             flexShrink: 0,
           }}>
             <button type="button" style={tabStyle(activeTab === 'overview')} onClick={() => setActiveTab('overview')}>Overview</button>
+            <button type="button" style={tabStyle(activeTab === 'activity')} onClick={() => setActiveTab('activity')}>Activity</button>
             <button type="button" style={tabStyle(activeTab === 'files')} onClick={() => setActiveTab('files')}>Files</button>
-            <button type="button" style={tabStyle(activeTab === 'logs')} onClick={() => setActiveTab('logs')}>Logs</button>
-            <button type="button" style={tabStyle(activeTab === 'timeline')} onClick={() => setActiveTab('timeline')}>Timeline</button>
             <button type="button" style={tabStyle(activeTab === 'skills')} onClick={() => setActiveTab('skills')}>
               Skills{skillsCount > 0 ? ` (${skillsCount})` : ''}
             </button>
@@ -142,6 +157,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             <button type="button" style={tabStyle(activeTab === 'roles')} onClick={() => setActiveTab('roles')}>
               Roles{roles && roles.length > 0 ? ` (${roles.length})` : ''}
             </button>
+            <button type="button" style={tabStyle(activeTab === 'knowledge')} onClick={() => setActiveTab('knowledge')}>
+              Knowledge{(knowledgeWorkspace.length + knowledgePlan.length) > 0 ? ` (${knowledgeWorkspace.length + knowledgePlan.length})` : ''}
+            </button>
 
             {/* Command buttons — right-aligned */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: '0 8px' }}>
@@ -150,6 +168,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
                 { label: 'Spawn', action: toggleSpawn },
                 { label: 'Export', action: requestExport },
                 { label: 'Screenshot', action: requestScreenshot },
+                { label: 'Tell All', action: requestTellAll },
                 { label: 'Demo', action: requestDemo },
                 { label: 'Info', action: toggleInfo },
                 { label: 'Settings', action: toggleSettings },
@@ -185,18 +204,44 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
                 <FileHeatmapFull />
               </div>
             )}
-            {activeTab === 'logs' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                <LogsPanel />
-              </div>
-            )}
-            {activeTab === 'timeline' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                <TimelinePanel agentCwds={agentCwds} />
+            {activeTab === 'activity' && (
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+                {/* Activity sub-toggle */}
+                <div style={{ display: 'flex', gap: 0, flexShrink: 0, padding: '8px 16px 0', background: 'rgba(8,16,10,0.5)' }}>
+                  {([
+                    { id: 'timeline' as ActivityView, label: 'Timeline' },
+                    { id: 'traces' as ActivityView, label: 'Traces' },
+                    { id: 'logs' as ActivityView, label: 'Logs' },
+                  ]).map((v) => (
+                    <button key={v.id} type="button" onClick={() => setActivityView(v.id)} style={{
+                      padding: '4px 12px', border: 'none', fontSize: 11, fontFamily: 'Consolas, monospace', cursor: 'pointer',
+                      background: activityView === v.id ? 'rgba(30,70,45,0.4)' : 'transparent',
+                      color: activityView === v.id ? '#90d898' : '#4a7a58',
+                      borderBottom: activityView === v.id ? '2px solid #40a060' : '2px solid transparent',
+                      fontWeight: activityView === v.id ? 600 : 400,
+                    }}>{v.label}{v.id === 'traces' && traceSpans.length > 0 ? ` (${traceSpans.length})` : ''}</button>
+                  ))}
+                </div>
+                {/* Activity content */}
+                <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                  {activityView === 'timeline' && (
+                    <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                      <TimelinePanel agentCwds={agentCwds} />
+                    </div>
+                  )}
+                  {activityView === 'traces' && (
+                    <TracesPanel spans={traceSpans} aggregate={traceAggregate} agents={agents.map((a) => ({ id: a.id, name: a.name }))} />
+                  )}
+                  {activityView === 'logs' && (
+                    <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+                      <LogsPanel />
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             {activeTab === 'skills' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 <SkillsPanel onOpenSkill={onOpenSkill} onCreateSkill={onCreateSkill} onOpenMarketplace={onOpenMarketplace} onMoveSkill={onMoveSkill} onDuplicateSkill={onDuplicateSkill} />
               </div>
             )}
@@ -204,8 +249,13 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <PlanPanel plan={plan ?? { loaded: false }} />
             )}
             {activeTab === 'roles' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} agents={agents.map((a) => ({ id: a.id, name: a.name, type: a.agentType }))} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
+              </div>
+            )}
+            {activeTab === 'knowledge' && (
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <KnowledgePanel workspace={knowledgeWorkspace} plan={knowledgePlan} planName={knowledgePlanName} onAdd={onKnowledgeAdd ?? (() => {})} onEdit={onKnowledgeEdit ?? (() => {})} onDelete={onKnowledgeDelete ?? (() => {})} />
               </div>
             )}
           </div>
@@ -249,6 +299,29 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
           onMouseLeave={() => setHoveredTooltip(null)}
         >
           {fileLockingEnabled ? 'Locks ON' : 'Locks OFF'}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setWorktreeIsolation(!worktreeIsolation)}
+          style={{
+            padding: '2px 8px',
+            border: `1px solid ${worktreeIsolation ? '#4a7a9a' : '#1a3020'}`,
+            borderRadius: 2,
+            background: worktreeIsolation ? 'rgba(40,70,100,0.4)' : 'transparent',
+            color: worktreeIsolation ? '#6ab0d4' : '#3a6a48',
+            fontSize: 11,
+            fontFamily: 'Consolas, monospace',
+            cursor: 'pointer',
+            fontWeight: 500,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+          onMouseEnter={() => setHoveredTooltip('Worktree Isolation: spawned agents get their own git worktree — no file conflicts')}
+          onMouseLeave={() => setHoveredTooltip(null)}
+        >
+          {worktreeIsolation ? 'Worktrees ON' : 'Worktrees OFF'}
         </button>
 
         {demoMode && (

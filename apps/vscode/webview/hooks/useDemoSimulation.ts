@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, type MutableRefObject } from 'react';
-import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
+import type { ShipSpawn, SparkSpawn, SpawnBeam } from '@event-horizon/renderer';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 import { useCommandCenterStore } from '@event-horizon/ui';
 import type { PlanView, PlanSummary, PlanTaskView } from '@event-horizon/ui';
@@ -33,15 +33,118 @@ const DEMO_SKILLS = ['code-review', 'run-tests', 'update-docs', 'refactor'];
 
 const DEMO_PLAN_ID = 'demo-api-plan';
 const DEMO_PLAN_TASKS: PlanTaskView[] = [
-  { id: '1.1', title: 'Create database schema', status: 'done', assignee: '[Demo] Claude', assigneeId: 'demo-claude', blockedBy: [], notes: [{ agentId: 'demo-claude', agentName: '[Demo] Claude', text: 'Created users and sessions tables', ts: 0 }] },
-  { id: '1.2', title: 'Add seed data migration', status: 'done', assignee: '[Demo] OpenCode', assigneeId: 'demo-opencode', blockedBy: ['1.1'], notes: [] },
-  { id: '2.1', title: 'User CRUD endpoints', status: 'in_progress', assignee: '[Demo] Claude', assigneeId: 'demo-claude', blockedBy: ['1.1'], notes: [] },
-  { id: '2.2', title: 'Auth middleware + JWT', status: 'in_progress', assignee: '[Demo] OpenCode', assigneeId: 'demo-opencode', blockedBy: ['1.1'], notes: [] },
-  { id: '2.3', title: 'Rate limiting middleware', status: 'claimed', assignee: '[Demo] Copilot', assigneeId: 'demo-copilot', blockedBy: [], notes: [] },
-  { id: '3.1', title: 'Integration tests for auth', status: 'pending', assignee: null, assigneeId: null, blockedBy: ['2.1', '2.2'], notes: [] },
-  { id: '3.2', title: 'Integration tests for CRUD', status: 'blocked', assignee: null, assigneeId: null, blockedBy: ['2.1'], notes: [] },
-  { id: '3.3', title: 'Load testing setup', status: 'pending', assignee: null, assigneeId: null, blockedBy: [], notes: [] },
+  { id: '1.1', title: 'Create database schema', status: 'done', assignee: '[Demo] Claude', assigneeId: 'demo-claude', role: 'planner', blockedBy: [], notes: [{ agentId: 'demo-claude', agentName: '[Demo] Claude', text: 'Created users and sessions tables', ts: 0 }] },
+  { id: '1.2', title: 'Add seed data migration', status: 'done', assignee: '[Demo] OpenCode', assigneeId: 'demo-opencode', role: 'implementer', blockedBy: ['1.1'], notes: [] },
+  { id: '2.1', title: 'User CRUD endpoints', status: 'in_progress', assignee: '[Demo] Claude', assigneeId: 'demo-claude', role: 'implementer', blockedBy: ['1.1'], notes: [] },
+  { id: '2.2', title: 'Auth middleware + JWT', status: 'in_progress', assignee: '[Demo] OpenCode', assigneeId: 'demo-opencode', role: 'implementer', retryCount: 1, blockedBy: ['1.1'], notes: [] },
+  { id: '2.3', title: 'Rate limiting middleware', status: 'claimed', assignee: '[Demo] Copilot', assigneeId: 'demo-copilot', role: 'implementer', blockedBy: [], notes: [] },
+  { id: '3.1', title: 'Integration tests for auth', status: 'pending', assignee: null, assigneeId: null, role: 'tester', blockedBy: ['2.1', '2.2'], notes: [] },
+  { id: '3.2', title: 'Integration tests for CRUD', status: 'blocked', assignee: null, assigneeId: null, role: 'tester', blockedBy: ['2.1'], notes: [] },
+  { id: '3.3', title: 'Load testing setup', status: 'pending', assignee: null, assigneeId: null, role: 'researcher', recommendedFor: 'opencode', blockedBy: [], notes: [] },
 ];
+
+/** Role definitions for demo agents. */
+const DEMO_ROLES = [
+  { id: 'orchestrator', name: 'Orchestrator', description: 'Coordinates agent work and creates plans', skills: ['plan-create', 'task-assign'], instructions: 'Coordinate work across agents, create and manage plans.', builtIn: true },
+  { id: 'implementer', name: 'Implementer', description: 'Writes production code and features', skills: ['code-review', 'refactor'], instructions: 'Implement features and write production code.', builtIn: true },
+  { id: 'tester', name: 'Tester', description: 'Writes and runs tests', skills: ['run-tests'], instructions: 'Write integration and unit tests.', builtIn: true },
+  { id: 'reviewer', name: 'Reviewer', description: 'Reviews code for quality and correctness', skills: ['code-review'], instructions: 'Review PRs and code changes.', builtIn: true },
+  { id: 'researcher', name: 'Researcher', description: 'Researches approaches and evaluates options', skills: ['update-docs'], instructions: 'Research technical approaches and document findings.', builtIn: true },
+  { id: 'planner', name: 'Planner', description: 'Creates task breakdowns and plans', skills: ['plan-create'], instructions: 'Break down work into manageable tasks.', builtIn: true },
+];
+
+/** Role assignments for demo agents. */
+const DEMO_ROLE_ASSIGNMENTS = [
+  { roleId: 'orchestrator', agentType: 'claude-code' as string | null, agentId: 'demo-claude' as string | null },
+  { roleId: 'implementer', agentType: 'opencode' as string | null, agentId: 'demo-opencode' as string | null },
+  { roleId: 'tester', agentType: 'copilot' as string | null, agentId: 'demo-copilot' as string | null },
+  { roleId: 'reviewer', agentType: 'cursor' as string | null, agentId: 'demo-cursor' as string | null },
+  { roleId: 'researcher', agentType: null, agentId: 'demo-gemini' as string | null },
+];
+
+/** Workspace knowledge entries (set once on demo start). */
+const DEMO_KNOWLEDGE_WORKSPACE = [
+  { key: 'tech-stack', value: 'TypeScript, Express, PostgreSQL, Vitest', scope: 'workspace' as const, author: 'user', authorId: 'user', createdAt: Date.now() - 60000, updatedAt: Date.now() - 60000 },
+  { key: 'conventions', value: 'camelCase for variables, PascalCase for types, kebab-case for files', scope: 'workspace' as const, author: 'user', authorId: 'user', createdAt: Date.now() - 55000, updatedAt: Date.now() - 55000 },
+];
+
+/** Heartbeat statuses for demo agents. */
+const DEMO_HEARTBEAT_STATUSES: Record<string, string> = {
+  'demo-claude': 'alive',
+  'demo-opencode': 'alive',
+  'demo-copilot': 'alive',
+  'demo-cursor': 'alive',
+  'demo-gemini': 'alive',
+  'demo-solo-1': 'alive',
+  'demo-solo-2': 'stale',
+  'demo-solo-3': 'lost',
+};
+
+/** MCP server data for demo agents. */
+const DEMO_MCP_SERVERS: Record<string, Array<{ name: string; connected: boolean; toolCount: number }>> = {
+  'demo-claude': [
+    { name: 'event-horizon', connected: true, toolCount: 39 },
+    { name: 'github', connected: true, toolCount: 12 },
+  ],
+  'demo-cursor': [
+    { name: 'event-horizon', connected: true, toolCount: 39 },
+  ],
+};
+
+/** Generate initial trace spans for the demo. */
+function generateDemoTraceSpans(): Array<{ id: string; runId: string; spanType: string; name: string; agentId: string; parentSpanId?: string; startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown> }> {
+  const now = Date.now();
+  const spans: Array<{ id: string; runId: string; spanType: string; name: string; agentId: string; parentSpanId?: string; startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown> }> = [];
+  const agents = ['demo-claude', 'demo-opencode', 'demo-copilot', 'demo-cursor'];
+  const tools = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
+  const taskNames = ['Create schema', 'Seed data', 'CRUD endpoints', 'Auth middleware', 'Rate limiting'];
+
+  // Session spans (top level)
+  for (let i = 0; i < agents.length; i++) {
+    const sessionStart = now - 120000 + i * 5000;
+    const sessionId = `demo-session-${i}`;
+    spans.push({
+      id: sessionId, runId: `demo-run-${i}`, spanType: 'session', name: `Session ${i + 1}`,
+      agentId: agents[i], startMs: sessionStart, endMs: now, durationMs: now - sessionStart, metadata: {},
+    });
+
+    // Task spans under session
+    const taskCount = 2 + Math.floor(Math.random() * 2);
+    for (let t = 0; t < taskCount; t++) {
+      const taskStart = sessionStart + t * 20000 + Math.floor(Math.random() * 5000);
+      const taskDur = 8000 + Math.floor(Math.random() * 12000);
+      const taskId = `demo-task-${i}-${t}`;
+      spans.push({
+        id: taskId, runId: `demo-run-${i}`, spanType: 'task', name: taskNames[t % taskNames.length],
+        agentId: agents[i], parentSpanId: sessionId,
+        startMs: taskStart, endMs: taskStart + taskDur, durationMs: taskDur, metadata: {},
+      });
+
+      // Tool call spans under task
+      const callCount = 2 + Math.floor(Math.random() * 3);
+      for (let c = 0; c < callCount; c++) {
+        const callStart = taskStart + c * (taskDur / callCount);
+        const callDur = 200 + Math.floor(Math.random() * 1500);
+        spans.push({
+          id: `demo-tool-${i}-${t}-${c}`, runId: `demo-run-${i}`, spanType: 'tool_call',
+          name: tools[Math.floor(Math.random() * tools.length)],
+          agentId: agents[i], parentSpanId: taskId,
+          startMs: callStart, endMs: callStart + callDur, durationMs: callDur, metadata: {},
+        });
+      }
+    }
+  }
+  return spans;
+}
+
+/** Generate trace aggregate from spans. */
+function generateDemoTraceAggregate(spans: Array<{ spanType: string; durationMs: number }>): Record<string, number> {
+  const agg: Record<string, number> = {};
+  for (const s of spans) {
+    agg[s.spanType] = (agg[s.spanType] ?? 0) + s.durationMs;
+  }
+  return agg;
+}
 
 interface DemoSimDeps {
   setAgents: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; agentType?: string; cwd?: string }>>>;
@@ -56,6 +159,16 @@ interface DemoSimDeps {
   demoRequested: boolean;
   setPlan: React.Dispatch<React.SetStateAction<PlanView>>;
   setPlans: React.Dispatch<React.SetStateAction<PlanSummary[]>>;
+  setRoles: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>>>;
+  setRoleAssignments: React.Dispatch<React.SetStateAction<Array<{ roleId: string; agentType: string | null; agentId: string | null }>>>;
+  setKnowledgeWorkspace: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
+  setKnowledgePlan: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
+  setSpawnBeams: React.Dispatch<React.SetStateAction<SpawnBeam[]>>;
+  setTraceSpans: React.Dispatch<React.SetStateAction<Array<{ id: string; runId: string; spanType: string; name: string; agentId: string; parentSpanId?: string; startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown> }>>>;
+  setTraceAggregate: React.Dispatch<React.SetStateAction<Record<string, number>>>;
+  setHeartbeatStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setOrchestratorAgentIds: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setMcpServers: React.Dispatch<React.SetStateAction<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>>;
 }
 
 export interface DemoSimResult {
@@ -67,6 +180,13 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     setAgents, setAgentMap, setMetricsMap, setShips, setSparks, setActiveSkillsView,
     agentLastSeenRef, shipTimerIdsRef, unlockAchievement, demoRequested,
     setPlan, setPlans,
+    setRoles, setRoleAssignments,
+    setKnowledgeWorkspace, setKnowledgePlan,
+    setSpawnBeams,
+    setTraceSpans, setTraceAggregate,
+    setHeartbeatStatuses,
+    setOrchestratorAgentIds,
+    setMcpServers,
   } = deps;
 
   const [demoSimRunning, setDemoSimRunning] = useState(false);
@@ -79,7 +199,24 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
       agentTimers[a.id] = { nextTransition: Date.now() + 2000 + Math.random() * 8000, phase: 'idle' };
     }
 
-    // Staggered spawns
+    // Set up roles, heartbeats, orchestrator, MCP servers, knowledge, traces on demo start
+    setRoles(DEMO_ROLES);
+    setRoleAssignments(DEMO_ROLE_ASSIGNMENTS);
+    setHeartbeatStatuses(DEMO_HEARTBEAT_STATUSES);
+    setOrchestratorAgentIds({ 'demo-claude': true });
+    setMcpServers(DEMO_MCP_SERVERS);
+    setKnowledgeWorkspace(DEMO_KNOWLEDGE_WORKSPACE);
+    setKnowledgePlan([]); // Plan knowledge added over time as tasks complete
+
+    // Pre-populate trace spans
+    const demoSpans = generateDemoTraceSpans();
+    setTraceSpans(demoSpans);
+    setTraceAggregate(generateDemoTraceAggregate(demoSpans));
+
+    // Track which knowledge entries have been added (by task id)
+    const addedPlanKnowledge = new Set<string>();
+
+    // Staggered spawns with spawn beams from orchestrator
     const shuffled = [...DEMO_AGENTS].sort(() => Math.random() - 0.5);
     shuffled.forEach((a, i) => {
       const delay = (i / shuffled.length) * (3000 + Math.random() * 2000);
@@ -102,6 +239,18 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
             inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, lastUpdated: Date.now(),
           },
         }));
+
+        // Spawn beam from orchestrator (demo-claude) to each other agent
+        if (a.id !== 'demo-claude') {
+          const beam: SpawnBeam = {
+            fromAgentId: 'demo-claude',
+            toAgentId: a.id,
+            color: a.agentType === 'opencode' ? 0x00aaff : a.agentType === 'copilot' ? 0x44cc88 : a.agentType === 'cursor' ? 0xffaa00 : 0x8888ff,
+            startTime: Date.now(),
+          };
+          setSpawnBeams((prev) => [...prev, beam]);
+        }
+
         shipTimerIdsRef.current.delete(timerId);
       }, delay);
       shipTimerIdsRef.current.add(timerId);
@@ -113,6 +262,7 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
       loaded: true, id: DEMO_PLAN_ID, name: '[Demo] REST API with Auth',
       status: 'active', sourceFile: 'docs/API_PLAN.md',
       lastUpdatedAt: Date.now(), tasks: demoPlanTasks,
+      strategy: 'capability-match', maxBudgetUsd: 5.00,
     };
     setPlan(demoPlan);
     setPlans((prev) => [...prev.filter((p) => p.id !== DEMO_PLAN_ID), {
@@ -215,14 +365,41 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
             useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp, a.cwd);
             useCommandCenterStore.getState().addTimelineEntry({ ts: Date.now(), agentId: a.id, agentName: a.name, agentType: a.agentType, kind: 'tool', label: t });
           }
+          // Token and cost accumulation during thinking phases
+          const isThinking = timer?.phase === 'thinking';
+          const inputTokenInc = isThinking ? Math.floor(400 + Math.random() * 200) : 0;
+          const outputTokenInc = isThinking ? Math.floor(150 + Math.random() * 100) : 0;
+          const costInc = isThinking ? 0.003 + Math.random() * 0.004 : 0;
           next[a.id] = {
             ...m, load, toolCalls: m.toolCalls + toolInc,
-            promptsSubmitted: m.promptsSubmitted + (timer?.phase === 'thinking' && Math.random() < 0.1 ? 1 : 0),
+            promptsSubmitted: m.promptsSubmitted + (isThinking && Math.random() < 0.1 ? 1 : 0),
             activeSubagents, toolBreakdown: tb, lastUpdated: now,
+            inputTokens: m.inputTokens + inputTokenInc,
+            outputTokens: m.outputTokens + outputTokenInc,
+            estimatedCostUsd: m.estimatedCostUsd + costInc,
           };
         }
         return next;
       });
+
+      // Live trace spans — add a new tool_call span when an agent is in tool_use
+      for (const a of DEMO_AGENTS) {
+        const timer = agentTimers[a.id];
+        if (timer?.phase === 'tool_use' && Math.random() < 0.3) {
+          const toolNames = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
+          const spanStart = now - Math.floor(200 + Math.random() * 1500);
+          const spanDur = Math.floor(200 + Math.random() * 1200);
+          const newSpan = {
+            id: `demo-live-${now}-${a.id}-${Math.random().toString(36).slice(2, 6)}`,
+            runId: `demo-run-live`, spanType: 'tool_call',
+            name: toolNames[Math.floor(Math.random() * toolNames.length)],
+            agentId: a.id, startMs: spanStart, endMs: spanStart + spanDur,
+            durationMs: spanDur, metadata: {},
+          };
+          setTraceSpans((prev) => [...prev, newSpan]);
+          setTraceAggregate((prev) => ({ ...prev, tool_call: (prev.tool_call ?? 0) + spanDur }));
+        }
+      }
 
       // Skill activation
       if (Math.random() < 0.06) {
@@ -295,6 +472,23 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
             task.status = 'done';
             task.notes.push({ agentId: task.assigneeId ?? '', agentName: task.assignee ?? '', text: 'Completed', ts: now });
             changed = true;
+            // Add plan knowledge on specific task completions
+            if (task.id === '1.1' && !addedPlanKnowledge.has('1.1')) {
+              addedPlanKnowledge.add('1.1');
+              setKnowledgePlan((prev) => [...prev, {
+                key: 'db-schema', value: 'Users table with uuid PK, sessions table with TTL',
+                scope: 'plan', author: '[Demo] Claude', authorId: 'demo-claude',
+                createdAt: now, updatedAt: now,
+              }]);
+            }
+            if (task.id === '2.2' && !addedPlanKnowledge.has('2.2')) {
+              addedPlanKnowledge.add('2.2');
+              setKnowledgePlan((prev) => [...prev, {
+                key: 'auth-approach', value: 'JWT with RS256, refresh tokens in httpOnly cookies',
+                scope: 'plan', author: '[Demo] OpenCode', authorId: 'demo-opencode',
+                createdAt: now, updatedAt: now,
+              }]);
+            }
             // Unblock dependents
             for (const dep of demoPlanTasks) {
               if (dep.status === 'blocked' && dep.blockedBy.includes(task.id)) {
@@ -385,6 +579,19 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     });
     // If the currently viewed plan was the demo plan, clear it
     setPlan((prev) => prev.id === DEMO_PLAN_ID ? { loaded: false } : prev);
+
+    // Clean up Phase 1-5 demo data
+    setRoles([]);
+    setRoleAssignments([]);
+    setKnowledgeWorkspace([]);
+    setKnowledgePlan([]);
+    setSpawnBeams([]);
+    setTraceSpans([]);
+    setTraceAggregate({});
+    setHeartbeatStatuses({});
+    setOrchestratorAgentIds({});
+    setMcpServers({});
+
     useCommandCenterStore.getState().clearFileActivity();
     useCommandCenterStore.getState().clearTimeline();
   }, []);

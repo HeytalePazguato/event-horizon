@@ -8,7 +8,7 @@ import * as http from 'http';
 import * as vscode from 'vscode';
 import type { AgentEvent } from '@event-horizon/core';
 import { AGENT_EVENT_TYPES, AGENT_TYPES } from '@event-horizon/core';
-import { mapOpenCodeToEvent, mapClaudeHookToEvent, mapCopilotHookToEvent } from '@event-horizon/connectors';
+import { mapOpenCodeToEvent, mapClaudeHookToEvent, mapCopilotHookToEvent, mapCursorHookToEvent } from '@event-horizon/connectors';
 
 export const DEFAULT_PORT = 28765;
 export const MAX_BODY_BYTES = 1_048_576;
@@ -43,6 +43,14 @@ import { PlanBoardManager } from './planBoard.js';
 import { MessageQueue } from './messageQueue.js';
 import { RoleManager } from './roleManager.js';
 import { AgentProfiler } from './agentProfiler.js';
+import { SharedKnowledgeStore } from './sharedKnowledge.js';
+import { SpawnRegistry, ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner } from './spawnRegistry.js';
+import { SessionStore } from './sessionStore.js';
+import { syncSkillsForAgent } from './skillSync.js';
+import { HeartbeatManager } from './heartbeatManager.js';
+import { WorktreeManager } from './worktreeManager.js';
+import { BudgetManager } from './budgetManager.js';
+import { TraceStore } from './traceStore.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -50,12 +58,29 @@ export const planBoardManager = new PlanBoardManager();
 export const messageQueue = new MessageQueue();
 export const roleManager = new RoleManager();
 export const agentProfiler = new AgentProfiler();
+export const sharedKnowledge = new SharedKnowledgeStore();
+export const spawnRegistry = new SpawnRegistry();
+export const sessionStore = new SessionStore();
+export const heartbeatManager = new HeartbeatManager();
+export const worktreeManager = new WorktreeManager();
+export const budgetManager = new BudgetManager();
+export const traceStore = new TraceStore();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
 
 /** Initialize the MCP server with runtime dependencies. Must be called after extension activates. */
-export function initMcpServer(deps: { agentStateManager: import('@event-horizon/core').AgentStateManager }): void {
+export function initMcpServer(deps: {
+  agentStateManager: import('@event-horizon/core').AgentStateManager;
+  metricsEngine?: import('@event-horizon/core').MetricsEngine;
+}): void {
+  // Register spawn backends
+  const getToken = () => authToken;
+  spawnRegistry.register(new ClaudeCodeSpawner(spawnRegistry, DEFAULT_PORT, getToken));
+  spawnRegistry.register(new OpenCodeSpawner(spawnRegistry, DEFAULT_PORT, getToken));
+  spawnRegistry.register(new CursorSpawner(spawnRegistry, DEFAULT_PORT, getToken));
+  spawnRegistry.worktreeManager = worktreeManager;
+
   mcpServer = new McpServer({
     lockManager,
     agentStateManager: deps.agentStateManager,
@@ -64,6 +89,17 @@ export function initMcpServer(deps: { agentStateManager: import('@event-horizon/
     messageQueue,
     roleManager,
     agentProfiler,
+    sharedKnowledge,
+    getMetrics: deps.metricsEngine
+      ? (agentId: string) => deps.metricsEngine!.getMetrics(agentId) ?? undefined
+      : undefined,
+    spawnRegistry,
+    sessionStore,
+    syncSkills: syncSkillsForAgent,
+    heartbeatManager,
+    worktreeManager,
+    budgetManager,
+    traceStore,
   });
 }
 
@@ -264,6 +300,8 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
         event = mapCopilotHookToEvent(body);
       } else if (route === '/opencode') {
         event = mapOpenCodeToEvent(body);
+      } else if (route === '/cursor') {
+        event = mapCursorHookToEvent(body);
       } else if (route === '/events' && typeof body === 'object' && body !== null) {
         const b = body as Record<string, unknown>;
         const eventType = typeof b.type === 'string' ? b.type : '';
@@ -321,34 +359,71 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
     });
 }
 
-export function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT): Promise<number> {
+const MAX_PORT_RETRIES = 5;
+
+function tryListenOnPort(srv: http.Server, port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException) => {
+      srv.removeListener('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      srv.removeListener('error', onError);
+      resolve(port);
+    };
+    srv.once('error', onError);
+    srv.once('listening', onListening);
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT): Promise<number> {
   callbacks = cbs;
-  if (server) return Promise.resolve(port);
+  if (server) return port;
 
   // Generate per-session auth token
   authToken = crypto.randomBytes(24).toString('hex');
 
-  return new Promise((resolve, reject) => {
-    const srv = http.createServer(handleRequest);
-    srv.on('connection', (socket) => {
-      activeSockets.add(socket);
-      socket.on('close', () => activeSockets.delete(socket));
-    });
-    srv.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        void vscode.window.showErrorMessage(
-          `Event Horizon: Port ${port} is already in use. ` +
-          'Another Event Horizon window may be running. Close it and reload this window.',
+  const srv = http.createServer(handleRequest);
+  srv.on('connection', (socket) => {
+    activeSockets.add(socket);
+    socket.on('close', () => activeSockets.delete(socket));
+  });
+
+  // Try configured port, then fallback to next ports
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_PORT_RETRIES; attempt++) {
+    const tryPort = port + attempt;
+    try {
+      await tryListenOnPort(srv, tryPort);
+      if (attempt > 0) {
+        void vscode.window.showInformationMessage(
+          `Event Horizon: Port ${port} was busy, using port ${tryPort} instead. ` +
+          'Hooks will be updated automatically.',
         );
       }
-      reject(err);
-    });
-    srv.on('listening', () => {
       server = srv;
-      resolve(port);
-    });
-    srv.listen(port, '127.0.0.1');
-  });
+      boundPort = tryPort;
+      return boundPort;
+    } catch (err) {
+      lastError = err as Error;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EADDRINUSE') {
+        // Non-port-conflict error — don't retry
+        break;
+      }
+      // Port busy — try next one
+    }
+  }
+
+  // All ports failed
+  void vscode.window.showErrorMessage(
+    `Event Horizon: Could not start server on ports ${port}–${port + MAX_PORT_RETRIES}. ` +
+    'Another Event Horizon or application may be using these ports. ' +
+    `Change the port in Settings (eventHorizon.port) or close the blocking application. Error: ${lastError?.message ?? 'unknown'}`,
+  );
+  throw lastError ?? new Error('Failed to start event server');
 }
 
 export function stopEventServer(): void {
@@ -364,8 +439,10 @@ export function stopEventServer(): void {
   rateCounts.clear();
 }
 
+let boundPort = DEFAULT_PORT;
+
 export function getEventServerPort(): number {
-  return DEFAULT_PORT;
+  return boundPort;
 }
 
 /** @internal — exposed for testing only. */

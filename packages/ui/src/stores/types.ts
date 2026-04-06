@@ -119,7 +119,7 @@ export interface TimelineEntry {
   agentId: string;
   agentName: string;
   agentType: string;
-  kind: 'state' | 'file' | 'tool' | 'error';
+  kind: 'state' | 'file' | 'tool' | 'error' | 'compaction';
   label: string;
 }
 

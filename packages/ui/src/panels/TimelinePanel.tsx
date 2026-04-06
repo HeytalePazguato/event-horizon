@@ -17,6 +17,7 @@ const STATE_COLORS: Record<string, string> = {
   file: '#6aa0d4',
   tool: '#d4a84a',
   error: '#c65858',
+  compaction: '#cc8844',
 };
 
 const STATE_LABELS: Record<string, string> = {
@@ -24,6 +25,7 @@ const STATE_LABELS: Record<string, string> = {
   file: 'File',
   tool: 'Tool',
   error: 'Error',
+  compaction: 'Compaction',
 };
 
 /** Shared tooltip container style for Operations view. */
@@ -214,7 +216,7 @@ export const TimelinePanel: FC<TimelinePanelProps> = ({ agentCwds = {} }) => {
 
         {/* Scrollable timeline */}
         <div ref={scrollRef} style={{ flex: 1, overflowX: 'auto', overflowY: 'auto', minWidth: 0 }}>
-          <div style={{ width: totalWidth, position: 'relative' }}>
+          <div style={{ width: totalWidth, minWidth: '100%', position: 'relative' }}>
             {/* Time axis */}
             <div style={{ height: TIME_AXIS_HEIGHT, borderBottom: '1px solid #1a3020', position: 'relative' }}>
               {timeLabels.map((tl, i) => (
@@ -242,6 +244,7 @@ export const TimelinePanel: FC<TimelinePanelProps> = ({ agentCwds = {} }) => {
               }}>
                 {data.entries.map((entry, i) => {
                   const x = ((entry.ts - minTs) / timeSpan) * totalWidth;
+                  const isCompaction = entry.kind === 'compaction';
                   return (
                     <div
                       key={i}
@@ -250,12 +253,12 @@ export const TimelinePanel: FC<TimelinePanelProps> = ({ agentCwds = {} }) => {
                       style={{
                         position: 'absolute',
                         left: x,
-                        top: (LANE_HEIGHT - 20) / 2,
-                        width: BLOCK_WIDTH,
-                        height: 20,
+                        top: isCompaction ? 2 : (LANE_HEIGHT - 20) / 2,
+                        width: isCompaction ? 2 : BLOCK_WIDTH,
+                        height: isCompaction ? LANE_HEIGHT - 4 : 20,
                         background: STATE_COLORS[entry.kind] ?? '#4a7a58',
                         borderRadius: 1,
-                        opacity: 0.85,
+                        opacity: isCompaction ? 0.95 : 0.85,
                         cursor: 'default',
                       }}
                     />

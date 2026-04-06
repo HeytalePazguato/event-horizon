@@ -31,11 +31,11 @@ const modalStyle: React.CSSProperties = {
   background: 'linear-gradient(180deg, #0a1210 0%, #060a0e 100%)',
   border: '2px solid #1e3828',
   boxShadow: '0 0 40px rgba(0,0,0,0.9), inset 0 0 0 1px rgba(25,60,42,0.35)',
-  padding: 16,
   minWidth: 380,
   maxWidth: 440,
   maxHeight: '80vh',
-  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column' as const,
   fontFamily: 'Consolas, "Courier New", monospace',
 };
 
@@ -163,6 +163,8 @@ export const SettingsModal: FC = () => {
   const setEventServerPort = useCommandCenterStore((s) => s.setEventServerPort);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
   const setFileLockingEnabled = useCommandCenterStore((s) => s.setFileLockingEnabled);
+  const worktreeIsolation = useCommandCenterStore((s) => s.worktreeIsolation);
+  const setWorktreeIsolation = useCommandCenterStore((s) => s.setWorktreeIsolation);
   const fontSize          = useCommandCenterStore((s) => s.fontSize);
   const setFontSize       = useCommandCenterStore((s) => s.setFontSize);
 
@@ -177,8 +179,8 @@ export const SettingsModal: FC = () => {
   return (
     <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) toggleSettings(); }}>
       <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div style={headerStyle}>
+        {/* Header — fixed at top */}
+        <div style={{ ...headerStyle, flexShrink: 0, padding: '12px 16px 8px', margin: 0 }}>
           <span style={{ fontSize: 11, color: '#8fc08a', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
             Settings
           </span>
@@ -203,6 +205,8 @@ export const SettingsModal: FC = () => {
           </button>
         </div>
 
+        {/* Scrollable content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 16px' }}>
         {/* Agent visuals section */}
         <div style={sectionLabel}>Agent Visuals</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -357,6 +361,31 @@ export const SettingsModal: FC = () => {
             </div>
           </div>
 
+          {/* Worktree isolation toggle */}
+          <div style={rowStyle}>
+            <span style={{ ...labelStyle, color: '#8fc08a', fontSize: 9 }}>Worktree Isolation</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setWorktreeIsolation(!worktreeIsolation)}
+                style={{
+                  padding: '2px 10px',
+                  fontSize: 9,
+                  color: worktreeIsolation ? '#6ab0d4' : '#6a5a5a',
+                  background: worktreeIsolation ? 'rgba(40,70,100,0.35)' : 'rgba(60,40,40,0.3)',
+                  border: `1px solid ${worktreeIsolation ? '#4a7a9a' : '#3a2828'}`,
+                  cursor: 'pointer',
+                  fontFamily: 'Consolas, monospace',
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {worktreeIsolation ? 'On' : 'Off'}
+              </button>
+              <span style={{ color: '#4a6a5a', fontSize: 7, fontStyle: 'italic' }}>git worktrees per agent</span>
+            </div>
+          </div>
+
           {/* Event server port */}
           <div style={rowStyle}>
             <span style={{ ...labelStyle, color: '#8fc08a', fontSize: 9 }}>Event Server Port</span>
@@ -416,6 +445,7 @@ export const SettingsModal: FC = () => {
             </div>
           </div>
         </div>
+        </div>{/* end scrollable content */}
       </div>
     </div>
   );

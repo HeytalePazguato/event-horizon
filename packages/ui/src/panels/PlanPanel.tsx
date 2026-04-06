@@ -5,9 +5,10 @@
  */
 
 import type { FC } from 'react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { colors, fonts, sizes } from '../styles/tokens.js';
 import { useCommandCenterStore } from '../store.js';
+import { DependencyPanel } from './DependencyPanel.js';
 
 // ── Task status → visual mapping ────────────────────────────────────────────
 
@@ -22,6 +23,9 @@ export interface PlanTaskView {
   role?: string | null;
   blockedBy: string[];
   notes: Array<{ agentId: string; agentName: string; text: string; ts: number }>;
+  retryCount?: number;
+  failedReason?: string | null;
+  recommendedFor?: string;
 }
 
 export interface PlanView {
@@ -32,6 +36,8 @@ export interface PlanView {
   sourceFile?: string;
   lastUpdatedAt?: number;
   tasks?: PlanTaskView[];
+  strategy?: string;
+  maxBudgetUsd?: number | null;
 }
 
 export interface PlanSummary {
@@ -81,7 +87,11 @@ export interface PlanPanelProps {
   plan: PlanView;
 }
 
+type PlanViewMode = 'kanban' | 'dependencies';
+
 export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
+  const [viewMode, setViewMode] = useState<PlanViewMode>('kanban');
+
   if (!plan.loaded || !plan.tasks) {
     return (
       <div style={{
@@ -136,26 +146,57 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         <div style={{ fontSize: sizes.text.xl, color: colors.text.primary, fontWeight: 600 }}>
           {plan.name}
         </div>
+        {plan.strategy && plan.strategy !== 'manual' && (
+          <div style={{
+            display: 'inline-block',
+            padding: '2px 6px',
+            fontSize: 8,
+            fontWeight: 600,
+            letterSpacing: '0.06em',
+            color: '#6aa0d4',
+            background: 'rgba(106,160,212,0.1)',
+            border: '1px solid rgba(106,160,212,0.3)',
+            borderRadius: sizes.radius.sm,
+            textTransform: 'uppercase',
+          }}>
+            {plan.strategy}
+          </div>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: sizes.spacing.sm }}>
           <span style={{ fontSize: sizes.text.sm, color: colors.text.dim }}>
             {doneTasks}/{totalTasks} tasks
           </span>
-          <button
-            type="button"
-            onClick={() => setShowAllColumns(!showAllColumns)}
-            style={{
-              padding: '2px 7px',
-              border: `1px solid ${colors.border.primary}`,
-              borderRadius: sizes.radius.sm,
-              background: showAllColumns ? 'rgba(30,70,45,0.3)' : 'transparent',
-              color: showAllColumns ? colors.text.secondary : colors.text.dim,
-              fontSize: sizes.text.xs,
-              fontFamily: fonts.mono,
-              cursor: 'pointer',
-            }}
-          >
-            {showAllColumns ? 'Active Only' : 'All Columns'}
-          </button>
+          {/* View mode toggle */}
+          <div style={{ display: 'flex', border: `1px solid ${colors.border.primary}`, borderRadius: sizes.radius.sm, overflow: 'hidden' }}>
+            <button type="button" onClick={() => setViewMode('kanban')} style={{
+              padding: '2px 7px', border: 'none', fontSize: sizes.text.xs, fontFamily: fonts.mono, cursor: 'pointer',
+              background: viewMode === 'kanban' ? 'rgba(30,70,45,0.3)' : 'transparent',
+              color: viewMode === 'kanban' ? colors.text.secondary : colors.text.dim,
+            }}>Kanban</button>
+            <button type="button" onClick={() => setViewMode('dependencies')} style={{
+              padding: '2px 7px', border: 'none', borderLeft: `1px solid ${colors.border.primary}`, fontSize: sizes.text.xs, fontFamily: fonts.mono, cursor: 'pointer',
+              background: viewMode === 'dependencies' ? 'rgba(30,70,45,0.3)' : 'transparent',
+              color: viewMode === 'dependencies' ? colors.text.secondary : colors.text.dim,
+            }}>Dependencies</button>
+          </div>
+          {viewMode === 'kanban' && (
+            <button
+              type="button"
+              onClick={() => setShowAllColumns(!showAllColumns)}
+              style={{
+                padding: '2px 7px',
+                border: `1px solid ${colors.border.primary}`,
+                borderRadius: sizes.radius.sm,
+                background: showAllColumns ? 'rgba(30,70,45,0.3)' : 'transparent',
+                color: showAllColumns ? colors.text.secondary : colors.text.dim,
+                fontSize: sizes.text.xs,
+                fontFamily: fonts.mono,
+                cursor: 'pointer',
+              }}
+            >
+              {showAllColumns ? 'Active Only' : 'All Columns'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -177,73 +218,82 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
         }} />
       </div>
 
-      {/* Column headers — fixed row */}
-      <div style={{
-        display: 'flex',
-        gap: sizes.spacing.md,
-        flexShrink: 0,
-        marginBottom: sizes.spacing.sm,
-      }}>
-        {visibleColumns.map((col) => (
-          <div key={col.status} style={{
-            flex: '1 1 180px',
-            minWidth: 160,
-            maxWidth: 280,
+      {viewMode === 'kanban' ? (
+        <>
+          {/* Column headers — fixed row */}
+          <div style={{
             display: 'flex',
-            alignItems: 'center',
-            gap: sizes.spacing.xs,
-            padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
-            borderBottom: `2px solid ${taskStatusColor(col.status)}`,
+            gap: sizes.spacing.md,
+            flexShrink: 0,
+            marginBottom: sizes.spacing.sm,
           }}>
-            <div style={{
-              width: 6, height: 6, borderRadius: 1,
-              background: taskStatusColor(col.status),
-              boxShadow: `0 0 4px ${taskStatusColor(col.status)}`,
-              flexShrink: 0,
-            }} />
-            <span style={{
-              fontSize: sizes.text.sm,
-              color: taskStatusColor(col.status),
-              fontWeight: 600,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-            }}>
-              {col.label}
-            </span>
-            <span style={{
-              fontSize: sizes.text.xs,
-              color: colors.text.dim,
-              marginLeft: 'auto',
-            }}>
-              {col.tasks.length}
-            </span>
+            {visibleColumns.map((col) => (
+              <div key={col.status} style={{
+                flex: '1 1 180px',
+                minWidth: 160,
+                maxWidth: 280,
+                display: 'flex',
+                alignItems: 'center',
+                gap: sizes.spacing.xs,
+                padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
+                borderBottom: `2px solid ${taskStatusColor(col.status)}`,
+              }}>
+                <div style={{
+                  width: 6, height: 6, borderRadius: 1,
+                  background: taskStatusColor(col.status),
+                  boxShadow: `0 0 4px ${taskStatusColor(col.status)}`,
+                  flexShrink: 0,
+                }} />
+                <span style={{
+                  fontSize: sizes.text.sm,
+                  color: taskStatusColor(col.status),
+                  fontWeight: 600,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                }}>
+                  {col.label}
+                </span>
+                <span style={{
+                  fontSize: sizes.text.xs,
+                  color: colors.text.dim,
+                  marginLeft: 'auto',
+                }}>
+                  {col.tasks.length}
+                </span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      {/* Task cards — scrollable area */}
-      <div style={{
-        display: 'flex',
-        gap: sizes.spacing.md,
-        overflowY: 'auto',
-        overflowX: 'auto',
-        flex: 1,
-        minHeight: 0,
-      }}>
-        {visibleColumns.map((col) => (
-          <div key={col.status} style={{
-            flex: '1 1 180px',
-            minWidth: 160,
-            maxWidth: 280,
+          {/* Task cards — scrollable area */}
+          <div style={{
+            display: 'flex',
+            gap: sizes.spacing.md,
+            overflowY: 'auto',
+            overflowX: 'auto',
+            flex: 1,
+            minHeight: 0,
           }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
-              {col.tasks.map((task) => (
-                <TaskCard key={task.id} task={task} />
-              ))}
-            </div>
+            {visibleColumns.map((col) => (
+              <div key={col.status} style={{
+                flex: '1 1 180px',
+                minWidth: 160,
+                maxWidth: 280,
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
+                  {col.tasks.map((task) => (
+                    <TaskCard key={task.id} task={task} />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      ) : (
+        /* Dependencies DAG view */
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <DependencyPanel plan={plan} />
+        </div>
+      )}
     </div>
   );
 };
@@ -311,21 +361,67 @@ const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
         </div>
       )}
 
-      {/* Status badge */}
-      <div style={{
-        display: 'inline-block',
-        marginTop: sizes.spacing.xs,
-        padding: '1px 5px',
-        fontSize: 8,
-        fontWeight: 600,
-        letterSpacing: '0.08em',
-        color: statusCol,
-        border: `1px solid ${statusCol}`,
-        borderRadius: 2,
-        opacity: 0.8,
-      }}>
-        {taskStatusLabel(task.status)}
+      {/* Status badge + retry badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: sizes.spacing.xs }}>
+        <div style={{
+          display: 'inline-block',
+          padding: '1px 5px',
+          fontSize: 8,
+          fontWeight: 600,
+          letterSpacing: '0.08em',
+          color: statusCol,
+          border: `1px solid ${statusCol}`,
+          borderRadius: 2,
+          opacity: 0.8,
+        }}>
+          {taskStatusLabel(task.status)}
+        </div>
+        {(task.retryCount ?? 0) > 0 && (
+          <div style={{
+            display: 'inline-block',
+            padding: '1px 5px',
+            fontSize: 8,
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            color: '#ff8844',
+            border: '1px solid #ff8844',
+            borderRadius: 2,
+            opacity: 0.8,
+          }}>
+            RETRY x{task.retryCount}
+          </div>
+        )}
       </div>
+
+      {/* Recommended-for badge */}
+      {task.status === 'pending' && task.recommendedFor && (
+        <div style={{
+          display: 'inline-block',
+          padding: '1px 5px',
+          fontSize: 8,
+          fontWeight: 600,
+          letterSpacing: '0.06em',
+          color: '#4a8a68',
+          border: '1px dotted #4a8a68',
+          borderRadius: 2,
+          marginTop: 2,
+          opacity: 0.85,
+        }}>
+          REC: {task.recommendedFor}
+        </div>
+      )}
+
+      {/* Failed reason */}
+      {task.status === 'failed' && task.failedReason && (
+        <div style={{
+          fontSize: sizes.text.xs,
+          color: '#a04040',
+          marginTop: 2,
+          lineHeight: 1.3,
+        }}>
+          {task.failedReason}
+        </div>
+      )}
 
       {/* Notes */}
       {task.notes.length > 0 && (

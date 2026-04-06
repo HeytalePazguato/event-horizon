@@ -10,20 +10,28 @@ const CLAUDE_HOOK_TO_EVENT: Record<string, AgentEventType> = {
   SessionEnd:          'agent.terminate',
   UserPromptSubmit:    'task.start',      // prompt submitted = new task
   Stop:                'task.complete',   // Claude finished responding
+  StopFailure:         'agent.error',     // turn ended due to API error
   PreToolUse:          'tool.call',
   PostToolUse:         'tool.result',
   PostToolUseFailure:  'agent.error',
+  TaskCreated:         'task.start',      // background task created
   TaskCompleted:       'task.complete',
   SubagentStart:       'task.start',
   SubagentStop:        'task.complete',
   TeammateIdle:        'agent.idle',
   Notification:        'message.receive',
   PermissionRequest:   'agent.waiting',
+  PermissionDenied:    'agent.error',     // auto-mode classifier denied tool
   InstructionsLoaded:  'message.receive', // CLAUDE.md / rules loaded
   ConfigChange:        'message.receive', // config file changed
+  CwdChanged:          'message.receive', // working directory changed
+  FileChanged:         'message.receive', // watched file changed
   PreCompact:          'message.receive', // context compaction about to happen
+  PostCompact:         'message.receive', // context compaction completed
   WorktreeCreate:      'message.receive', // worktree created (--worktree / isolation)
   WorktreeRemove:      'message.receive', // worktree removed (session exit / subagent done)
+  Elicitation:         'agent.waiting',   // MCP server requests user input
+  ElicitationResult:   'message.receive', // user responded to MCP elicitation
 };
 
 function nextId(): string {
@@ -60,6 +68,9 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   }
   if (hookEvent === 'PermissionRequest') {
     waitingSource = 'permission_request';
+  }
+  if (hookEvent === 'Elicitation') {
+    waitingSource = 'mcp_elicitation';
   }
 
   // Claude Code uses session_id; fall back to other id fields; clamp to prevent oversized strings
@@ -101,6 +112,18 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
       if (typeof usage.input_tokens === 'number') safePayload.inputTokens = usage.input_tokens;
       if (typeof usage.output_tokens === 'number') safePayload.outputTokens = usage.output_tokens;
     }
+    // Richer telemetry: duration, turns, stop reason
+    if (typeof p.duration_ms === 'number') safePayload.durationMs = p.duration_ms;
+    if (typeof p.duration_api_ms === 'number') safePayload.durationApiMs = p.duration_api_ms;
+    if (typeof p.num_turns === 'number') safePayload.numTurns = p.num_turns;
+    if (typeof p.stop_reason === 'string') safePayload.stopReason = String(p.stop_reason).slice(0, 128);
+    // Also check nested payload
+    if (nested) {
+      if (typeof nested.duration_ms === 'number' && !safePayload.durationMs) safePayload.durationMs = nested.duration_ms;
+      if (typeof nested.duration_api_ms === 'number' && !safePayload.durationApiMs) safePayload.durationApiMs = nested.duration_api_ms;
+      if (typeof nested.num_turns === 'number' && !safePayload.numTurns) safePayload.numTurns = nested.num_turns;
+      if (typeof nested.stop_reason === 'string' && !safePayload.stopReason) safePayload.stopReason = String(nested.stop_reason).slice(0, 128);
+    }
   }
 
   // Extract file_path from tool_input for file-touching tools (never content/strings)
@@ -135,6 +158,68 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
       } catch { /* ignore non-JSON */ }
     }
   }
+
+  // Enrich new hook types with relevant payload data
+  if (hookEvent === 'CwdChanged') {
+    const newCwd = p.new_cwd ?? nested?.new_cwd ?? p.cwd;
+    if (typeof newCwd === 'string') safePayload.cwd = newCwd.slice(0, 512);
+    safePayload.hookType = 'cwd_changed';
+  }
+  if (hookEvent === 'PostCompact') {
+    const preTokens = p.pre_tokens ?? nested?.pre_tokens;
+    const postTokens = p.post_tokens ?? nested?.post_tokens;
+    if (typeof preTokens === 'number') safePayload.preTokens = preTokens;
+    if (typeof postTokens === 'number') safePayload.postTokens = postTokens;
+    safePayload.hookType = 'context_compaction';
+  }
+  if (hookEvent === 'PermissionDenied') {
+    safePayload.hookType = 'permission_denied';
+    if (p.tool_name) safePayload.deniedTool = String(p.tool_name).slice(0, 128);
+    const reason = p.reason ?? nested?.reason;
+    if (typeof reason === 'string') safePayload.deniedReason = reason.slice(0, 256);
+    // Capture permission denials array if present
+    const denials = p.permission_denials ?? nested?.permission_denials;
+    if (Array.isArray(denials)) {
+      safePayload.permissionDenials = denials.slice(0, 10).map((d: unknown) =>
+        typeof d === 'string' ? d.slice(0, 128) : String(d).slice(0, 128),
+      );
+    }
+  }
+  if (hookEvent === 'StopFailure') {
+    safePayload.hookType = 'stop_failure';
+    const error = p.error ?? nested?.error;
+    if (typeof error === 'string') safePayload.errorMessage = error.slice(0, 256);
+  }
+  if (hookEvent === 'FileChanged') {
+    const filePath = p.file_path ?? nested?.file_path ?? p.filename;
+    if (typeof filePath === 'string') safePayload.filePath = filePath.slice(0, 512);
+    safePayload.hookType = 'file_changed';
+  }
+  if (hookEvent === 'TaskCreated') {
+    safePayload.hookType = 'background_task';
+    const taskId = p.task_id ?? nested?.task_id;
+    if (typeof taskId === 'string') safePayload.taskId = taskId.slice(0, 128);
+  }
+
+  // Capture MCP servers from SessionStart payload if present
+  if (hookEvent === 'SessionStart') {
+    const mcpServers = p.mcp_servers ?? nested?.mcp_servers;
+    if (Array.isArray(mcpServers)) {
+      safePayload.mcpServers = mcpServers.slice(0, 20).map((srv: unknown) => {
+        if (!srv || typeof srv !== 'object') return { name: 'unknown', status: 'unknown' };
+        const s = srv as Record<string, unknown>;
+        return {
+          name: String(s.name ?? 'unknown').slice(0, 128),
+          status: String(s.status ?? 'unknown').slice(0, 32),
+          toolCount: typeof s.tool_count === 'number' ? s.tool_count : (typeof s.toolCount === 'number' ? s.toolCount : undefined),
+        };
+      });
+    }
+  }
+
+  // Capture model name if present in payload (any hook)
+  const model = p.model ?? nested?.model;
+  if (typeof model === 'string') safePayload.modelName = model.slice(0, 128);
 
   return {
     id: nextId(),

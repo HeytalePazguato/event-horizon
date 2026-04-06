@@ -39,6 +39,11 @@ import type { DebrisPlan } from './systems/DebrisSystem.js';
 import { updateLightning } from './systems/LightningSystem.js';
 import { handleWheel, handlePointerDown, handlePointerMove, handlePointerUp } from './systems/InputHandler.js';
 import type { InputRefs } from './systems/InputHandler.js';
+import { StationSystem } from './systems/StationSystem.js';
+import { BeamSystem } from './systems/BeamSystem.js';
+import type { SpawnBeam } from './systems/BeamSystem.js';
+import { ConstellationSystem } from './systems/ConstellationSystem.js';
+import type { KnowledgeLink } from './systems/ConstellationSystem.js';
 
 export interface MetricsView {
   load: number;
@@ -124,6 +129,20 @@ export interface UniverseProps {
   planTasks?: DebrisPlan | null;
   /** When false, the PixiJS ticker is paused to save CPU (e.g. Operations view is active). */
   visible?: boolean;
+  /** Agent IDs that are orchestrators — renders star glow behind their planets. */
+  orchestratorAgentIds?: Record<string, boolean>;
+  /** Heartbeat status per agent: 'alive' | 'stale' | 'lost'. */
+  heartbeatStatuses?: Record<string, string>;
+  /** MCP server data per agent — rendered as orbiting stations. */
+  mcpServers?: Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>;
+  /** Agent IDs currently undergoing context compaction. */
+  compactingAgentIds?: Record<string, boolean>;
+  /** Orchestrator → worker beams (task assignment) and worker → orchestrator (synthesis). */
+  spawnBeams?: SpawnBeam[];
+  /** Knowledge links between agents for constellation visualization. */
+  knowledgeLinks?: KnowledgeLink[];
+  /** Agent type per agent ID — used for constellation coloring. */
+  agentTypesMap?: Record<string, string>;
 }
 
 // --- constants -----------------------------------------------------------
@@ -319,6 +338,13 @@ export const Universe: FC<UniverseProps> = ({
   onShootingStarClicked,
   planTasks = null,
   visible = true,
+  orchestratorAgentIds = {},
+  heartbeatStatuses = {},
+  mcpServers = {},
+  compactingAgentIds = {},
+  spawnBeams = [],
+  knowledgeLinks = [],
+  agentTypesMap = {},
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -403,6 +429,10 @@ export const Universe: FC<UniverseProps> = ({
   const visualSettingsRef = useRef(visualSettings);
   const settingsRevRef = useRef(0);
   const animationSpeedRef = useRef(animationSpeed);
+  const orchestratorIdsRef = useRef(orchestratorAgentIds);
+  const heartbeatStatusesRef = useRef(heartbeatStatuses);
+  const compactingAgentIdsRef = useRef(compactingAgentIds);
+  const mcpServersRef = useRef(mcpServers);
   const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
@@ -410,6 +440,13 @@ export const Universe: FC<UniverseProps> = ({
   const agentSkillCountsRef = useRef<Record<string, number>>(agentSkillCounts);
   const activeSkillsRef = useRef<Record<string, { name: string; index: number }>>(activeSkills);
   const tickTimeRef = useRef(0);
+  const stationSystemRef = useRef<StationSystem | null>(null);
+  const beamSystemRef = useRef<BeamSystem | null>(null);
+  const constellationSystemRef = useRef<ConstellationSystem | null>(null);
+  const spawnBeamsRef = useRef<SpawnBeam[]>(spawnBeams);
+  const knowledgeLinksRef = useRef<KnowledgeLink[]>(knowledgeLinks);
+  const agentTypesMapRef = useRef<Record<string, string>>(agentTypesMap);
+  const tetherGraphicsRef = useRef<Graphics | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
 
@@ -478,7 +515,14 @@ export const Universe: FC<UniverseProps> = ({
     }
   }, [visualSettings]);
   useEffect(() => { animationSpeedRef.current = animationSpeed; }, [animationSpeed]);
+  useEffect(() => { orchestratorIdsRef.current = orchestratorAgentIds; }, [orchestratorAgentIds]);
+  useEffect(() => { heartbeatStatusesRef.current = heartbeatStatuses; }, [heartbeatStatuses]);
+  useEffect(() => { compactingAgentIdsRef.current = compactingAgentIds; }, [compactingAgentIds]);
+  useEffect(() => { mcpServersRef.current = mcpServers; }, [mcpServers]);
   useEffect(() => { visibleRef.current = visible; }, [visible]);
+  useEffect(() => { spawnBeamsRef.current = spawnBeams; }, [spawnBeams]);
+  useEffect(() => { knowledgeLinksRef.current = knowledgeLinks; }, [knowledgeLinks]);
+  useEffect(() => { agentTypesMapRef.current = agentTypesMap; }, [agentTypesMap]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
   useEffect(() => { sparksRef.current = sparks; }, [sparks]);
@@ -585,6 +629,22 @@ export const Universe: FC<UniverseProps> = ({
         world.addChild(shipsContainer);
         shipsContainerRef.current = shipsContainer;
 
+        const stationsContainer = new Container();
+        world.addChild(stationsContainer);
+        stationSystemRef.current = new StationSystem(stationsContainer);
+
+        const beamsContainer = new Container();
+        world.addChild(beamsContainer);
+        beamSystemRef.current = new BeamSystem(beamsContainer);
+
+        const constellationContainer = new Container();
+        world.addChild(constellationContainer);
+        constellationSystemRef.current = new ConstellationSystem(constellationContainer);
+
+        const tetherGfx = new Graphics();
+        world.addChild(tetherGfx);
+        tetherGraphicsRef.current = tetherGfx;
+
         const spiralContainer = new Container();
         world.addChild(spiralContainer);
         spiralContainerRef.current = spiralContainer;
@@ -671,6 +731,22 @@ export const Universe: FC<UniverseProps> = ({
       debrisContainerRef.current = null;
       debrisTaskIdsRef.current = new Set();
       shipsContainerRef.current = null;
+      if (stationSystemRef.current) {
+        stationSystemRef.current.destroy();
+        stationSystemRef.current = null;
+      }
+      if (beamSystemRef.current) {
+        beamSystemRef.current.destroy();
+        beamSystemRef.current = null;
+      }
+      if (constellationSystemRef.current) {
+        constellationSystemRef.current.destroy();
+        constellationSystemRef.current = null;
+      }
+      if (tetherGraphicsRef.current) {
+        try { tetherGraphicsRef.current.destroy(); } catch { /* ignore */ }
+        tetherGraphicsRef.current = null;
+      }
       spiralContainerRef.current = null;
       astronautsContainerRef.current = null;
       for (const a of astronautsRef.current) {
@@ -941,7 +1017,25 @@ export const Universe: FC<UniverseProps> = ({
           agentType: agent.agentType,
           ringColorOverride: vs ? parseInt(vs.color.slice(1), 16) : undefined,
           sizeMultOverride: vs?.sizeMult,
+          isOrchestrator: !!orchestratorIdsRef.current[agent.id],
         });
+
+        // Spawn animation: start at scale 0 with nebula cloud
+        const ep = planet as unknown as import('./systems/PlanetAnimationSystem.js').AnimatedPlanet;
+        ep.__spawnProgress = 0;
+        const nebulaColor = TRAIL_COLORS[agent.agentType ?? ''] ?? TRAIL_COLOR_DEFAULT;
+        const nebula = new Graphics();
+        const nebulaR = (planet.__radius ?? 16) * 1.5;
+        // Draw 4 semi-transparent circles at random offsets
+        for (let ni = 0; ni < 4; ni++) {
+          const offX = (Math.random() - 0.5) * nebulaR * 0.8;
+          const offY = (Math.random() - 0.5) * nebulaR * 0.8;
+          nebula.circle(offX, offY, nebulaR * (0.6 + Math.random() * 0.4));
+          nebula.fill({ color: nebulaColor, alpha: 0.15 + Math.random() * 0.1 });
+        }
+        nebula.alpha = 0.7;
+        planet.addChildAt(nebula, 0);
+        ep.__spawnNebula = nebula as Graphics & { alpha: number };
 
         // Name label beneath planet (+ folder name on second line)
         let cwdNorm = agent.cwd ? agent.cwd.replace(/\\/g, '/') : '';
@@ -1424,6 +1518,8 @@ export const Universe: FC<UniverseProps> = ({
         pausedAgentIds: pausedRef.current,
         boostedAgentIds: boostedRef.current,
         isolatedAgentId: isolatedRef.current,
+        heartbeatStatuses: heartbeatStatusesRef.current,
+        compactingAgentIds: compactingAgentIdsRef.current,
       });
 
       // Animate skill orbit rings
@@ -1443,7 +1539,34 @@ export const Universe: FC<UniverseProps> = ({
       // Plan task debris (delegated to DebrisSystem)
       const debrisContainer = debrisContainerRef.current;
       if (debrisContainer) {
-        updateDebris(debrisContainer, planetPositionsRef.current, planTasksRef.current, debrisTaskIdsRef.current, t);
+        updateDebris(debrisContainer, planetPositionsRef.current, planTasksRef.current, debrisTaskIdsRef.current, t, tetherGraphicsRef.current);
+      }
+
+      // Station system (MCP servers orbiting planets)
+      const stationSys = stationSystemRef.current;
+      if (stationSys) {
+        const mcpData = mcpServersRef.current;
+        if (mcpData) {
+          const posObj: Record<string, { x: number; y: number }> = {};
+          for (const [id, pos] of planetPositionsRef.current) {
+            posObj[id] = pos;
+          }
+          stationSys.sync(mcpData, posObj);
+          stationSys.update(dt, t, posObj);
+        }
+      }
+
+      // Beam system (orchestrator ↔ worker beams)
+      const beamSys = beamSystemRef.current;
+      if (beamSys) {
+        const aliveBeams = beamSys.update(spawnBeamsRef.current, t, planetPositionsRef.current);
+        spawnBeamsRef.current = aliveBeams;
+      }
+
+      // Constellation system (knowledge links between planets)
+      const constellationSys = constellationSystemRef.current;
+      if (constellationSys && knowledgeLinksRef.current.length > 0) {
+        constellationSys.update(knowledgeLinksRef.current, planetPositionsRef.current, agentTypesMapRef.current);
       }
 
       // Animate ships along bezier arcs (delegated to ShipSystem)

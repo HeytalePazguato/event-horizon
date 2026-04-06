@@ -14,6 +14,7 @@ export function useSettingsPersistence(vscodeApi: { postMessage: (msg: unknown) 
   const tourCompleted        = useCommandCenterStore((s) => s.tourCompleted);
   const viewMode             = useCommandCenterStore((s) => s.viewMode);
   const fileLockingEnabled   = useCommandCenterStore((s) => s.fileLockingEnabled);
+  const worktreeIsolation    = useCommandCenterStore((s) => s.worktreeIsolation);
   const planShowAllColumns   = useCommandCenterStore((s) => s.planShowAllColumns);
   const fontSize             = useCommandCenterStore((s) => s.fontSize);
 
@@ -48,10 +49,11 @@ export function useSettingsPersistence(vscodeApi: { postMessage: (msg: unknown) 
         tourCompleted,
         viewMode,
         fileLockingEnabled,
+        worktreeIsolation,
         planShowAllColumns,
         fontSize,
       });
     }, 500);
     return () => { if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current); };
-  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted, viewMode, fileLockingEnabled, planShowAllColumns, fontSize]);
+  }, [visualSettings, achievementsEnabled, animationSpeed, eventServerPort, tourCompleted, viewMode, fileLockingEnabled, worktreeIsolation, planShowAllColumns, fontSize]);
 }

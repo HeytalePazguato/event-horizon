@@ -415,7 +415,9 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
 
   const scopes = Array.from(new Set(skills.map((s) => s.scope)));
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Fixed header: search + filters */}
+      <div style={{ flexShrink: 0, position: 'sticky', top: 0, zIndex: 2, background: 'linear-gradient(180deg, #080e0a 0%, #080e0a 90%, transparent 100%)', paddingBottom: 4 }}>
       {/* Search + scope filters + create */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
         {onCreateSkill && (
@@ -508,8 +510,9 @@ export const SkillsPanel: FC<SkillsPanelProps> = ({ onOpenSkill, onCreateSkill, 
           );
         })}
       </div>
+      </div>{/* end sticky header */}
       {/* Skill list */}
-      <div style={{ maxHeight: compact ? 85 : undefined, overflowY: 'auto' }}>
+      <div style={{ flex: 1, minHeight: 0, maxHeight: compact ? 85 : undefined, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
           <div style={{ color: '#4a5a52', fontSize: 9, padding: 4 }}>No matching skills.</div>
         ) : filtered.map((skill, i) => (

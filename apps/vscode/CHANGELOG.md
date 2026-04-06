@@ -2,6 +2,65 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.2.0] — 2026-04-05
+
+### Added — Orchestration Engine
+- **Orchestrator role**: 7th built-in role, auto-promoted when an agent loads a plan via `eh_load_plan`. Any agent type can be orchestrator
+- **SpawnRegistry**: pluggable backend for spawning agents in VS Code terminals — ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner. Session resume via `--resume`, role injection, model selection
+- **Scheduling strategies**: `<!-- strategy: round-robin|least-busy|capability-match|dependency-first -->` in plan metadata. `eh_auto_assign` dispatches tasks automatically
+- **Cascade failure + retry**: failed tasks cascade-fail dependents (`onDependencyFailure: cascade|block|ignore`). `eh_retry_task` resets and un-cascades. `<!-- maxAutoRetries: 2 -->` for auto-retry
+- **Task recommendations**: `eh_recommend_task` scores tasks by role match (40%), profiler (30%), load (20%), dependency priority (10%). Auto-select on empty `eh_claim_task`
+- **Shared Knowledge Store**: workspace (persistent) + plan (contextual) scopes. Both humans and agents contribute. Auto-seeded from CLAUDE.md, .cursorrules, AGENTS.md. 4 MCP tools: `eh_write_shared`, `eh_read_shared`, `eh_get_shared_summary`, `eh_delete_shared`
+- **Git worktree isolation**: per-agent workspaces via `git worktree`. Toggle in Settings + Operations status bar. `eh_create_worktree` / `eh_remove_worktree` MCP tools
+- **Heartbeat system**: `eh_heartbeat` MCP tool, 30s check interval, alive/stale/lost status with planet pulse animation
+- **Budget controls**: per-plan spending limits (`<!-- maxBudgetUsd: 5.00 -->`), per-agent breakdown, fuel gauge in CommandCenter, warning at 80%, `eh_get_budget` / `eh_request_budget_increase` MCP tools
+- **Session persistence**: SessionStore saves per-agent per-task session IDs for `--resume` on re-spawn
+- **Multi-plan orchestration**: multiple active plans with independent orchestrators, budgets, and task assignments
+
+### Added — Agent Coverage
+- **Full Cursor integration**: all 20 Cursor hook events mapped (sessionStart, sessionEnd, preToolUse, postToolUse, postToolUseFailure, subagentStart, subagentStop, preCompact, + shell/file/MCP/agent/tab hooks). MCP server registered in `~/.cursor/mcp.json`. Skills synced to `~/.cursor/skills/`. Custom subagent definition at `~/.cursor/agents/event-horizon-worker.md`. One-click setup, auto-update on activation
+- **Copilot expanded to 13 hooks**: added PostToolUseFailure, PermissionRequest, Notification, TeammateIdle, TaskCompleted. Richer telemetry: modelName, transcriptPath, mcpServers, duration, numTurns, stopReason
+- **Claude Code expanded to 26 hooks**: added PermissionDenied, StopFailure, CwdChanged, FileChanged, TaskCreated, PostCompact, Elicitation/ElicitationResult with enriched payloads
+- **Skill sync from bundled definitions**: works for all agent types without requiring Claude Code installed
+
+### Added — Observability
+- **Structured trace spans**: TraceStore with 1000-span buffer, start/end pairing, agent/type filters. `eh_get_traces` MCP tool
+- **Activity tab**: merged Logs + Timeline + Traces into one tab with sub-toggle (Timeline / Traces / Logs). Traces waterfall with compact/proportional modes
+- **MCP server stations**: hexagonal entities orbiting planets, green/red by connection status, pulse on tool calls, docking tubes to parent planet
+- **Context compaction visualization**: planet shrink→re-inflate animation on PostCompact, orange timeline markers
+- **Dependency DAG**: integrated into Plan tab as Kanban/Dependencies toggle. Topological sort layout, critical path highlighting, cycle detection warnings
+
+### Added — Universe Visual Polish
+- **Orchestrator star**: golden glow + emission rays on orchestrator planets
+- **Spawn beams**: colored beams from orchestrator to workers on `eh_spawn_agent`
+- **Synthesis beams**: all workers beam back to orchestrator on plan completion
+- **Dependency tethers**: lines between debris with blockedBy relationships, critical path gold glow, cascade failure zigzag chains, completed chain fade-out
+- **Knowledge constellations**: lines between knowledge-sharing planets (workspace=dim dotted, plan=bright solid, user=gold, agent=type-colored)
+- **Budget fuel gauge**: green→yellow→red progress bar with flash at 80%+
+- **Spawn animation**: nebula condensation → planet formation over ~2s
+- **Heartbeat pulse**: green ring (alive), amber (stale), grey (lost)
+
+### Added — UI & UX
+- **Knowledge Panel**: Operations Dashboard tab with workspace + plan sections, add/edit/delete, search/filter, real-time updates
+- **"Tell All" button**: broadcasts workspace knowledge to all agents (Universe + Operations views)
+- **Retry badges**: orange "RETRY xN" on Kanban cards + debris red/gold pulse
+- **Recommendation badges**: "REC: [agent-type]" teal badge on pending tasks
+- **Roles panel improvements**: orchestrator pinned top-left, agent role summary section, sticky header
+- **Skills panel sticky header**: search + agent filter rows fixed on scroll
+- **Settings modal sticky header**: SETTINGS + X always visible
+- **Worktree isolation toggle**: in Settings modal + Operations status bar
+- **Status bar click-to-terminal**: QuickPick when agents need interaction
+- **Spawn UI**: Quick Launch + With Prompt modes in SpawnModal
+- **Enhanced demo**: showcases all features — roles, knowledge, beams, traces, budget, heartbeat, orchestrator, MCP stations, spawn animation
+
+### Improved
+- **Operations tabs consolidated**: 9 → 7 tabs (Overview, Activity, Files, Skills, Plan, Roles, Knowledge)
+- **Plan tab**: Kanban + Dependencies toggle (was separate tabs)
+- **39 total MCP tools** (was 19 in v1.1.0)
+- **Port retry on conflict**: tries ports 28765–28770, auto-updates hooks on fallback
+- **Traces uses sidebar agent selection** instead of redundant dropdown
+- **Knowledge auto-seed**: scans all workspace folders + subdirectories for CLAUDE.md, .cursorrules, AGENTS.md, .github/copilot-instructions.md
+
 ## [1.1.0] — 2026-04-03
 
 ### Added

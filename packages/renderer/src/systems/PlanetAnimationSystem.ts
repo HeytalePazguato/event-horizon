@@ -13,7 +13,13 @@ export interface AnimatedPlanet {
   __thinkingRing?: Container & { rotation: number; alpha: number; visible: boolean };
   __errorGlow?: Graphics & { alpha: number; visible: boolean };
   __waitingRing?: Container & { alpha: number; visible: boolean; scale: { set: (v: number) => void } };
+  __heartbeatRing?: Graphics & { alpha: number; visible: boolean; scale: { set: (v: number) => void }; tint: number };
   __radius?: number;
+  __compactionStartTime?: number;
+  /** Spawn animation progress: 0 (just spawned) to 1 (fully materialized). */
+  __spawnProgress?: number;
+  /** Spawn nebula cloud graphics (temporary, destroyed after spawn completes). */
+  __spawnNebula?: Graphics & { alpha: number };
   alpha: number;
   scale: { set: (v: number) => void };
 }
@@ -25,6 +31,8 @@ export interface PlanetAnimationContext {
   pausedAgentIds: Record<string, boolean>;
   boostedAgentIds: Record<string, boolean>;
   isolatedAgentId: string | null;
+  heartbeatStatuses?: Record<string, string>;
+  compactingAgentIds?: Record<string, boolean>;
 }
 
 /** Animate all planets — pulse, thinking ring, error glow, waiting ring. */
@@ -62,8 +70,50 @@ export function animatePlanets(planets: AnimatedPlanet[], ctx: PlanetAnimationCo
       else if (variant === 'volcanic') pulse = 1 + 0.022 * Math.abs(Math.sin(t * 2.8));
       else                             pulse = 1 + 0.015 * Math.sin(t * 2.2);
     }
-    if (!isPaused) p.scale.set(pulse * (isBoosted ? 1.22 : 1));
-    if (isPaused) p.scale.set(1);
+    // Compaction animation: shrink to 0.7x then re-inflate over ~1.5s
+    let compactionScale = 1;
+    if (ctx.compactingAgentIds?.[agentId]) {
+      if (!p.__compactionStartTime) {
+        p.__compactionStartTime = t;
+      }
+      const elapsed = t - p.__compactionStartTime;
+      const COMPACTION_DURATION = 1.5;
+      if (elapsed < COMPACTION_DURATION) {
+        // First half: shrink to 0.7, second half: re-inflate to 1.0
+        const progress = elapsed / COMPACTION_DURATION;
+        if (progress < 0.4) {
+          compactionScale = 1 - 0.3 * (progress / 0.4);
+        } else {
+          compactionScale = 0.7 + 0.3 * ((progress - 0.4) / 0.6);
+        }
+      } else {
+        p.__compactionStartTime = undefined;
+      }
+    } else {
+      p.__compactionStartTime = undefined;
+    }
+
+    // ── Spawn animation ────────────────────────────────────────────────
+    let spawnScale = 1;
+    if (p.__spawnProgress !== undefined && p.__spawnProgress < 1) {
+      p.__spawnProgress = Math.min(1, p.__spawnProgress + (1 / 120)); // ~2s at 60fps
+      spawnScale = p.__spawnProgress;
+
+      // Animate nebula cloud
+      if (p.__spawnNebula) {
+        p.__spawnNebula.alpha = (1 - p.__spawnProgress) * 0.7;
+        const nebulaScale = 1.5 + (1 - p.__spawnProgress) * 2;
+        p.__spawnNebula.scale.set(nebulaScale);
+      }
+
+      // Clean up nebula when spawn is complete
+      if (p.__spawnProgress >= 1 && p.__spawnNebula) {
+        p.__spawnNebula.alpha = 0;
+      }
+    }
+
+    if (!isPaused) p.scale.set(pulse * (isBoosted ? 1.22 : 1) * compactionScale * spawnScale);
+    if (isPaused) p.scale.set(1 * compactionScale * spawnScale);
 
     // Thinking ring
     const ring = p.__thinkingRing;
@@ -93,6 +143,32 @@ export function animatePlanets(planets: AnimatedPlanet[], ctx: PlanetAnimationCo
         const breathe = Math.sin(t * 1.8);
         wr.scale.set(0.95 + 0.1 * breathe);
         wr.alpha = 0.45 + 0.35 * breathe;
+      }
+    }
+
+    // Heartbeat pulse ring
+    const hb = p.__heartbeatRing;
+    if (hb) {
+      const hbStatus = ctx.heartbeatStatuses?.[agentId];
+      if (hbStatus === 'alive') {
+        hb.visible = true;
+        hb.tint = 0x40a060; // green
+        // Expanding ring that fades every 4 seconds
+        const phase = (t % 4) / 4;
+        hb.scale.set(1 + phase * 0.5);
+        hb.alpha = 0.5 * (1 - phase);
+      } else if (hbStatus === 'stale') {
+        hb.visible = true;
+        hb.tint = 0xd4944a; // amber
+        hb.scale.set(1);
+        hb.alpha = 0.3 + 0.15 * Math.sin(t * 2);
+      } else if (hbStatus === 'lost') {
+        hb.visible = true;
+        hb.tint = 0x555555; // grey
+        hb.scale.set(1);
+        hb.alpha = 0.15;
+      } else {
+        hb.visible = false;
       }
     }
   }

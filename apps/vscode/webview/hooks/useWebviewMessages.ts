@@ -45,6 +45,15 @@ export interface WebviewMessageDeps {
   setRoles: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>>>;
   setRoleAssignments: React.Dispatch<React.SetStateAction<Array<{ roleId: string; agentType: string | null; agentId: string | null }>>>;
   setAgentProfiles: React.Dispatch<React.SetStateAction<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>>;
+  setKnowledgeWorkspace: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
+  setKnowledgePlan: React.Dispatch<React.SetStateAction<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>>;
+  setHeartbeatStatuses?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setTraceSpans?: React.Dispatch<React.SetStateAction<Array<{ id: string; runId: string; spanType: string; name: string; agentId: string; parentSpanId?: string; startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown> }>>>;
+  setTraceAggregate?: React.Dispatch<React.SetStateAction<Record<string, number>>>;
+  setMcpServers?: React.Dispatch<React.SetStateAction<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>>;
+  setCompactingAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setSpawnBeams?: React.Dispatch<React.SetStateAction<Array<{ fromAgentId: string; toAgentId: string; color: number; startTime: number }>>>;
+  setOrchestratorAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -131,6 +140,28 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.plan) depsRef.current.setPlan(data.plan);
         return;
       }
+      if (msg?.type === 'plan-completed') {
+        // Synthesis beams: all workers beam results back to orchestrator
+        const data = msg as unknown as { orchestratorAgentId: string; workerAgentIds: string[] };
+        if (data.orchestratorAgentId && data.workerAgentIds && depsRef.current.setSpawnBeams) {
+          const now = performance.now() / 1000; // approximate tick time
+          const beams = data.workerAgentIds.map((wId: string) => ({
+            fromAgentId: wId,
+            toAgentId: data.orchestratorAgentId,
+            color: 0x40a060, // green for synthesis
+            startTime: now,
+          }));
+          depsRef.current.setSpawnBeams((prev) => [...prev, ...beams]);
+        }
+        return;
+      }
+      if (msg?.type === 'orchestrator-update') {
+        const data = msg as unknown as { orchestratorAgentIds: Record<string, boolean> };
+        if (data.orchestratorAgentIds && depsRef.current.setOrchestratorAgentIds) {
+          depsRef.current.setOrchestratorAgentIds(data.orchestratorAgentIds);
+        }
+        return;
+      }
       if (msg?.type === 'plans-update') {
         const data = msg as unknown as { plans: PlanSummary[]; activePlan?: PlanView };
         if (data.plans) depsRef.current.setPlans(data.plans);
@@ -143,6 +174,90 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.roles) depsRef.current.setRoles(data.roles);
         if (data.assignments) depsRef.current.setRoleAssignments(data.assignments);
         if (data.profiles) depsRef.current.setAgentProfiles(data.profiles);
+        return;
+      }
+      if (msg?.type === 'heartbeat-update') {
+        const data = msg as unknown as { heartbeats: Record<string, string> };
+        if (data.heartbeats && depsRef.current.setHeartbeatStatuses) {
+          depsRef.current.setHeartbeatStatuses(data.heartbeats);
+        }
+        return;
+      }
+      if (msg?.type === 'knowledge-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (data.workspace) depsRef.current.setKnowledgeWorkspace(data.workspace);
+        if (data.plan) depsRef.current.setKnowledgePlan(data.plan);
+        return;
+      }
+      if (msg?.type === 'traces-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (data.spans && depsRef.current.setTraceSpans) {
+          depsRef.current.setTraceSpans(data.spans);
+        }
+        if (data.aggregate && depsRef.current.setTraceAggregate) {
+          depsRef.current.setTraceAggregate(data.aggregate);
+        }
+        return;
+      }
+      if (msg?.type === 'mcp-servers-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (data.agentId && data.servers && depsRef.current.setMcpServers) {
+          depsRef.current.setMcpServers((prev: Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>) => ({
+            ...prev,
+            [data.agentId]: (data.servers as Array<{ name: string; status?: string; connected?: boolean; toolCount?: number }>).map((s: { name: string; status?: string; connected?: boolean; toolCount?: number }) => ({
+              name: s.name,
+              connected: s.connected ?? s.status === 'connected',
+              toolCount: s.toolCount ?? 0,
+            })),
+          }));
+        }
+        return;
+      }
+      if (msg?.type === 'compaction-event') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        const agentId = data.agentId as string;
+        const preTokens = data.preTokens as number | undefined;
+        const postTokens = data.postTokens as number | undefined;
+
+        // Add compaction log entry
+        const store = useCommandCenterStore.getState();
+        store.addLog({
+          id: `compaction-${Date.now()}-${agentId}`,
+          ts: new Date().toLocaleTimeString(),
+          agentId,
+          agentName: agentId.slice(0, 12),
+          type: 'compaction',
+        });
+
+        // Add compaction timeline entry
+        const agentState = depsRef.current.agentMapRef.current[agentId];
+        store.addTimelineEntry({
+          ts: Date.now(),
+          agentId,
+          agentName: agentState?.name ?? agentId,
+          agentType: agentState?.type ?? 'unknown',
+          kind: 'compaction',
+          label: preTokens && postTokens
+            ? `Context compacted: ${preTokens} -> ${postTokens} tokens`
+            : 'Context compacted',
+        });
+
+        // Trigger compaction visual on planet
+        if (depsRef.current.setCompactingAgentIds) {
+          depsRef.current.setCompactingAgentIds((prev: Record<string, boolean>) => ({ ...prev, [agentId]: true }));
+          // Clear after animation duration (1.5s)
+          setTimeout(() => {
+            depsRef.current.setCompactingAgentIds?.((prev: Record<string, boolean>) => {
+              const next = { ...prev };
+              delete next[agentId];
+              return next;
+            });
+          }, 1600);
+        }
         return;
       }
       if (msg?.type === 'skills-update') {
@@ -213,6 +328,25 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         const fp = (raw.payload?.filePath as string) ?? '';
         const fn = fp.split(/[/\\]/).pop() ?? fp;
         store.addTimelineEntry({ ...tlBase, kind: 'file', label: `${type === 'file.write' ? 'W' : 'R'} ${fn}` });
+      }
+
+      // Spawn beam: when an agent spawns with a spawner (orchestrator context), fire a beam
+      if (type === 'agent.spawn' && raw.payload?.spawnedBy && depsRef.current.setSpawnBeams) {
+        const spawnerId = raw.payload.spawnedBy as string;
+        const AGENT_TYPE_BEAM_COLORS: Record<string, number> = {
+          'claude-code': 0x88aaff,
+          'copilot': 0xcc88ff,
+          'opencode': 0x88ffaa,
+          'cursor': 0x44ddcc,
+        };
+        const beamColor = AGENT_TYPE_BEAM_COLORS[agentType] ?? 0xffcc44;
+        const now = performance.now() / 1000;
+        depsRef.current.setSpawnBeams((prev) => [...prev, {
+          fromAgentId: spawnerId,
+          toAgentId: agentId,
+          color: beamColor,
+          startTime: now,
+        }]);
       }
 
       // agent.terminate: clean up all state for this agent

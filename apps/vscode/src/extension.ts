@@ -8,12 +8,13 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, isOpenCodeHooksInstalled, registerOpenCodeMcpServer } from './setupOpenCodeHooks';
 import { setupCopilotHooks, isCopilotHooksInstalled, registerCopilotMcpServer } from './setupCopilotHooks';
+import { setupCursorHooks, isCursorHooksInstalled, registerCursorMcpServer } from './setupCursorHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
@@ -97,9 +98,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
+  let ratingPromptShown = context.globalState.get<boolean>('ratingPromptShown') ?? false;
 
   // Initialize MCP server with runtime dependencies
-  initMcpServer({ agentStateManager });
+  initMcpServer({ agentStateManager, metricsEngine });
 
   // Restore plans from globalState (survives window reload)
   // Migration: old single-plan 'planBoard' → new multi-plan 'planBoards'
@@ -124,6 +126,115 @@ export function activate(context: vscode.ExtensionContext): void {
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
   if (savedProfiles) agentProfiler.restore(savedProfiles);
 
+  // Restore shared knowledge from globalState
+  const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
+  if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
+
+  // Auto-seed workspace knowledge from project instruction files on first activation.
+  // Scans all workspace folders + immediate subdirectories for CLAUDE.md, .cursorrules, AGENTS.md, etc.
+  // Only seeds entries that don't already exist — never overwrites user edits.
+  void (async () => {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return;
+
+    // Already seeded? Skip scan entirely.
+    if (sharedKnowledge.read('project-instructions').length > 0) return;
+
+    // Instruction file names to look for (order = priority)
+    const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md'];
+
+    // Build candidate paths: root, .claude/, and one level of subdirs (backend/, frontend/, etc.)
+    const candidatePaths: Array<{ filePath: string; label: string }> = [];
+    for (const folder of folders) {
+      const root = folder.uri.fsPath;
+      for (const fname of INSTRUCTION_FILES) {
+        candidatePaths.push({ filePath: path.join(root, fname), label: fname });
+        candidatePaths.push({ filePath: path.join(root, '.claude', fname), label: `.claude/${fname}` });
+      }
+      // Scan immediate subdirectories (backend/, frontend/, packages/*, apps/*, etc.)
+      try {
+        const entries = await fsp.readdir(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'out') continue;
+          for (const fname of INSTRUCTION_FILES) {
+            candidatePaths.push({ filePath: path.join(root, entry.name, fname), label: `${entry.name}/${fname}` });
+          }
+        }
+      } catch { /* readdir failed — skip */ }
+    }
+
+    // Read all found files and seed knowledge
+    const foundFiles: Array<{ label: string; content: string }> = [];
+    for (const { filePath, label } of candidatePaths) {
+      try {
+        const content = await fsp.readFile(filePath, 'utf8');
+        if (content.trim()) foundFiles.push({ label, content });
+      } catch { /* not found */ }
+    }
+
+    if (foundFiles.length === 0) return;
+
+    // Extract sections from each file
+    const allSections: string[] = [];
+    for (const { label, content } of foundFiles) {
+      const lines = content.split(/\r?\n/);
+      let currentSection = '';
+      let currentBody: string[] = [];
+
+      for (const line of lines) {
+        const heading = line.match(/^#{1,3}\s+(.+)/);
+        if (heading) {
+          if (currentSection && currentBody.length > 0) {
+            allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
+          }
+          currentSection = heading[1].trim();
+          currentBody = [];
+        } else if (line.trim() && !line.startsWith('```') && !line.startsWith('<!--')) {
+          currentBody.push(line.trim());
+        }
+      }
+      if (currentSection && currentBody.length > 0) {
+        allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
+      }
+      // For files without headings (like .cursorrules), seed the whole content
+      if (allSections.length === 0 && content.trim()) {
+        allSections.push(`**${label}**: ${content.trim().slice(0, 400)}`);
+      }
+    }
+
+    if (allSections.length > 0) {
+      sharedKnowledge.write(
+        'project-instructions',
+        `Auto-imported from ${foundFiles.length} instruction file${foundFiles.length > 1 ? 's' : ''} (${foundFiles.map((f) => f.label).join(', ')}):\n${allSections.slice(0, 20).join('\n')}`,
+        'workspace',
+        'Event Horizon',
+        'system',
+      );
+    }
+
+    // Extract commands sections from any CLAUDE.md
+    for (const { label, content } of foundFiles) {
+      if (!label.includes('CLAUDE')) continue;
+      const commandsMatch = content.match(/## Commands\n([\s\S]*?)(?=\n## |\n$)/);
+      if (commandsMatch && sharedKnowledge.read('project-commands').length === 0) {
+        sharedKnowledge.write('project-commands', commandsMatch[1].trim().slice(0, 500), 'workspace', 'Event Horizon', 'system');
+      }
+      const archMatch = content.match(/## Architecture\n([\s\S]*?)(?=\n## |\n$)/);
+      if (archMatch && sharedKnowledge.read('project-architecture').length === 0) {
+        sharedKnowledge.write('project-architecture', archMatch[1].trim().slice(0, 500), 'workspace', 'Event Horizon', 'system');
+      }
+    }
+  })();
+
+  // Persist shared knowledge on change
+  sharedKnowledge.onChange(() => {
+    void context.globalState.update('sharedKnowledge', sharedKnowledge.serializeWorkspace());
+    // Broadcast knowledge to webview
+    const entries = sharedKnowledge.getAllEntries();
+    webviewRef.current?.postMessage({ type: 'knowledge-update', workspace: entries.workspace, plan: entries.plan });
+  });
+
   /** Serialize a PlanBoard to the webview plan-update format. */
   function planToView(board: PlanBoard) {
     return {
@@ -133,6 +244,8 @@ export function activate(context: vscode.ExtensionContext): void {
       status: board.status,
       sourceFile: board.sourceFile,
       lastUpdatedAt: board.lastUpdatedAt,
+      strategy: board.strategy,
+      maxBudgetUsd: board.maxBudgetUsd,
       tasks: board.tasks.map((t) => ({
         id: t.id,
         title: t.title,
@@ -142,9 +255,14 @@ export function activate(context: vscode.ExtensionContext): void {
         blockedBy: t.blockedBy,
         notes: t.notes,
         role: t.role,
+        retryCount: t.retryCount ?? 0,
+        failedReason: t.failedReason ?? null,
       })),
     };
   }
+
+  // Track plan statuses so we can detect completion transitions
+  const prevPlanStatuses = new Map<string, string>();
 
   // Forward plan changes to webview + persist to globalState + sync checkboxes to file
   planBoardManager.onChange((_boards, changedPlanId) => {
@@ -180,6 +298,32 @@ export function activate(context: vscode.ExtensionContext): void {
       // Send the changed plan in full so the Kanban updates
       activePlan: changedPlanId ? planToView(planBoardManager.getPlan(changedPlanId)!) : undefined,
     });
+
+    // Detect plan completion transition → send synthesis beams
+    if (changedPlanId) {
+      const board = planBoardManager.getPlan(changedPlanId);
+      if (board) {
+        const prevStatus = prevPlanStatuses.get(changedPlanId);
+        if (board.status === 'completed' && prevStatus !== 'completed' && board.orchestratorAgentId) {
+          const workerIds = [...new Set(board.tasks.filter(t => t.assignee && t.assignee !== board.orchestratorAgentId).map(t => t.assignee!))];
+          webviewRef.current.postMessage({
+            type: 'plan-completed',
+            orchestratorAgentId: board.orchestratorAgentId,
+            workerAgentIds: workerIds,
+          });
+        }
+        prevPlanStatuses.set(changedPlanId, board.status);
+
+        // Broadcast orchestrator agent IDs
+        const orchIds: Record<string, boolean> = {};
+        for (const p of allPlans) {
+          if (p.orchestratorAgentId && p.status === 'active') {
+            orchIds[p.orchestratorAgentId] = true;
+          }
+        }
+        webviewRef.current.postMessage({ type: 'orchestrator-update', orchestratorAgentIds: orchIds });
+      }
+    }
   });
 
   // Record completed tasks for agent profiling
@@ -235,9 +379,89 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // Restore session store from globalState
+  const savedSessions = context.globalState.get<Record<string, string>>('sessionStore');
+  if (savedSessions) sessionStore.restore(savedSessions);
+
+  // Restore budget state from globalState
+  const savedBudget = context.globalState.get<ReturnType<typeof budgetManager.serialize>>('budgetState');
+  if (savedBudget) budgetManager.restore(savedBudget);
+
+  // Apply budget warning threshold from settings
+  const budgetThreshold = vscode.workspace.getConfiguration('eventHorizon').get<number>('budgetWarningThreshold', 0.8);
+  budgetManager.setWarningThreshold(budgetThreshold);
+
+  // Set budget limits from plan metadata when plans load
+  planBoardManager.onChange((boards) => {
+    for (const board of boards.values()) {
+      if (board.maxBudgetUsd != null && board.maxBudgetUsd > 0) {
+        budgetManager.setLimit(board.id, board.maxBudgetUsd);
+      }
+    }
+    void context.globalState.update('budgetState', budgetManager.serialize());
+  });
+
+  // Wire showBudgetRequest callback — will be passed to MCP server via initMcpServer deps
+  // The MCP server is already initialized above, so we set the callback on the deps directly
+  import('./eventServer.js').then((es) => {
+    const mcp = es._getMcpServer();
+    if (mcp) {
+      (mcp as unknown as { deps: Record<string, unknown> }).deps.showBudgetRequest = async (planId: string, currentLimit: number, requestedAmount: number, reason: string) => {
+        const answer = await vscode.window.showInformationMessage(
+          `Budget increase requested for plan "${planId}": $${currentLimit.toFixed(2)} -> $${requestedAmount.toFixed(2)}. Reason: ${reason}`,
+          'Yes', 'No',
+        );
+        return answer === 'Yes';
+      };
+    }
+  }).catch(() => { /* ignore */ });
+
+  // ── Heartbeat checking interval ──────────────────────────────────────────
+  const heartbeatCheckInterval = setInterval(() => {
+    const allBeats = heartbeatManager.getAll();
+    if (allBeats.length === 0) return;
+
+    // Update agent states with heartbeat status
+    for (const beat of allBeats) {
+      const agent = agentStateManager.getAgent(beat.agentId);
+      if (agent) {
+        // Directly modify the heartbeatStatus on the agent state
+        const current = agentStateManager.getAgent(beat.agentId);
+        if (current && current.heartbeatStatus !== beat.status) {
+          // Use a lightweight update — set on the object directly
+          (current as { heartbeatStatus: string }).heartbeatStatus = beat.status;
+        }
+      }
+    }
+
+    // Forward heartbeat statuses to webview
+    if (webviewRef.current) {
+      const heartbeats: Record<string, string> = {};
+      for (const beat of allBeats) {
+        heartbeats[beat.agentId] = beat.status;
+      }
+      webviewRef.current.postMessage({ type: 'heartbeat-update', heartbeats });
+    }
+  }, 30_000);
+  context.subscriptions.push({ dispose: () => clearInterval(heartbeatCheckInterval) });
+
+  // ── Periodic trace broadcast (every 5s) ────────────────────────────────────
+  const traceBroadcastInterval = setInterval(() => {
+    if (!webviewRef.current) return;
+    if (traceStore.size === 0) return;
+    const spans = traceStore.getSpans(undefined, undefined, 100);
+    const aggregate = traceStore.getAggregate();
+    webviewRef.current.postMessage({
+      type: 'traces-update',
+      spans,
+      aggregate,
+    });
+  }, 5_000);
+  context.subscriptions.push({ dispose: () => clearInterval(traceBroadcastInterval) });
+
   // ── Status bar — live agent count ──────────────────────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  statusBarItem.command = 'eventHorizon.open';
+  statusBarItem.command = 'eventHorizon.focusWaitingAgent';
   statusBarItem.tooltip = 'Event Horizon — Open Universe';
   statusBarItem.text = '$(rocket) 0 agents';
   statusBarItem.show();
@@ -257,7 +481,8 @@ export function activate(context: vscode.ExtensionContext): void {
         ? `${name} needs input`
         : `${waitingAgents.length} agents need input`;
       statusBarItem.text = `$(bell) ${label}`;
-      statusBarItem.tooltip = `Event Horizon — ${label}`;
+      const waitingNames = waitingAgents.map((a) => a.name ?? a.id).join(', ');
+      statusBarItem.tooltip = `Event Horizon — Waiting: ${waitingNames}\nClick to focus agent terminal`;
       // Start blinking background if not already
       if (!statusBarBlinkTimer) {
         const warningBg = new vscode.ThemeColor('statusBarItem.warningBackground');
@@ -416,6 +641,89 @@ export function activate(context: vscode.ExtensionContext): void {
     broadcastEvent(event);
     updateStatusBar();
 
+    // ── Rate extension prompt (one-time, after 2+ agents connect) ──
+    if (event.type === 'agent.spawn' && !ratingPromptShown) {
+      const agents = agentStateManager.getAllAgents();
+      if (agents.length >= 2 && !context.globalState.get<boolean>('ratingPromptShown')) {
+        ratingPromptShown = true;
+        void context.globalState.update('ratingPromptShown', true);
+        void vscode.window.showInformationMessage(
+          'Event Horizon: You\'re running multiple agents! If the extension is useful, a rating on the Marketplace helps others find it.',
+          'Rate it',
+          'Maybe later'
+        ).then((choice) => {
+          if (choice === 'Rate it') {
+            void vscode.env.openExternal(vscode.Uri.parse(
+              'https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode&ssr=false#review-details'
+            ));
+          }
+        });
+      }
+    }
+
+    // ── Trace span tracking ──
+    const runId = event.agentId; // session_id for correlation
+    if (event.type === 'tool.call') {
+      const toolName = (event.payload?.toolName as string) ?? 'unknown';
+      traceStore.startSpan('tool_call', toolName, event.agentId, runId, {
+        toolName,
+        filePath: event.payload?.filePath,
+        isSkill: event.payload?.isSkill,
+      });
+    } else if (event.type === 'tool.result') {
+      const toolName = (event.payload?.toolName as string) ?? 'unknown';
+      const spanId = traceStore.findInflight(event.agentId, 'tool_call', toolName);
+      if (spanId) traceStore.endSpan(spanId, { result: 'completed' });
+    } else if (event.type === 'task.start') {
+      const taskName = (event.payload?.taskId as string) ?? 'task';
+      traceStore.startSpan('task', taskName, event.agentId, runId, {
+        isSubagent: event.payload?.isSubagent,
+      });
+    } else if (event.type === 'task.complete' || event.type === 'task.fail') {
+      const taskName = (event.payload?.taskId as string) ?? 'task';
+      const spanId = traceStore.findInflight(event.agentId, 'task', taskName);
+      if (spanId) traceStore.endSpan(spanId, { status: event.type === 'task.complete' ? 'completed' : 'failed' });
+    } else if (event.type === 'agent.spawn') {
+      traceStore.startSpan('agent_session', event.agentName, event.agentId, runId, {
+        agentType: event.agentType,
+        cwd: event.payload?.cwd,
+      });
+    } else if (event.type === 'agent.idle' || event.type === 'agent.terminate') {
+      const spanId = traceStore.findInflight(event.agentId, 'agent_session', event.agentName);
+      if (spanId) traceStore.endSpan(spanId, { reason: event.type });
+    }
+
+    // ── Compaction event forwarding ──
+    if (event.payload?.hookType === 'context_compaction') {
+      webviewRef.current?.postMessage({
+        type: 'compaction-event',
+        agentId: event.agentId,
+        preTokens: event.payload.preTokens,
+        postTokens: event.payload.postTokens,
+        timestamp: event.timestamp,
+      });
+    }
+
+    // ── MCP server data forwarding (on agent spawn with mcp_servers) ──
+    if (event.type === 'agent.spawn' && event.payload?.mcpServers) {
+      webviewRef.current?.postMessage({
+        type: 'mcp-servers-update',
+        agentId: event.agentId,
+        servers: event.payload.mcpServers,
+      });
+    }
+
+    // Focus-on-interaction: auto-focus terminal when agent enters waiting state
+    if (event.type === 'agent.waiting') {
+      const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
+      if (focusSetting === 'focus-on-interaction') {
+        const terminal = spawnRegistry.findTerminalForAgent(event.agentId);
+        if (terminal) {
+          terminal.show(true); // preserveFocus=true to not steal keyboard focus
+        }
+      }
+    }
+
     // Auto-discovery: notify newly joined agents about active plans
     if (event.type === 'agent.spawn') {
       const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
@@ -449,6 +757,40 @@ export function activate(context: vscode.ExtensionContext): void {
         action,
         timestamp: event.timestamp,
       });
+    }
+
+    // Record heartbeat on any event (agent is clearly alive if sending events)
+    heartbeatManager.beat(event.agentId);
+
+    // Track cost events for budget management
+    if (event.payload?.costUsd && typeof event.payload.costUsd === 'number') {
+      const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
+      for (const plan of activePlans) {
+        const isAgentInPlan = plan.tasks.some((t) => t.assignee === event.agentId);
+        if (isAgentInPlan) {
+          const tokens = ((event.payload.inputTokens as number) ?? 0) + ((event.payload.outputTokens as number) ?? 0);
+          budgetManager.recordCost(plan.id, event.agentId, event.payload.costUsd as number, tokens);
+          void context.globalState.update('budgetState', budgetManager.serialize());
+
+          // Check budget and warn/pause
+          if (budgetManager.isExceeded(plan.id)) {
+            void vscode.window.showWarningMessage(
+              `Budget exceeded for plan "${plan.name}". Agent ${event.agentName} auto-paused.`,
+            );
+            // Forward budget-exceeded to webview
+            webviewRef.current?.postMessage({
+              type: 'budget-exceeded',
+              planId: plan.id,
+              agentId: event.agentId,
+            });
+          } else if (budgetManager.isWarning(plan.id)) {
+            const summary = budgetManager.getRemaining(plan.id);
+            void vscode.window.showWarningMessage(
+              `Budget warning for plan "${plan.name}": ${Math.round(summary.percentUsed * 100)}% used ($${summary.spent.toFixed(2)} of $${summary.limit.toFixed(2)}).`,
+            );
+          }
+        }
+      }
     }
 
     // Parse Copilot transcript on Stop events for richer metrics (tokens, cost)
@@ -560,7 +902,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const configuredPort = ehConfig.get<number>('port', 28765);
   setFileLockingEnabled(ehConfig.get<boolean>('fileLockingEnabled', false));
 
-  // Re-read file locking setting when changed
+  // Set default worktree isolation from config
+  spawnRegistry.setDefaultIsolation(ehConfig.get<boolean>('worktreeIsolation', false) ? 'worktree' : 'none');
+
+  // Re-read settings when changed
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('eventHorizon.fileLockingEnabled')) {
@@ -568,25 +913,41 @@ export function activate(context: vscode.ExtensionContext): void {
           vscode.workspace.getConfiguration('eventHorizon').get<boolean>('fileLockingEnabled', false),
         );
       }
+      if (e.affectsConfiguration('eventHorizon.worktreeIsolation')) {
+        const enabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('worktreeIsolation', false);
+        spawnRegistry.setDefaultIsolation(enabled ? 'worktree' : 'none');
+      }
+      if (e.affectsConfiguration('eventHorizon.budgetWarningThreshold')) {
+        budgetManager.setWarningThreshold(
+          vscode.workspace.getConfiguration('eventHorizon').get<number>('budgetWarningThreshold', 0.8),
+        );
+      }
     }),
   );
 
   startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
-    .then(async () => {
+    .then(async (actualPort) => {
+      // If the port changed (fallback), update the port reference for hooks
+      if (actualPort !== configuredPort) {
+        // Update the in-memory port so hooks point to the right port
+        void vscode.workspace.getConfiguration('eventHorizon').update('port', actualPort, vscode.ConfigurationTarget.Global);
+      }
       // Always regenerate lock scripts with the current session token
       await ensureLockScripts();
 
       // Auto-update all installed hooks/plugins/MCP configs on every activation.
       // This ensures hooks stay current when the extension upgrades, the auth
       // token rotates, or new features are added — no manual reinstall needed.
-      const [hasClaude, hasOpenCode, hasCopilot] = await Promise.all([
+      const [hasClaude, hasOpenCode, hasCopilot, hasCursor] = await Promise.all([
         isClaudeCodeHooksInstalled(),
         isOpenCodeHooksInstalled(),
         isCopilotHooksInstalled(),
+        isCursorHooksInstalled(),
       ]);
       if (hasClaude) { await setupClaudeCodeHooks(); await registerMcpServer(); }
       if (hasOpenCode) { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
       if (hasCopilot) { await setupCopilotHooks(); await registerCopilotMcpServer(); }
+      if (hasCursor) { await setupCursorHooks(); await registerCursorMcpServer(); }
 
       // Write bundled skills to ~/.claude/skills/
       await ensureBundledSkills();
@@ -641,6 +1002,50 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewRef.current?.postMessage({ type: 'toggle-view' });
     })
   );
+
+  // ── Focus waiting agent terminal ──────────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('eventHorizon.focusWaitingAgent', async () => {
+      const agents = agentStateManager.getAllAgents();
+      const waitingAgents = agents.filter((a) => a.state === 'waiting');
+
+      if (waitingAgents.length === 0) {
+        // No waiting agents — open Universe panel
+        void vscode.commands.executeCommand('eventHorizon.open');
+        return;
+      }
+
+      if (waitingAgents.length === 1) {
+        const terminal = spawnRegistry.findTerminalForAgent(waitingAgents[0].id);
+        if (terminal) {
+          terminal.show();
+        } else {
+          void vscode.commands.executeCommand('eventHorizon.open');
+        }
+        return;
+      }
+
+      // Multiple waiting agents — show QuickPick
+      const items = waitingAgents.map((a) => ({
+        label: a.name ?? a.id,
+        description: `${a.type} — ${a.state}`,
+        agentId: a.id,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a waiting agent to focus',
+      });
+      if (picked) {
+        const terminal = spawnRegistry.findTerminalForAgent(picked.agentId);
+        if (terminal) {
+          terminal.show();
+        } else {
+          void vscode.commands.executeCommand('eventHorizon.open');
+        }
+      }
+    })
+  );
+
+  // Focus-on-interaction is handled in onAgentEvent when agent enters waiting state.
 
 
   // Show one-time welcome notification on first install
@@ -740,6 +1145,11 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   scheduleCoopShip();
 
+  // Persist session store on plan changes (tasks with session info)
+  planBoardManager.onTaskComplete((_task, _planId) => {
+    void context.globalState.update('sessionStore', sessionStore.serialize());
+  });
+
   context.subscriptions.push({
     dispose: () => {
       if (cooperationTimer) clearTimeout(cooperationTimer);
@@ -752,6 +1162,8 @@ export function activate(context: vscode.ExtensionContext): void {
       // Clean up all OpenCode SSE watchers
       for (const w of openCodeSSEWatchers.values()) w.destroy();
       openCodeSSEWatchers.clear();
+      // Clean up spawn registry
+      spawnRegistry.dispose();
       webviewRef.current = null;
     },
   });

@@ -10,8 +10,9 @@ import type { AgentStateManager, MetricsEngine } from '@event-horizon/core';
 import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
+import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge } from './eventServer.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -185,6 +186,7 @@ async function getConnectedAgentTypes(): Promise<string[]> {
   if (await isClaudeCodeHooksInstalled()) types.push('claude-code');
   if (await isOpenCodeHooksInstalled()) types.push('opencode');
   if (await isCopilotHooksInstalled()) types.push('copilot');
+  if (await isCursorHooksInstalled()) types.push('cursor');
   return types;
 }
 
@@ -206,6 +208,7 @@ function readVscodeConfig(): {
   animationSpeed: number;
   eventServerPort: number;
   fileLockingEnabled: boolean;
+  worktreeIsolation: boolean;
   viewMode: 'universe' | 'operations';
   planShowAllColumns: boolean;
   fontSize: 'small' | 'default' | 'large';
@@ -224,6 +227,7 @@ function readVscodeConfig(): {
     animationSpeed: cfg.get<number>('animationSpeed', 1.0),
     eventServerPort: cfg.get<number>('port', 28765),
     fileLockingEnabled: cfg.get<boolean>('fileLockingEnabled', false),
+    worktreeIsolation: cfg.get<boolean>('worktreeIsolation', false),
     viewMode: cfg.get<'universe' | 'operations'>('defaultView', 'universe'),
     planShowAllColumns: cfg.get<boolean>('planShowAllColumns', false),
     fontSize: cfg.get<'small' | 'default' | 'large'>('fontSize', 'default'),
@@ -237,6 +241,7 @@ async function writeVscodeConfig(msg: {
   animationSpeed?: number;
   eventServerPort?: number;
   fileLockingEnabled?: boolean;
+  worktreeIsolation?: boolean;
   viewMode?: 'universe' | 'operations';
   planShowAllColumns?: boolean;
   fontSize?: 'small' | 'default' | 'large';
@@ -253,6 +258,9 @@ async function writeVscodeConfig(msg: {
   }
   if (msg.fileLockingEnabled !== undefined) {
     await cfg.update('fileLockingEnabled', msg.fileLockingEnabled, vscode.ConfigurationTarget.Global);
+  }
+  if (msg.worktreeIsolation !== undefined) {
+    await cfg.update('worktreeIsolation', msg.worktreeIsolation, vscode.ConfigurationTarget.Global);
   }
   if (msg.viewMode !== undefined) {
     await cfg.update('defaultView', msg.viewMode, vscode.ConfigurationTarget.Global);
@@ -431,6 +439,7 @@ function wireUniverseWebview(
         animationSpeed: msg.animationSpeed as number | undefined,
         eventServerPort: msg.eventServerPort as number | undefined,
         fileLockingEnabled: msg.fileLockingEnabled as boolean | undefined,
+        worktreeIsolation: msg.worktreeIsolation as boolean | undefined,
         viewMode: msg.viewMode as 'universe' | 'operations' | undefined,
         planShowAllColumns: msg.planShowAllColumns as boolean | undefined,
         fontSize: msg.fontSize as 'small' | 'default' | 'large' | undefined,
@@ -467,12 +476,41 @@ function wireUniverseWebview(
         void vscode.window.showInformationMessage('Event Horizon: Copilot hooks removed.');
         void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
       });
-    } else if (msg?.type === 'spawn-agent' && msg.command) {
-      const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
-      if (!ALLOWED_COMMANDS.includes(msg.command)) return;
-      const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
-      terminal.sendText(msg.command);
-      terminal.show();
+    } else if (msg?.type === 'setup-agent' && msg.agentType === 'cursor') {
+      void setupCursorHooks().then(async () => {
+        await registerCursorMcpServer();
+        void vscode.window.showInformationMessage('Event Horizon: Cursor hooks installed.');
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'remove-agent' && msg.agentType === 'cursor') {
+      void removeCursorHooks().then(async () => {
+        void vscode.window.showInformationMessage('Event Horizon: Cursor hooks removed.');
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'spawn-agent' && (msg.command || msg.agentType)) {
+      // Legacy spawn (simple command) or new spawn (agentType + role + prompt)
+      if (msg.agentType && msg.prompt) {
+        // Phase 2 spawn via SpawnRegistry
+        void import('./eventServer.js').then(({ spawnRegistry: sr }) => {
+          void sr.spawn(msg.agentType as string, {
+            prompt: msg.prompt as string,
+            role: msg.role as string | undefined,
+            cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+          }).then((result) => {
+            if (result.status === 'spawned') {
+              void vscode.window.showInformationMessage(`Spawned ${msg.agentType} agent: ${result.terminalName}`);
+            } else {
+              void vscode.window.showWarningMessage(`Spawn failed: ${result.message}`);
+            }
+          });
+        });
+      } else if (msg.command) {
+        const ALLOWED_COMMANDS = ['claude', 'opencode', 'aider'];
+        if (!ALLOWED_COMMANDS.includes(msg.command as string)) return;
+        const terminal = vscode.window.createTerminal({ name: `Event Horizon: ${msg.label ?? msg.command}` });
+        terminal.sendText(msg.command as string);
+        terminal.show();
+      }
     } else if (msg?.type === 'open-skill-file' && typeof msg.filePath === 'string') {
       const uri = vscode.Uri.file(msg.filePath);
       void vscode.workspace.openTextDocument(uri).then((doc) => {
@@ -530,6 +568,20 @@ function wireUniverseWebview(
       } catch { /* ignore invalid role edit */ }
     } else if (msg?.type === 'delete-role') {
       roleManager.removeCustomRole(msg.roleId as string);
+    } else if (msg?.type === 'tell-all-prompt') {
+      void vscode.window.showInputBox({ prompt: 'Broadcast message to all agents', placeHolder: 'Enter a message...' }).then((value) => {
+        if (value && value.trim()) {
+          sharedKnowledge.write(`broadcast-${Date.now()}`, value.trim(), 'workspace', 'user', 'user');
+          // Notify webview so it can refresh knowledge state
+          void webview.postMessage({ type: 'tell-all-result', success: true });
+        }
+      });
+    } else if (msg?.type === 'knowledge-add') {
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+    } else if (msg?.type === 'knowledge-edit') {
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+    } else if (msg?.type === 'knowledge-delete') {
+      sharedKnowledge.delete(msg.key as string, msg.scope as 'workspace' | 'plan', 'user');
     }
   });
 }

@@ -6,7 +6,7 @@
 import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
-import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
+import type { ShipSpawn, SparkSpawn, SpawnBeam, KnowledgeLink } from '@event-horizon/renderer';
 import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, useCommandCenterStore } from '@event-horizon/ui';
 import type { CreateSkillRequest, MarketplaceSkillResult } from '@event-horizon/ui';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
@@ -147,6 +147,15 @@ function App() {
   const [roles, setRoles] = useState<Array<{ id: string; name: string; description: string; skills: string[]; instructions: string; builtIn: boolean }>>([]);
   const [roleAssignments, setRoleAssignments] = useState<Array<{ roleId: string; agentType: string | null; agentId: string | null }>>([]);
   const [agentProfiles, setAgentProfiles] = useState<Array<{ agentType: string; totalTasks: number; completedTasks: number; failedTasks: number; overallSuccessRate: number; avgDurationMs: number; avgCostUsd: number; byRole: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number; avgCostUsd: number; avgTokens: number; successRate: number }>; lastUpdated: number }>>([]);
+  const [knowledgeWorkspace, setKnowledgeWorkspace] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
+  const [knowledgePlan, setKnowledgePlan] = useState<Array<{ key: string; value: string; scope: 'workspace' | 'plan'; author: string; authorId: string; createdAt: number; updatedAt: number }>>([]);
+  const [heartbeatStatuses, setHeartbeatStatuses] = useState<Record<string, string>>({});
+  const [traceSpans, setTraceSpans] = useState<Array<{ id: string; runId: string; spanType: string; name: string; agentId: string; parentSpanId?: string; startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown> }>>([]);
+  const [traceAggregate, setTraceAggregate] = useState<Record<string, number>>({});
+  const [mcpServers, setMcpServers] = useState<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>({});
+  const [compactingAgentIds, setCompactingAgentIds] = useState<Record<string, boolean>>({});
+  const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
+  const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -174,7 +183,7 @@ function App() {
   const toggleMarketplace    = useCommandCenterStore((s) => s.toggleMarketplace);
   const selectSingularity    = useCommandCenterStore((s) => s.selectSingularity);
   const incrementStat        = useCommandCenterStore((s) => s.incrementSingularityStat);
-  const singularityStats     = useCommandCenterStore((s) => s.singularityStats);
+  const _singularityStats    = useCommandCenterStore((s) => s.singularityStats);
   const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
   const screenshotRequestedAt = useCommandCenterStore((s) => s.screenshotRequestedAt);
   const viewMode             = useCommandCenterStore((s) => s.viewMode);
@@ -201,6 +210,11 @@ function App() {
     activeFilesRef, recentSparkPairsRef, activeSkillsRef, invokedSkillNamesRef,
     shipTimerIdsRef, addLog, incrementTiered, setPlan, setPlans,
     setRoles, setRoleAssignments, setAgentProfiles,
+    setKnowledgeWorkspace, setKnowledgePlan,
+    setHeartbeatStatuses,
+    setTraceSpans, setTraceAggregate,
+    setMcpServers, setCompactingAgentIds,
+    setSpawnBeams, setOrchestratorAgentIds,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -212,6 +226,13 @@ function App() {
     setAgents, setAgentMap, setMetricsMap, setShips, setSparks, setActiveSkillsView,
     agentLastSeenRef, shipTimerIdsRef, unlockAchievement, demoRequested,
     setPlan, setPlans,
+    setRoles, setRoleAssignments,
+    setKnowledgeWorkspace, setKnowledgePlan,
+    setSpawnBeams,
+    setTraceSpans, setTraceAggregate,
+    setHeartbeatStatuses,
+    setOrchestratorAgentIds,
+    setMcpServers,
   });
 
   useSettingsPersistence(vscodeApi);
@@ -375,6 +396,9 @@ function App() {
         status: t.status as 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked',
         assigneeId: t.assigneeId ?? null,
         role: t.role ?? null,
+        retryCount: (t as Record<string, unknown>).retryCount as number | undefined,
+        failedReason: (t as Record<string, unknown>).failedReason as string | null | undefined,
+        blockedBy: t.blockedBy,
       })),
     };
   }, [plan]);
@@ -383,6 +407,101 @@ function App() {
     const task = plan.tasks.find(t => t.assigneeId === selectedAgentId && (t.status === 'claimed' || t.status === 'in_progress') && t.role);
     return task?.role ?? null;
   }, [plan, selectedAgentId]);
+
+  // Compute recommendedFor for plan tasks based on roleAssignments
+  const planTasksWithRecommendations = useMemo(() => {
+    if (!plan.loaded || !plan.tasks) return plan;
+    const updated = plan.tasks.map((t) => {
+      if (t.role && roleAssignments.length > 0) {
+        const assignment = roleAssignments.find((ra) => ra.roleId === t.role);
+        if (assignment?.agentType) {
+          return { ...t, recommendedFor: assignment.agentType };
+        }
+      }
+      return t;
+    });
+    return { ...plan, tasks: updated };
+  }, [plan, roleAssignments]);
+
+  // Knowledge counts and recent entries for AgentIdentity
+  const knowledgeCount = useMemo(() => ({
+    workspace: knowledgeWorkspace.length,
+    plan: knowledgePlan.length,
+  }), [knowledgeWorkspace, knowledgePlan]);
+
+  const recentKnowledge = useMemo(() => {
+    const all = [...knowledgeWorkspace, ...knowledgePlan]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 3)
+      .map((k) => ({ key: k.key, value: k.value, scope: k.scope }));
+    return all;
+  }, [knowledgeWorkspace, knowledgePlan]);
+
+  // Compute knowledge links for constellation visualization
+  const knowledgeLinksComputed = useMemo<KnowledgeLink[]>(() => {
+    const links: KnowledgeLink[] = [];
+    const allEntries = [...knowledgeWorkspace, ...knowledgePlan];
+    // Group by author pairs — each pair of agents that share knowledge gets a link
+    const pairCounts = new Map<string, { fromAgentId: string; toAgentId: string; scope: 'workspace' | 'plan'; authorIsUser: boolean; count: number }>();
+    const agentIdSet = new Set(agents.map(a => a.id));
+
+    for (const entry of allEntries) {
+      const authorId = entry.authorId;
+      if (!authorId) continue;
+      // Create links from author to all other agents
+      for (const agent of agents) {
+        if (agent.id === authorId) continue;
+        const key = [authorId, agent.id].sort().join('::') + '::' + entry.scope;
+        const existing = pairCounts.get(key);
+        const isUser = entry.author === 'user' || !agentIdSet.has(authorId);
+        if (existing) {
+          existing.count++;
+        } else {
+          pairCounts.set(key, {
+            fromAgentId: authorId,
+            toAgentId: agent.id,
+            scope: entry.scope as 'workspace' | 'plan',
+            authorIsUser: isUser,
+            count: 1,
+          });
+        }
+      }
+    }
+    for (const link of pairCounts.values()) {
+      links.push(link);
+    }
+    return links;
+  }, [knowledgeWorkspace, knowledgePlan, agents]);
+
+  // Compute budget info from plan metadata + cost tracking
+  const budgetInfo = useMemo(() => {
+    if (!plan.loaded || !plan.maxBudgetUsd || plan.maxBudgetUsd <= 0) return null;
+    // Sum up cost from all agent metrics
+    let totalSpent = 0;
+    for (const m of Object.values(metricsMap)) {
+      if (m.estimatedCostUsd !== undefined && m.estimatedCostUsd >= 0) {
+        totalSpent += m.estimatedCostUsd;
+      }
+    }
+    const limit = plan.maxBudgetUsd;
+    return { spent: totalSpent, limit, percentUsed: (totalSpent / limit) * 100 };
+  }, [plan, metricsMap]);
+
+  // Agent types map for constellation coloring
+  const agentTypesMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const a of agents) {
+      if (a.agentType) map[a.id] = a.agentType;
+    }
+    return map;
+  }, [agents]);
+
+  // Tell All: ask extension host to prompt user, then broadcast as knowledge
+  const tellAllRequestedAt = useCommandCenterStore((s) => s.tellAllRequestedAt);
+  useEffect(() => {
+    if (!tellAllRequestedAt) return;
+    vscodeApi?.postMessage({ type: 'tell-all-prompt' });
+  }, [tellAllRequestedAt]);
 
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
   const hoveredMetrics = hoveredAgentId ? metricsMap[hoveredAgentId] : null;
@@ -423,20 +542,33 @@ function App() {
             onShootingStarClicked={achievementCallbacks.handleShootingStarClicked}
             planTasks={planDebris}
             visible={viewMode === 'universe'}
+            orchestratorAgentIds={orchestratorAgentIds}
+            heartbeatStatuses={heartbeatStatuses}
+            mcpServers={mcpServers}
+            compactingAgentIds={compactingAgentIds}
+            spawnBeams={spawnBeams}
+            knowledgeLinks={knowledgeLinksComputed}
+            agentTypesMap={agentTypesMap}
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
-        <CommandCenter role={selectedAgentRole} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+        <CommandCenter role={selectedAgentRole} knowledgeCount={knowledgeCount} recentKnowledge={recentKnowledge} budgetInfo={budgetInfo} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       </div>
 
       {viewMode === 'operations' && (
         <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
-          plan={plan} plans={plans} selectedPlanId={selectedPlanId}
+          plan={planTasksWithRecommendations} plans={plans} selectedPlanId={selectedPlanId}
           roles={roles} roleAssignments={roleAssignments} agentProfiles={agentProfiles}
           onAssignRole={handleAssignRole} onCreateRole={handleCreateRole} onEditRole={handleEditRole} onDeleteRole={handleDeleteRole}
           onSelectPlan={(id) => { setSelectedPlanId(id); vscodeApi?.postMessage({ type: 'request-plan', planId: id }); }}
           onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace}
-          onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
+          onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill}
+          knowledgeWorkspace={knowledgeWorkspace} knowledgePlan={knowledgePlan} knowledgePlanName={plan?.name}
+          onKnowledgeAdd={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-add', key, value, scope })}
+          onKnowledgeEdit={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope })}
+          onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })}
+          traceSpans={traceSpans as import('@event-horizon/ui').OperationsViewProps['traceSpans']}
+          traceAggregate={traceAggregate} />
       )}
 
       <AchievementToasts />
