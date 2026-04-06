@@ -27,6 +27,8 @@ const EH_HOOK_EVENTS = [
   'afterMCPExecution',
   'afterAgentResponse',
   'afterAgentThought',
+  'beforeTabFileRead',
+  'afterTabFileEdit',
 ] as const;
 
 /** Build a curl command that POSTs stdin JSON to the EH /cursor endpoint. */
