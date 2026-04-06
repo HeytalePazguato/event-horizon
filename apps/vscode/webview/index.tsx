@@ -226,6 +226,13 @@ function App() {
     setAgents, setAgentMap, setMetricsMap, setShips, setSparks, setActiveSkillsView,
     agentLastSeenRef, shipTimerIdsRef, unlockAchievement, demoRequested,
     setPlan, setPlans,
+    setRoles, setRoleAssignments,
+    setKnowledgeWorkspace, setKnowledgePlan,
+    setSpawnBeams,
+    setTraceSpans, setTraceAggregate,
+    setHeartbeatStatuses,
+    setOrchestratorAgentIds,
+    setMcpServers,
   });
 
   useSettingsPersistence(vscodeApi);
