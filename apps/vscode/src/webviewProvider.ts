@@ -10,6 +10,7 @@ import type { AgentStateManager, MetricsEngine } from '@event-horizon/core';
 import { runSetupClaudeCodeHooks, isClaudeCodeHooksInstalled, removeClaudeCodeHooks } from './setupHooks.js';
 import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } from './setupOpenCodeHooks.js';
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
+import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
 import { planBoardManager, roleManager, agentProfiler, sharedKnowledge } from './eventServer.js';
 
@@ -185,6 +186,7 @@ async function getConnectedAgentTypes(): Promise<string[]> {
   if (await isClaudeCodeHooksInstalled()) types.push('claude-code');
   if (await isOpenCodeHooksInstalled()) types.push('opencode');
   if (await isCopilotHooksInstalled()) types.push('copilot');
+  if (await isCursorHooksInstalled()) types.push('cursor');
   return types;
 }
 
@@ -472,6 +474,17 @@ function wireUniverseWebview(
     } else if (msg?.type === 'remove-agent' && msg.agentType === 'copilot') {
       void removeCopilotHooks().then(async () => {
         void vscode.window.showInformationMessage('Event Horizon: Copilot hooks removed.');
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'setup-agent' && msg.agentType === 'cursor') {
+      void setupCursorHooks().then(async () => {
+        await registerCursorMcpServer();
+        void vscode.window.showInformationMessage('Event Horizon: Cursor hooks installed.');
+        void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
+      });
+    } else if (msg?.type === 'remove-agent' && msg.agentType === 'cursor') {
+      void removeCursorHooks().then(async () => {
+        void vscode.window.showInformationMessage('Event Horizon: Cursor hooks removed.');
         void webview.postMessage({ type: 'connected-agents', agentTypes: await getConnectedAgentTypes() });
       });
     } else if (msg?.type === 'spawn-agent' && (msg.command || msg.agentType)) {

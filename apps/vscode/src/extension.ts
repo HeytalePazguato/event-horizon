@@ -14,6 +14,7 @@ import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, isOpenCodeHooksInstalled, registerOpenCodeMcpServer } from './setupOpenCodeHooks';
 import { setupCopilotHooks, isCopilotHooksInstalled, registerCopilotMcpServer } from './setupCopilotHooks';
+import { setupCursorHooks, isCursorHooksInstalled, registerCursorMcpServer } from './setupCursorHooks';
 import { getInstalledSkills, createSkillWatcher } from './skillScanner';
 import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
@@ -937,14 +938,16 @@ export function activate(context: vscode.ExtensionContext): void {
       // Auto-update all installed hooks/plugins/MCP configs on every activation.
       // This ensures hooks stay current when the extension upgrades, the auth
       // token rotates, or new features are added — no manual reinstall needed.
-      const [hasClaude, hasOpenCode, hasCopilot] = await Promise.all([
+      const [hasClaude, hasOpenCode, hasCopilot, hasCursor] = await Promise.all([
         isClaudeCodeHooksInstalled(),
         isOpenCodeHooksInstalled(),
         isCopilotHooksInstalled(),
+        isCursorHooksInstalled(),
       ]);
       if (hasClaude) { await setupClaudeCodeHooks(); await registerMcpServer(); }
       if (hasOpenCode) { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
       if (hasCopilot) { await setupCopilotHooks(); await registerCopilotMcpServer(); }
+      if (hasCursor) { await setupCursorHooks(); await registerCursorMcpServer(); }
 
       // Write bundled skills to ~/.claude/skills/
       await ensureBundledSkills();

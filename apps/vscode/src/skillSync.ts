@@ -13,7 +13,7 @@ const BUNDLED_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
 const SKILL_TARGETS: Record<string, string> = {
   'claude-code': path.join(os.homedir(), '.claude', 'skills', 'event-horizon'),
   'opencode': path.join(os.homedir(), '.config', 'opencode', 'plugins', 'skills', 'event-horizon'),
-  // Cursor has no skill directory convention — skip
+  'cursor': path.join(os.homedir(), '.cursor', 'skills', 'event-horizon'),
 };
 
 /**

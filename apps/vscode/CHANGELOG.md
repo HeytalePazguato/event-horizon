@@ -4,6 +4,15 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ## [1.2.0] — 2026-04-05
 
+### Added — Cursor Full Integration
+- **Cursor hook event mapper**: new `mapCursorHookToEvent()` connector in `packages/connectors/src/cursor.ts` maps all Cursor hook events (`beforeSubmitPrompt`, `stop`, `beforeShellExecution`, `afterShellExecution`, `beforeReadFile`, `afterFileEdit`, `beforeMCPExecution`, `afterMCPExecution`, `afterAgentResponse`, `afterAgentThought`, `beforeTabFileRead`, `afterTabFileEdit`) to AgentEvent types
+- **Cursor hook setup**: new `apps/vscode/src/setupCursorHooks.ts` with `setupCursorHooks()`, `isCursorHooksInstalled()`, `removeCursorHooks()`, and `registerCursorMcpServer()` — writes hooks to `~/.cursor/hooks.json` and MCP config to `~/.cursor/mcp.json`
+- **Cursor event route**: `/cursor` POST endpoint added to the event server for receiving Cursor hook payloads
+- **Extension auto-update**: Cursor hooks are auto-updated on activation alongside Claude Code, OpenCode, and Copilot hooks
+- **Setup UI wiring**: Connect panel supports setup and removal of Cursor hooks via the webview message handlers
+- **Skill sync for Cursor**: skills are now synced to `~/.cursor/skills/event-horizon/` alongside other agent types
+- **Cursor spawner auto-setup**: spawning a Cursor agent via the spawn registry automatically installs hooks and MCP config if not already present
+
 ### Added — Phase 5: Universe Enhancements (Visual Polish)
 - **Orchestrator task assignment beams**: when `eh_spawn_agent` fires, the orchestrator star shoots a colored beam to the target planet via the new `BeamSystem`. Beams animate from source to target and fade over ~2 seconds
 - **Synthesis phase beams**: when a plan completes (all tasks done), all worker planets beam results back to the orchestrator star. Extension host detects plan completion transitions and posts `plan-completed` message with orchestrator + worker IDs

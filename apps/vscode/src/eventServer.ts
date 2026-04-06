@@ -8,7 +8,7 @@ import * as http from 'http';
 import * as vscode from 'vscode';
 import type { AgentEvent } from '@event-horizon/core';
 import { AGENT_EVENT_TYPES, AGENT_TYPES } from '@event-horizon/core';
-import { mapOpenCodeToEvent, mapClaudeHookToEvent, mapCopilotHookToEvent } from '@event-horizon/connectors';
+import { mapOpenCodeToEvent, mapClaudeHookToEvent, mapCopilotHookToEvent, mapCursorHookToEvent } from '@event-horizon/connectors';
 
 export const DEFAULT_PORT = 28765;
 export const MAX_BODY_BYTES = 1_048_576;
@@ -300,6 +300,8 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
         event = mapCopilotHookToEvent(body);
       } else if (route === '/opencode') {
         event = mapOpenCodeToEvent(body);
+      } else if (route === '/cursor') {
+        event = mapCursorHookToEvent(body);
       } else if (route === '/events' && typeof body === 'object' && body !== null) {
         const b = body as Record<string, unknown>;
         const eventType = typeof b.type === 'string' ? b.type : '';
