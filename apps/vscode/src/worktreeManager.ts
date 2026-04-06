@@ -34,7 +34,7 @@ export class WorktreeManager {
     const branch = `eh/${sanitizedTask}`;
     const absolutePath = path.resolve(cwd, worktreeDir);
 
-    await this.exec(`git worktree add "${worktreeDir}" -b "${branch}"`, cwd);
+    await this.execGit(['worktree', 'add', worktreeDir, '-b', branch], cwd);
 
     const info: WorktreeInfo = {
       agentId,
@@ -58,20 +58,20 @@ export class WorktreeManager {
 
     if (merge) {
       try {
-        await this.exec(`git merge "${info.branch}" --no-edit`, cwd);
+        await this.execGit(['merge', info.branch, '--no-edit'], cwd);
       } catch {
         // Merge conflict — user must resolve manually
       }
     }
 
     try {
-      await this.exec(`git worktree remove "${info.path}" --force`, cwd);
+      await this.execGit(['worktree', 'remove', info.path, '--force'], cwd);
     } catch {
       // Worktree already removed or doesn't exist
     }
 
     try {
-      await this.exec(`git branch -d "${info.branch}"`, cwd);
+      await this.execGit(['branch', '-d', info.branch], cwd);
     } catch {
       // Branch not found or not merged
     }
@@ -89,9 +89,10 @@ export class WorktreeManager {
     return this.worktrees.get(this.key(agentId, taskId));
   }
 
-  private exec(command: string, cwd: string): Promise<string> {
+  /** Execute a git command safely using execFile (no shell interpolation). */
+  private execGit(args: string[], cwd: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      cp.exec(command, { cwd, timeout: 30_000 }, (err, stdout) => {
+      cp.execFile('git', args, { cwd, timeout: 30_000 }, (err, stdout) => {
         if (err) reject(err);
         else resolve(stdout.trim());
       });

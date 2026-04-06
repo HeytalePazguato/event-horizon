@@ -47,12 +47,21 @@ export interface SpawnedAgentInfo {
   pid?: number;
 }
 
+// ── Utility: shell-safe escaping ─────────────────────────────────────────────
+
+/** Escape a string for safe use in a double-quoted shell argument. */
+function shellEscape(s: string): string {
+  // Escape backslashes first, then double quotes, then backticks and dollar signs
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+}
+
 // ── Utility: check if command exists in PATH ────────────────────────────────
 
 async function commandExists(cmd: string): Promise<boolean> {
+  // cmd is always a hardcoded binary name (claude, opencode, cursor), not user input
   return new Promise((resolve) => {
     const which = process.platform === 'win32' ? 'where' : 'which';
-    cp.exec(`${which} ${cmd}`, (err) => {
+    cp.execFile(which, [cmd], (err) => {
       resolve(!err);
     });
   });
@@ -220,7 +229,7 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     const terminalName = `\u2600\uFE0F Claude \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
 
     // Build command
-    const parts = ['claude', '-p', `"${opts.prompt.replace(/"/g, '\\"')}"`, '--output-format', 'stream-json'];
+    const parts = ['claude', '-p', `"${shellEscape(opts.prompt)}"`, '--output-format', 'stream-json'];
     if (opts.model) parts.push('--model', opts.model);
     if (opts.role) {
       parts.push('--append-system-prompt', `"You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon."`);
@@ -278,7 +287,7 @@ export class ClaudeCodeSpawner implements SpawnBackend {
 
   async resume(agentId: string, sessionId: string, prompt: string): Promise<SpawnResult> {
     const terminalName = `\u2600\uFE0F Claude \u2014 Resume (${sessionId.slice(0, 8)})`;
-    const parts = ['claude', '--resume', sessionId, '-p', `"${prompt.replace(/"/g, '\\"')}"`, '--output-format', 'stream-json'];
+    const parts = ['claude', '--resume', sessionId, '-p', `"${shellEscape(prompt)}"`, '--output-format', 'stream-json'];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -336,7 +345,7 @@ export class OpenCodeSpawner implements SpawnBackend {
     const hasOpenCode = await commandExists('opencode');
     const cmd = hasOpenCode ? 'opencode' : 'crush';
 
-    const parts = [cmd, '-p', `"${opts.prompt.replace(/"/g, '\\"')}"`, '-f', 'json', '-q'];
+    const parts = [cmd, '-p', `"${shellEscape(opts.prompt)}"`, '-f', 'json', '-q'];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -419,7 +428,7 @@ export class CursorSpawner implements SpawnBackend {
     const agentId = `cursor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const terminalName = `\uD83D\uDC8E Cursor \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
 
-    const parts = ['cursor', '--cli', '-p', `"${opts.prompt.replace(/"/g, '\\"')}"`];
+    const parts = ['cursor', '--cli', '-p', `"${shellEscape(opts.prompt)}"`];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
