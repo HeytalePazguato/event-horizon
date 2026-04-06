@@ -17,18 +17,35 @@ function getPort(): number {
 const HOOKS_FILE = path.join(os.homedir(), '.cursor', 'hooks.json');
 
 const EH_HOOK_EVENTS = [
+  // Session lifecycle
+  'sessionStart',
+  'sessionEnd',
+  // User prompt
   'beforeSubmitPrompt',
   'stop',
+  // Generic tool hooks
+  'preToolUse',
+  'postToolUse',
+  'postToolUseFailure',
+  // Shell execution
   'beforeShellExecution',
   'afterShellExecution',
+  // File operations
   'beforeReadFile',
   'afterFileEdit',
-  'beforeMCPExecution',
-  'afterMCPExecution',
-  'afterAgentResponse',
-  'afterAgentThought',
   'beforeTabFileRead',
   'afterTabFileEdit',
+  // MCP tool execution
+  'beforeMCPExecution',
+  'afterMCPExecution',
+  // Agent reasoning
+  'afterAgentResponse',
+  'afterAgentThought',
+  // Subagents
+  'subagentStart',
+  'subagentStop',
+  // Context compaction
+  'preCompact',
 ] as const;
 
 /** Build a curl command that POSTs stdin JSON to the EH /cursor endpoint. */
