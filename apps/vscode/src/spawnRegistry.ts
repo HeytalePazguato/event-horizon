@@ -408,11 +408,12 @@ export class CursorSpawner implements SpawnBackend {
   async spawn(opts: SpawnOpts): Promise<SpawnResult> {
     // Auto-setup hooks if not already installed
     try {
-      const { isCursorHooksInstalled, setupCursorHooks, registerCursorMcpServer } = await import('./setupCursorHooks.js');
+      const { isCursorHooksInstalled, setupCursorHooks, registerCursorMcpServer, syncCursorAgents } = await import('./setupCursorHooks.js');
       if (!(await isCursorHooksInstalled())) {
         await setupCursorHooks();
         await registerCursorMcpServer();
       }
+      await syncCursorAgents();
     } catch { /* setup failed — continue with spawn */ }
 
     const agentId = `cursor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

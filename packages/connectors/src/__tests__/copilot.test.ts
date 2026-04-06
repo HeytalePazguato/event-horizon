@@ -194,6 +194,105 @@ describe('mapCopilotHookToEvent', () => {
     expect(result).not.toBeNull();
     expect((result!.payload as Record<string, unknown>).isSkill).toBeUndefined();
   });
+
+  it('maps PostToolUseFailure to agent.error with failure details', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PostToolUseFailure',
+      session_id: 'sess-1',
+      tool_name: 'edit_file',
+      error_message: 'File not found',
+      failure_type: 'not_found',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.error');
+    expect(result!.payload.isToolFailure).toBe(true);
+    expect(result!.payload.errorMessage).toBe('File not found');
+    expect(result!.payload.failureType).toBe('not_found');
+  });
+
+  it('maps PermissionRequest to agent.waiting', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'PermissionRequest',
+      session_id: 'sess-1',
+      tool_name: 'run_in_terminal',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.waiting');
+    expect(result!.payload.waitingSource).toBe('permission_request');
+    expect(result!.payload.toolName).toBe('run_in_terminal');
+  });
+
+  it('maps Notification to message.receive', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'Notification',
+      session_id: 'sess-1',
+      notification_type: 'info',
+      message: 'Build completed',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('message.receive');
+    expect(result!.payload.notificationType).toBe('info');
+    expect(result!.payload.message).toBe('Build completed');
+  });
+
+  it('maps TeammateIdle to agent.idle', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'TeammateIdle',
+      session_id: 'sess-1',
+      teammate_id: 'agent-2',
+      teammate_session_id: 'sess-2',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('agent.idle');
+    expect(result!.payload.teammateId).toBe('agent-2');
+    expect(result!.payload.teammateSessionId).toBe('sess-2');
+  });
+
+  it('maps TaskCompleted to task.complete', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'TaskCompleted',
+      session_id: 'sess-1',
+      task_id: 'task-42',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('task.complete');
+    expect(result!.payload.hookType).toBe('task_completed');
+    expect(result!.payload.taskId).toBe('task-42');
+  });
+
+  it('captures model name from payload', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'sess-1',
+      model: 'gpt-4o',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.modelName).toBe('gpt-4o');
+  });
+
+  it('captures transcript_path on SessionStart', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 'sess-1',
+      transcript_path: '/home/user/.copilot/sessions/transcript.jsonl',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.transcriptPath).toBe('/home/user/.copilot/sessions/transcript.jsonl');
+  });
+
+  it('captures richer Stop telemetry', () => {
+    const result = mapCopilotHookToEvent({
+      hook_event_name: 'Stop',
+      session_id: 'sess-1',
+      duration_ms: 12345,
+      num_turns: 5,
+      stop_reason: 'end_turn',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.payload.durationMs).toBe(12345);
+    expect(result!.payload.numTurns).toBe(5);
+    expect(result!.payload.stopReason).toBe('end_turn');
+  });
 });
 
 describe('mapCopilotOutputToEvent (legacy)', () => {

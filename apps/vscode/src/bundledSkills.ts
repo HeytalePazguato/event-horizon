@@ -11,7 +11,7 @@ import * as fsp from 'fs/promises';
 
 const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
 
-interface BundledSkill {
+export interface BundledSkill {
   /** Directory name under ~/.agents/skills/. */
   dirName: string;
   /** SKILL.md content. */
@@ -376,6 +376,17 @@ Call \`eh_update_task\` with your task ID, status \`done\`, and your findings as
 `,
   },
 ];
+
+// ── Accessor ────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the in-memory bundled skill definitions.
+ * Used by skillSync.ts to write skills to any agent's directory without
+ * relying on the Claude Code skill directory existing on disk.
+ */
+export function getBundledSkills(): readonly BundledSkill[] {
+  return skills;
+}
 
 // ── Installer ───────────────────────────────────────────────────────────────
 

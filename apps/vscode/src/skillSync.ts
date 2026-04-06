@@ -1,13 +1,16 @@
 /**
- * Skill Sync — copies bundled skill files to agent-specific skill directories
+ * Skill Sync — writes bundled skill definitions to agent-specific skill directories
  * before spawning, so spawned agents discover Event Horizon skills automatically.
+ *
+ * Sources skill content directly from bundledSkills.ts (in-memory) rather than
+ * reading from disk, so skills work for ALL agent types regardless of whether
+ * Claude Code is installed.
  */
 
 import * as os from 'os';
 import * as path from 'path';
 import * as fsp from 'fs/promises';
-
-const BUNDLED_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
+import { getBundledSkills } from './bundledSkills.js';
 
 /** Skill directories by agent type. */
 const SKILL_TARGETS: Record<string, string> = {
@@ -18,7 +21,8 @@ const SKILL_TARGETS: Record<string, string> = {
 
 /**
  * Sync bundled EH skills to the target agent's skill directory.
- * Copies SKILL.md files from the bundled skills location.
+ * Reads skill content from the extension's built-in bundledSkills definitions
+ * and writes SKILL.md files to the target directory.
  */
 export async function syncSkillsForAgent(agentType: string): Promise<{ synced: boolean; path?: string; error?: string }> {
   const targetDir = SKILL_TARGETS[agentType];
@@ -27,21 +31,17 @@ export async function syncSkillsForAgent(agentType: string): Promise<{ synced: b
   }
 
   try {
-    // Read bundled skill directories
-    const entries = await fsp.readdir(BUNDLED_SKILLS_DIR, { withFileTypes: true });
-    const skillDirs = entries.filter((e) => e.isDirectory() && e.name.startsWith('eh-'));
+    const bundledSkills = getBundledSkills();
 
     await fsp.mkdir(targetDir, { recursive: true });
 
-    for (const skillDir of skillDirs) {
-      const srcFile = path.join(BUNDLED_SKILLS_DIR, skillDir.name, 'SKILL.md');
-      const destDir = path.join(targetDir, skillDir.name);
+    for (const skill of bundledSkills) {
+      const destDir = path.join(targetDir, skill.dirName);
       const destFile = path.join(destDir, 'SKILL.md');
 
       try {
-        const content = await fsp.readFile(srcFile, 'utf8');
         await fsp.mkdir(destDir, { recursive: true });
-        await fsp.writeFile(destFile, content, 'utf8');
+        await fsp.writeFile(destFile, skill.content, 'utf8');
       } catch {
         // Skip individual skill failures
       }

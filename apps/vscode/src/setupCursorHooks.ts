@@ -203,10 +203,46 @@ export async function registerCursorMcpServer(): Promise<void> {
   await fsp.writeFile(mcpJsonPath, JSON.stringify(config, null, 2), 'utf8');
 }
 
+// ── Cursor Agent Definitions ────────────────────────────────────────────────
+
+const AGENTS_DIR = path.join(os.homedir(), '.cursor', 'agents');
+
+const EH_WORKER_AGENT = `---
+name: Event Horizon Worker
+description: A worker agent coordinated by Event Horizon. Claims tasks from the shared plan, reports progress, and shares knowledge with the team.
+model: inherit
+---
+
+You are a worker agent coordinated by Event Horizon. Before starting work:
+
+1. Call \`eh_get_shared_summary\` to read team knowledge
+2. Call \`eh_recommend_task\` to find the best task for you
+3. Call \`eh_claim_task\` to claim it
+4. Work on the task
+5. Call \`eh_write_shared\` to share any findings
+6. Call \`eh_update_task\` with status 'done' when complete
+
+If you encounter issues, call \`eh_update_task\` with status 'failed' and a note explaining what went wrong.
+`;
+
+/**
+ * Create Event Horizon agent definitions in ~/.cursor/agents/.
+ * Cursor reads *.md files from this directory as custom subagent definitions.
+ */
+export async function syncCursorAgents(): Promise<void> {
+  await fsp.mkdir(AGENTS_DIR, { recursive: true });
+  await fsp.writeFile(
+    path.join(AGENTS_DIR, 'event-horizon-worker.md'),
+    EH_WORKER_AGENT,
+    'utf8',
+  );
+}
+
 export async function runSetupCursorHooks(): Promise<void> {
   try {
     await setupCursorHooks();
     await registerCursorMcpServer();
+    await syncCursorAgents();
     void vscode.window.showInformationMessage(
       'Event Horizon: Cursor hooks + MCP tools installed! Start a Cursor agent session to see your agent appear.',
     );

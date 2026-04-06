@@ -30,9 +30,14 @@ const EH_HOOK_EVENTS = [
   'Stop',
   'PreToolUse',
   'PostToolUse',
+  'PostToolUseFailure',
   'UserPromptSubmit',
   'SubagentStart',
   'SubagentStop',
+  'TaskCompleted',
+  'TeammateIdle',
+  'PermissionRequest',
+  'Notification',
 ] as const;
 
 /**
