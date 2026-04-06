@@ -357,34 +357,71 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
     });
 }
 
-export function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT): Promise<number> {
+const MAX_PORT_RETRIES = 5;
+
+function tryListenOnPort(srv: http.Server, port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException) => {
+      srv.removeListener('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      srv.removeListener('error', onError);
+      resolve(port);
+    };
+    srv.once('error', onError);
+    srv.once('listening', onListening);
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT): Promise<number> {
   callbacks = cbs;
-  if (server) return Promise.resolve(port);
+  if (server) return port;
 
   // Generate per-session auth token
   authToken = crypto.randomBytes(24).toString('hex');
 
-  return new Promise((resolve, reject) => {
-    const srv = http.createServer(handleRequest);
-    srv.on('connection', (socket) => {
-      activeSockets.add(socket);
-      socket.on('close', () => activeSockets.delete(socket));
-    });
-    srv.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        void vscode.window.showErrorMessage(
-          `Event Horizon: Port ${port} is already in use. ` +
-          'Another Event Horizon window may be running. Close it and reload this window.',
+  const srv = http.createServer(handleRequest);
+  srv.on('connection', (socket) => {
+    activeSockets.add(socket);
+    socket.on('close', () => activeSockets.delete(socket));
+  });
+
+  // Try configured port, then fallback to next ports
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_PORT_RETRIES; attempt++) {
+    const tryPort = port + attempt;
+    try {
+      await tryListenOnPort(srv, tryPort);
+      if (attempt > 0) {
+        void vscode.window.showInformationMessage(
+          `Event Horizon: Port ${port} was busy, using port ${tryPort} instead. ` +
+          'Hooks will be updated automatically.',
         );
       }
-      reject(err);
-    });
-    srv.on('listening', () => {
       server = srv;
-      resolve(port);
-    });
-    srv.listen(port, '127.0.0.1');
-  });
+      boundPort = tryPort;
+      return boundPort;
+    } catch (err) {
+      lastError = err as Error;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EADDRINUSE') {
+        // Non-port-conflict error — don't retry
+        break;
+      }
+      // Port busy — try next one
+    }
+  }
+
+  // All ports failed
+  void vscode.window.showErrorMessage(
+    `Event Horizon: Could not start server on ports ${port}–${port + MAX_PORT_RETRIES}. ` +
+    'Another Event Horizon or application may be using these ports. ' +
+    `Change the port in Settings (eventHorizon.port) or close the blocking application. Error: ${lastError?.message ?? 'unknown'}`,
+  );
+  throw lastError ?? new Error('Failed to start event server');
 }
 
 export function stopEventServer(): void {
@@ -400,8 +437,10 @@ export function stopEventServer(): void {
   rateCounts.clear();
 }
 
+let boundPort = DEFAULT_PORT;
+
 export function getEventServerPort(): number {
-  return DEFAULT_PORT;
+  return boundPort;
 }
 
 /** @internal — exposed for testing only. */

@@ -97,6 +97,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
   const agentStateManager = new AgentStateManager();
+  let ratingPromptShown = context.globalState.get<boolean>('ratingPromptShown') ?? false;
 
   // Initialize MCP server with runtime dependencies
   initMcpServer({ agentStateManager, metricsEngine });
@@ -639,6 +640,26 @@ export function activate(context: vscode.ExtensionContext): void {
     broadcastEvent(event);
     updateStatusBar();
 
+    // ── Rate extension prompt (one-time, after 2+ agents connect) ──
+    if (event.type === 'agent.spawn' && !ratingPromptShown) {
+      const agents = agentStateManager.getAllAgents();
+      if (agents.length >= 2 && !context.globalState.get<boolean>('ratingPromptShown')) {
+        ratingPromptShown = true;
+        void context.globalState.update('ratingPromptShown', true);
+        void vscode.window.showInformationMessage(
+          'Event Horizon: You\'re running multiple agents! If the extension is useful, a rating on the Marketplace helps others find it.',
+          'Rate it',
+          'Maybe later'
+        ).then((choice) => {
+          if (choice === 'Rate it') {
+            void vscode.env.openExternal(vscode.Uri.parse(
+              'https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode&ssr=false#review-details'
+            ));
+          }
+        });
+      }
+    }
+
     // ── Trace span tracking ──
     const runId = event.agentId; // session_id for correlation
     if (event.type === 'tool.call') {
@@ -904,7 +925,12 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
-    .then(async () => {
+    .then(async (actualPort) => {
+      // If the port changed (fallback), update the port reference for hooks
+      if (actualPort !== configuredPort) {
+        // Update the in-memory port so hooks point to the right port
+        void vscode.workspace.getConfiguration('eventHorizon').update('port', actualPort, vscode.ConfigurationTarget.Global);
+      }
       // Always regenerate lock scripts with the current session token
       await ensureLockScripts();
 
