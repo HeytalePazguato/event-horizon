@@ -408,6 +408,12 @@ function wireUniverseWebview(
               id: t.id, title: t.title, status: t.status,
               assignee: t.assigneeName ?? t.assignee, assigneeId: t.assignee,
               blockedBy: t.blockedBy, notes: t.notes, role: t.role,
+              retryCount: t.retryCount ?? 0, failedReason: t.failedReason ?? null,
+              acceptanceCriteria: t.acceptanceCriteria ?? null,
+              verifyCommand: t.verifyCommand ?? null,
+              complexity: t.complexity ?? null,
+              modelTier: t.modelTier ?? null,
+              verificationStatus: t.verificationStatus ?? null,
             })),
           },
         });

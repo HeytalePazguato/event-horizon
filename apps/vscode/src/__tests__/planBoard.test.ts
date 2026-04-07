@@ -99,6 +99,55 @@ describe('parsePlanMarkdown', () => {
     expect(plan.tasks[0].title).toBe('Task title');
   });
 
+  it('parses acceptance criteria from **Accept** lines', () => {
+    const md = `# Plan
+- [ ] 1.1 Build auth module
+  - **Accept**: All existing tests pass and new auth routes respond with correct status codes.
+  - **Verify**: \`pnpm test -- --grep "auth"\``;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    expect(plan.tasks[0].acceptanceCriteria).toBe('All existing tests pass and new auth routes respond with correct status codes.');
+    expect(plan.tasks[0].verifyCommand).toBe('pnpm test -- --grep "auth"');
+  });
+
+  it('parses complexity and modelTier from HTML comments', () => {
+    const md = `# Plan
+- [ ] 1.1 Simple fix
+  <!-- complexity: low -->
+  <!-- model: haiku -->`;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    expect(plan.tasks[0].complexity).toBe('low');
+    expect(plan.tasks[0].modelTier).toBe('haiku');
+  });
+
+  it('defaults new fields to null when not present', () => {
+    const md = `# Plan
+- [ ] 1.1 Basic task`;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    expect(plan.tasks[0].acceptanceCriteria).toBeNull();
+    expect(plan.tasks[0].verifyCommand).toBeNull();
+    expect(plan.tasks[0].complexity).toBeNull();
+    expect(plan.tasks[0].modelTier).toBeNull();
+    expect(plan.tasks[0].verificationStatus).toBeNull();
+  });
+
+  it('parses all new fields together', () => {
+    const md = `# Plan
+- [ ] 2.1 Implement feature [role: implementer]
+  - depends: 1.1
+  - **Accept**: Feature works end-to-end with no regressions.
+  - **Verify**: \`pnpm test && pnpm build\`
+  <!-- complexity: high -->
+  <!-- model: opus -->`;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    const task = plan.tasks[0];
+    expect(task.role).toBe('implementer');
+    expect(task.blockedBy).toEqual(['1.1']);
+    expect(task.acceptanceCriteria).toBe('Feature works end-to-end with no regressions.');
+    expect(task.verifyCommand).toBe('pnpm test && pnpm build');
+    expect(task.complexity).toBe('high');
+    expect(task.modelTier).toBe('opus');
+  });
+
   it('parses a realistic plan with sections', () => {
     const md = `# Event Horizon v2.0
 

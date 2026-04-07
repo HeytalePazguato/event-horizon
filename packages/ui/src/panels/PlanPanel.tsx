@@ -14,6 +14,9 @@ import { DependencyPanel } from './DependencyPanel.js';
 
 export type PlanTaskStatus = 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked';
 
+export type TaskComplexity = 'low' | 'medium' | 'high';
+export type VerificationStatus = 'pending' | 'passed' | 'failed';
+
 export interface PlanTaskView {
   id: string;
   title: string;
@@ -26,6 +29,11 @@ export interface PlanTaskView {
   retryCount?: number;
   failedReason?: string | null;
   recommendedFor?: string;
+  acceptanceCriteria?: string | null;
+  verifyCommand?: string | null;
+  complexity?: TaskComplexity | null;
+  modelTier?: string | null;
+  verificationStatus?: VerificationStatus | null;
 }
 
 export interface PlanView {
@@ -305,10 +313,30 @@ const ROLE_COLORS: Record<string, string> = {
   reviewer: '#cc88ff', tester: '#ffcc00', debugger: '#ff6666',
 };
 
+// ── Complexity colors ──────────────────────────────────────────────────────
+
+const COMPLEXITY_COLORS: Record<string, string> = {
+  low: '#40a060',     // green
+  medium: '#cc8833',  // amber
+  high: '#cc4444',    // red
+};
+
+// ── Verification status icons ──────────────────────────────────────────────
+
+function verificationIcon(status: VerificationStatus | null | undefined): { symbol: string; color: string } {
+  switch (status) {
+    case 'passed':  return { symbol: '\u2713', color: '#40a060' };  // checkmark
+    case 'failed':  return { symbol: '\u2717', color: '#cc4444' };  // X
+    case 'pending': return { symbol: '\u2014', color: colors.text.dim };  // dash
+    default:        return { symbol: '', color: '' };
+  }
+}
+
 // ── Task Card ───────────────────────────────────────────────────────────────
 
 const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
   const statusCol = taskStatusColor(task.status);
+  const [showAcceptance, setShowAcceptance] = useState(false);
 
   return (
     <div style={{
@@ -329,20 +357,54 @@ const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
         </span>
       </div>
 
-      {/* Role pill */}
-      {task.role && (
-        <div style={{ marginBottom: 2 }}>
-          <span style={{
-            display: 'inline-block',
-            fontSize: 8, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'monospace',
-            letterSpacing: '0.06em',
-            color: ROLE_COLORS[task.role] ?? '#aaccff',
-            background: `${(ROLE_COLORS[task.role] ?? '#aaccff')}15`,
-            border: `1px solid ${(ROLE_COLORS[task.role] ?? '#aaccff')}44`,
-            borderRadius: 8, padding: '1px 6px',
-          }}>
-            {task.role}
-          </span>
+      {/* Role pill + complexity dot + model tier + verification status */}
+      {(task.role || task.complexity || task.modelTier || task.verificationStatus) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2, flexWrap: 'wrap' }}>
+          {task.role && (
+            <span style={{
+              display: 'inline-block',
+              fontSize: 8, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'monospace',
+              letterSpacing: '0.06em',
+              color: ROLE_COLORS[task.role] ?? '#aaccff',
+              background: `${(ROLE_COLORS[task.role] ?? '#aaccff')}15`,
+              border: `1px solid ${(ROLE_COLORS[task.role] ?? '#aaccff')}44`,
+              borderRadius: 8, padding: '1px 6px',
+            }}>
+              {task.role}
+            </span>
+          )}
+          {task.complexity && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }} title={`Complexity: ${task.complexity}`}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: COMPLEXITY_COLORS[task.complexity] ?? colors.text.dim,
+                boxShadow: `0 0 3px ${COMPLEXITY_COLORS[task.complexity] ?? colors.text.dim}`,
+                display: 'inline-block',
+              }} />
+              <span style={{ fontSize: 7, color: COMPLEXITY_COLORS[task.complexity] ?? colors.text.dim, fontWeight: 600, textTransform: 'uppercase' }}>
+                {task.complexity}
+              </span>
+            </span>
+          )}
+          {task.modelTier && (
+            <span style={{
+              fontSize: 7, color: colors.text.dim, fontFamily: 'monospace',
+              background: `${colors.text.dim}15`,
+              padding: '0 4px', borderRadius: 2,
+            }}>
+              {task.modelTier}
+            </span>
+          )}
+          {task.verificationStatus && (() => {
+            const v = verificationIcon(task.verificationStatus);
+            return (
+              <span style={{
+                fontSize: 9, fontWeight: 700, color: v.color,
+              }} title={`Verification: ${task.verificationStatus}`}>
+                {v.symbol}
+              </span>
+            );
+          })()}
         </div>
       )}
 
@@ -427,6 +489,36 @@ const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
           lineHeight: 1.3,
         }}>
           {task.failedReason}
+        </div>
+      )}
+
+      {/* Acceptance criteria (collapsible) */}
+      {task.acceptanceCriteria && (
+        <div style={{ marginTop: sizes.spacing.xs }}>
+          <button
+            type="button"
+            onClick={() => setShowAcceptance(!showAcceptance)}
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono,
+              display: 'flex', alignItems: 'center', gap: 2,
+            }}
+          >
+            <span style={{ fontSize: 7, transform: showAcceptance ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block' }}>{'\u25B6'}</span>
+            Accept
+          </button>
+          {showAcceptance && (
+            <div style={{
+              fontSize: sizes.text.xs,
+              color: colors.text.secondary,
+              marginTop: 2,
+              paddingLeft: sizes.spacing.sm,
+              borderLeft: `2px solid ${colors.border.active}`,
+              lineHeight: 1.4,
+            }}>
+              {task.acceptanceCriteria}
+            </div>
+          )}
         </div>
       )}
 

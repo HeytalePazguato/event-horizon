@@ -257,6 +257,11 @@ export function activate(context: vscode.ExtensionContext): void {
         role: t.role,
         retryCount: t.retryCount ?? 0,
         failedReason: t.failedReason ?? null,
+        acceptanceCriteria: t.acceptanceCriteria ?? null,
+        verifyCommand: t.verifyCommand ?? null,
+        complexity: t.complexity ?? null,
+        modelTier: t.modelTier ?? null,
+        verificationStatus: t.verificationStatus ?? null,
       })),
     };
   }

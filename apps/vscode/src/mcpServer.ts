@@ -837,6 +837,11 @@ export class McpServer {
             assigneeId: t.assignee,
             blockedBy: t.blockedBy,
             notes: t.notes,
+            acceptanceCriteria: t.acceptanceCriteria ?? null,
+            verifyCommand: t.verifyCommand ?? null,
+            complexity: t.complexity ?? null,
+            modelTier: t.modelTier ?? null,
+            verificationStatus: t.verificationStatus ?? null,
           })),
         };
       }
