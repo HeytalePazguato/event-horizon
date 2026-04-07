@@ -100,6 +100,7 @@ export function initMcpServer(deps: {
     worktreeManager,
     budgetManager,
     traceStore,
+    workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
   });
 }
 

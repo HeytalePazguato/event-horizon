@@ -19,6 +19,7 @@ import type { HeartbeatManager } from './heartbeatManager.js';
 import type { WorktreeManager } from './worktreeManager.js';
 import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
+import { exec } from 'child_process';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -291,6 +292,19 @@ export const MCP_TOOLS: McpToolDef[] = [
 
   // ── Phase 1: Retry, recommendations, shared knowledge ─────────────────────
 
+  {
+    name: 'eh_verify_task',
+    description: 'Run the verify command for a completed task and update its verification status. Returns exit code, output, and pass/fail result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        task_id: { type: 'string', description: 'Task ID to verify (must be in done status)' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id', 'task_id'],
+    },
+  },
   {
     name: 'eh_retry_task',
     description: 'Retry a failed task: resets it to pending, increments retry count, and un-cascades any dependents that were failed due to this task.',
@@ -625,6 +639,7 @@ export interface McpServerDeps {
   budgetManager?: BudgetManager;
   showBudgetRequest?: (planId: string, currentLimit: number, requestedAmount: number, reason: string) => Promise<boolean>;
   traceStore?: TraceStore;
+  workspaceRoot?: string;
 }
 
 export class McpServer {
@@ -1066,6 +1081,66 @@ export class McpServer {
         const roleId = args.role_id as string;
         const { agentProfiler } = this.deps;
         return { recommendations: agentProfiler.recommendForRole(roleId) };
+      }
+
+      // ── Verification ──────────────────────────────────────────────────────
+
+      case 'eh_verify_task': {
+        const taskId = args.task_id as string;
+        const planId = args.plan_id as string | undefined;
+        const plan = planBoardManager.getPlan(planId);
+        if (!plan) {
+          return { verified: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+        }
+        const task = plan.tasks.find((t) => t.id === taskId);
+        if (!task) {
+          return { verified: false, error: `Task not found: ${taskId}` };
+        }
+        if (task.status !== 'done') {
+          return { verified: false, error: `Task is not done (status: ${task.status}). Only done tasks can be verified.` };
+        }
+        if (!task.verifyCommand) {
+          // No verify command — mark as passed by default
+          task.verificationStatus = 'passed';
+          plan.lastUpdatedAt = Date.now();
+          return { verified: true, exitCode: 0, output: 'No verify command defined — auto-passed.', verificationStatus: 'passed' };
+        }
+
+        // Execute verify command
+        const cwd = this.deps.workspaceRoot ?? process.cwd();
+        try {
+          const result = await new Promise<{ exitCode: number; output: string }>((resolve) => {
+            exec(task.verifyCommand!, { cwd, timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+              const output = ((stdout ?? '') + (stderr ? `\n--- stderr ---\n${stderr}` : '')).slice(0, 2000);
+              if (error) {
+                resolve({ exitCode: error.code ?? 1, output });
+              } else {
+                resolve({ exitCode: 0, output });
+              }
+            });
+          });
+
+          if (result.exitCode === 0) {
+            task.verificationStatus = 'passed';
+            plan.lastUpdatedAt = Date.now();
+            return { verified: true, exitCode: 0, output: result.output, verificationStatus: 'passed' };
+          } else {
+            task.verificationStatus = 'failed';
+            const agentId = args.agent_id as string;
+            task.notes.push({
+              agentId,
+              agentName: agentId,
+              text: `Verification failed (exit ${result.exitCode}): ${result.output.slice(0, 500)}`,
+              ts: Date.now(),
+            });
+            plan.lastUpdatedAt = Date.now();
+            return { verified: false, exitCode: result.exitCode, output: result.output, verificationStatus: 'failed' };
+          }
+        } catch (err) {
+          task.verificationStatus = 'failed';
+          plan.lastUpdatedAt = Date.now();
+          return { verified: false, exitCode: -1, output: `Execution error: ${String(err)}`.slice(0, 2000), verificationStatus: 'failed' };
+        }
       }
 
       // ── Phase 1: Retry, recommendations, shared knowledge ──────────────────
