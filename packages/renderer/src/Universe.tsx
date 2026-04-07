@@ -775,11 +775,11 @@ export const Universe: FC<UniverseProps> = ({
       initedRef.current = false;
       appRef.current = null;
       try {
-        const c = app.canvas;
-        if (c && c.parentNode) c.remove();
+        const c = app?.canvas;
+        if (c?.parentNode) c.remove();
       } catch { /* ignore */ }
       try {
-        app.destroy(true, { children: true });
+        app?.destroy(true, { children: true });
       } catch { /* already destroyed */ }
     };
   }, []); // init-only effect

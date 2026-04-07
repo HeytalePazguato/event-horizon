@@ -2,6 +2,20 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.2.1] — 2026-04-06
+
+### Fixed
+- **Cursor connect button**: the "Install" button was disabled with a "Soon" label even though the full Cursor connector (hooks, MCP registration, agent definitions) was already implemented. Now shows "Install" like the other agents
+- **Kanban "All Columns" setting not persisting**: `useSettingsPersistence` fired on initial render with the Zustand default (`false`), overwriting the saved VS Code config before `init-settings` could restore it. Added a first-render skip so the saved preference is respected
+- **Orchestrator role not visible in Roles tab**: `eh_load_plan` and `eh_claim_orchestrator` set the plan's orchestrator ID but never called `roleManager.assignRole()`, so the role assignment didn't appear in the UI. Both now auto-assign the `orchestrator` role
+- **Spawn command fails on Windows (PowerShell)**: prompts containing double quotes, negative numbers (`-93.7474`), or special characters broke because `shellEscape()` used bash conventions (`\"`) that PowerShell doesn't recognize. Replaced inline escaping with a temp-file approach — prompt is written to `os.tmpdir()` and read via `[System.IO.File]::ReadAllText()` (PowerShell) or `$(cat ...)` (bash). Temp file auto-deleted after command runs
+- **Spawn command missing `--verbose` flag**: Claude CLI requires `--verbose` when combining `-p` with `--output-format stream-json`. Added to all Claude Code spawn and resume commands
+- **Kanban role tags misaligned**: role labels were crammed inline with the task ID and title, overflowing and clipping outside the card. Moved to their own row below the title, styled as rounded pills with tinted background
+- **Demo crash "Cannot read properties of null (reading 'remove')"**: PixiJS app cleanup accessed `app.canvas` without null-checking `app`, which could be null if initialization failed. Added optional chaining (`app?.canvas`, `app?.destroy()`)
+
+### Improved
+- **Knowledge auto-seed expanded**: added `copilot-instructions.md` and `.copilot-instructions.md` to the instruction file scan, alongside the existing `.github/copilot-instructions.md`
+
 ## [1.2.0] — 2026-04-05
 
 ### Added — Orchestration Engine

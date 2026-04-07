@@ -5,6 +5,9 @@
 
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
+import * as fsp from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
 
 // ── Interfaces ─────────────────────────────────────────────────────────────
 
@@ -47,12 +50,43 @@ export interface SpawnedAgentInfo {
   pid?: number;
 }
 
-// ── Utility: shell-safe escaping ─────────────────────────────────────────────
+// ── Utility: shell-safe prompt handling ──────────────────────────────────────
 
-/** Escape a string for safe use in a double-quoted shell argument. */
-function shellEscape(s: string): string {
-  // Escape backslashes first, then double quotes, then backticks and dollar signs
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+/**
+ * Write a prompt string to a temp file and return a shell fragment that reads it.
+ * This avoids shell escaping issues entirely — PowerShell and bash interpret
+ * inline quotes differently, so long prompts with special characters (negative
+ * numbers like -93.7474, JSON, quotes) break when escaped inline.
+ */
+async function writePromptFile(prompt: string, id: string): Promise<{ filePath: string; readFragment: string; cleanup: string }> {
+  const filePath = path.join(os.tmpdir(), `eh-prompt-${id}.txt`);
+  await fsp.writeFile(filePath, prompt, 'utf8');
+  if (process.platform === 'win32') {
+    // PowerShell: read file via .NET, single-quoted path avoids expansion
+    const escaped = filePath.replace(/'/g, "''");
+    return {
+      filePath,
+      readFragment: `([System.IO.File]::ReadAllText('${escaped}'))`,
+      cleanup: `; Remove-Item '${escaped}' -ErrorAction SilentlyContinue`,
+    };
+  }
+  // Bash: command substitution with cat
+  const escaped = filePath.replace(/'/g, "'\\''");
+  return {
+    filePath,
+    readFragment: `"$(cat '${escaped}')"`,
+    cleanup: `; rm -f '${escaped}'`,
+  };
+}
+
+/** Escape a short, controlled string for use in a shell argument (role names, etc.). */
+function shellQuote(s: string): string {
+  if (process.platform === 'win32') {
+    // PowerShell: single-quote with '' for literal quotes
+    return `'${s.replace(/'/g, "''")}'`;
+  }
+  // Bash: single-quote with '\'' for literal quotes
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 // ── Utility: check if command exists in PATH ────────────────────────────────
@@ -228,11 +262,14 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     const agentId = `claude-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const terminalName = `\u2600\uFE0F Claude \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
 
-    // Build command
-    const parts = ['claude', '-p', `"${shellEscape(opts.prompt)}"`, '--output-format', 'stream-json'];
+    // Write prompt to temp file to avoid shell escaping issues
+    const pf = await writePromptFile(opts.prompt, agentId);
+
+    // Build command — --verbose is required when using -p with --output-format stream-json
+    const parts = ['claude', '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json'];
     if (opts.model) parts.push('--model', opts.model);
     if (opts.role) {
-      parts.push('--append-system-prompt', `"You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon."`);
+      parts.push('--append-system-prompt', shellQuote(`You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon.`));
     }
 
     const token = this.getAuthToken();
@@ -251,7 +288,7 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       env,
     });
 
-    const command = parts.join(' ');
+    const command = parts.join(' ') + pf.cleanup;
     terminal.sendText(command);
 
     // Apply focus setting
@@ -287,7 +324,8 @@ export class ClaudeCodeSpawner implements SpawnBackend {
 
   async resume(agentId: string, sessionId: string, prompt: string): Promise<SpawnResult> {
     const terminalName = `\u2600\uFE0F Claude \u2014 Resume (${sessionId.slice(0, 8)})`;
-    const parts = ['claude', '--resume', sessionId, '-p', `"${shellEscape(prompt)}"`, '--output-format', 'stream-json'];
+    const pf = await writePromptFile(prompt, agentId);
+    const parts = ['claude', '--resume', sessionId, '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json'];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -297,7 +335,7 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     };
 
     const terminal = vscode.window.createTerminal({ name: terminalName, env });
-    terminal.sendText(parts.join(' '));
+    terminal.sendText(parts.join(' ') + pf.cleanup);
 
     this.registry.trackAgent(agentId, {
       type: this.type,
@@ -345,7 +383,8 @@ export class OpenCodeSpawner implements SpawnBackend {
     const hasOpenCode = await commandExists('opencode');
     const cmd = hasOpenCode ? 'opencode' : 'crush';
 
-    const parts = [cmd, '-p', `"${shellEscape(opts.prompt)}"`, '-f', 'json', '-q'];
+    const pf = await writePromptFile(opts.prompt, agentId);
+    const parts = [cmd, '-p', pf.readFragment, '-f', 'json', '-q'];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -363,7 +402,7 @@ export class OpenCodeSpawner implements SpawnBackend {
       env,
     });
 
-    terminal.sendText(parts.join(' '));
+    terminal.sendText(parts.join(' ') + pf.cleanup);
 
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
     if (focusSetting === 'focus') {
@@ -428,7 +467,8 @@ export class CursorSpawner implements SpawnBackend {
     const agentId = `cursor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const terminalName = `\uD83D\uDC8E Cursor \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
 
-    const parts = ['cursor', '--cli', '-p', `"${shellEscape(opts.prompt)}"`];
+    const pf = await writePromptFile(opts.prompt, agentId);
+    const parts = ['cursor', '--cli', '-p', pf.readFragment];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -446,7 +486,7 @@ export class CursorSpawner implements SpawnBackend {
       env,
     });
 
-    terminal.sendText(parts.join(' '));
+    terminal.sendText(parts.join(' ') + pf.cleanup);
 
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
     if (focusSetting === 'focus') {

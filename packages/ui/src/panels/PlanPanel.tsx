@@ -327,17 +327,24 @@ const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
         <span style={{ color: colors.text.primary, fontSize: sizes.text.sm }}>
           {task.title}
         </span>
-        {task.role && (
+      </div>
+
+      {/* Role pill */}
+      {task.role && (
+        <div style={{ marginBottom: 2 }}>
           <span style={{
-            fontSize: 7, textTransform: 'uppercase', fontFamily: 'monospace',
+            display: 'inline-block',
+            fontSize: 8, fontWeight: 600, textTransform: 'uppercase', fontFamily: 'monospace',
+            letterSpacing: '0.06em',
             color: ROLE_COLORS[task.role] ?? '#aaccff',
-            border: `1px solid ${(ROLE_COLORS[task.role] ?? '#aaccff')}66`,
-            borderRadius: 2, padding: '1px 2px', marginLeft: 4,
+            background: `${(ROLE_COLORS[task.role] ?? '#aaccff')}15`,
+            border: `1px solid ${(ROLE_COLORS[task.role] ?? '#aaccff')}44`,
+            borderRadius: 8, padding: '1px 6px',
           }}>
             {task.role}
           </span>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Assignee */}
       {task.assignee && (
