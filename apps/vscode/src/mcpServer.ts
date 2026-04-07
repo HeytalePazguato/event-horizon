@@ -793,6 +793,14 @@ export class McpServer {
 
         const agentId = args.agent_id as string;
         const plan = planBoardManager.loadPlan(markdown, filePath, agentId);
+
+        // Auto-assign orchestrator role to the agent that loaded the plan
+        if (agentId) {
+          const agent = this.deps.agentStateManager.getAgent(agentId);
+          const agentType = agent?.type ?? null;
+          try { this.deps.roleManager.assignRole('orchestrator', agentType, agentId); } catch { /* role may not exist */ }
+        }
+
         return {
           loaded: true,
           plan_id: plan.id,
@@ -1220,6 +1228,10 @@ export class McpServer {
         if (!result.success) {
           return { claimed: false, error: result.error };
         }
+        // Assign orchestrator role in RoleManager so it appears in Roles tab
+        const agent = this.deps.agentStateManager.getAgent(agentId);
+        const agentType = agent?.type ?? null;
+        try { this.deps.roleManager.assignRole('orchestrator', agentType, agentId); } catch { /* role may not exist */ }
         return { claimed: true, agent_id: agentId };
       }
 

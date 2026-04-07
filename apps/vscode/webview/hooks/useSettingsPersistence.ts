@@ -35,9 +35,15 @@ export function useSettingsPersistence(vscodeApi: { postMessage: (msg: unknown) 
     vscodeApi?.postMessage({ type: 'persist-singularity', stats: singularityStats });
   }, [singularityStats]);
 
-  // Persist all settings (debounced)
+  // Persist all settings (debounced) — skip the first render to avoid overwriting
+  // saved VS Code config with Zustand defaults before init-settings arrives.
   const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialRenderRef = useRef(true);
   useEffect(() => {
+    if (initialRenderRef.current) {
+      initialRenderRef.current = false;
+      return;
+    }
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
     settingsTimerRef.current = setTimeout(() => {
       vscodeApi?.postMessage({

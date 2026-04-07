@@ -13,7 +13,7 @@ const AGENT_OPTIONS = [
   { id: 'claude-code', label: 'Claude Code',    planet: '🟤', status: 'available' as const, desc: 'Installs curl hooks into ~/.claude/settings.json. One click, no token needed.' },
   { id: 'opencode',    label: 'OpenCode',       planet: '🟠', status: 'available' as const, desc: 'Installs a plugin into ~/.config/opencode/plugins/. Restart OpenCode after connecting.' },
   { id: 'copilot',     label: 'GitHub Copilot', planet: '🔵', status: 'available' as const, desc: 'Installs debug hooks into .github/hooks/. Check "Copilot Chat Hooks" output for events.' },
-  { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'soon'      as const, desc: 'Cursor connector coming soon.' },
+  { id: 'cursor',      label: 'Cursor',         planet: '🩵', status: 'available' as const, desc: 'Installs hooks into ~/.cursor/hooks.json and registers MCP server. Restart Cursor after connecting.' },
   { id: 'ollama',      label: 'Ollama / Local', planet: '⚫', status: 'soon'      as const, desc: 'Local model support coming soon.' },
 ];
 

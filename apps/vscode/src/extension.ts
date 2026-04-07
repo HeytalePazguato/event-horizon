@@ -141,7 +141,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (sharedKnowledge.read('project-instructions').length > 0) return;
 
     // Instruction file names to look for (order = priority)
-    const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md'];
+    const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md', 'copilot-instructions.md', '.copilot-instructions.md'];
 
     // Build candidate paths: root, .claude/, and one level of subdirs (backend/, frontend/, etc.)
     const candidatePaths: Array<{ filePath: string; label: string }> = [];
