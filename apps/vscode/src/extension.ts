@@ -124,7 +124,24 @@ export function activate(context: vscode.ExtensionContext): void {
   if (savedRoles) roleManager.restore(savedRoles);
 
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
-  if (savedProfiles) agentProfiler.restore(savedProfiles);
+  if (savedProfiles) {
+    // Migrate stale records: fix 'unknown' agent types and -1 costs
+    for (const rec of savedProfiles) {
+      if (rec.agentType === 'unknown') {
+        const id = rec.agentId.toLowerCase();
+        if (id.includes('claude')) rec.agentType = 'claude-code';
+        else if (id.includes('opencode') || id.includes('crush')) rec.agentType = 'opencode';
+        else if (id.includes('copilot')) rec.agentType = 'copilot';
+        else if (id.includes('cursor')) rec.agentType = 'cursor';
+      }
+      if (rec.estimatedCostUsd < 0) rec.estimatedCostUsd = 0;
+      if (rec.inputTokens < 0) rec.inputTokens = 0;
+      if (rec.outputTokens < 0) rec.outputTokens = 0;
+    }
+    agentProfiler.restore(savedProfiles);
+    // Persist the cleaned-up data
+    void context.globalState.update('agentProfiles', agentProfiler.serialize());
+  }
 
   // Restore model tier stats from globalState
   const savedModelTiers = context.globalState.get<ReturnType<typeof modelTierManager.serialize>>('modelTierStats');
