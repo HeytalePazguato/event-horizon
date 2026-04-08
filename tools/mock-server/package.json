@@ -8,11 +8,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@event-horizon/core": "workspace:*",
-    "@event-horizon/connectors": "workspace:*"
+    "@event-horizon/connectors": "workspace:*",
+    "@event-horizon/core": "workspace:*"
   },
   "devDependencies": {
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.2"
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   }
 }
