@@ -341,20 +341,31 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!task.assignee) return;
     const agent = agentStateManager.getAgent(task.assignee);
     const metrics = metricsEngine.getMetrics(task.assignee);
+
+    // Derive agent type: try state manager first, then infer from agent ID pattern
+    let agentType = agent?.type ?? 'unknown';
+    if (agentType === 'unknown') {
+      const id = task.assignee.toLowerCase();
+      if (id.includes('claude')) agentType = 'claude-code';
+      else if (id.includes('opencode') || id.includes('crush')) agentType = 'opencode';
+      else if (id.includes('copilot')) agentType = 'copilot';
+      else if (id.includes('cursor')) agentType = 'cursor';
+    }
+
     agentProfiler.recordTask({
       taskId: task.id,
       planId,
       agentId: task.assignee,
-      agentType: agent?.type ?? 'unknown',
+      agentType,
       agentName: task.assigneeName ?? task.assignee,
       role: task.role,
       claimedAt: task.claimedAt ?? Date.now(),
       completedAt: Date.now(),
       status: task.status === 'done' ? 'done' : 'failed',
       durationMs: task.claimedAt ? Date.now() - task.claimedAt : 0,
-      inputTokens: metrics?.inputTokens ?? -1,
-      outputTokens: metrics?.outputTokens ?? -1,
-      estimatedCostUsd: metrics?.estimatedCostUsd ?? -1,
+      inputTokens: metrics?.inputTokens ?? 0,
+      outputTokens: metrics?.outputTokens ?? 0,
+      estimatedCostUsd: metrics?.estimatedCostUsd ?? 0,
       toolCalls: metrics?.toolCalls ?? 0,
       errorCount: metrics?.errorCount ?? 0,
     });

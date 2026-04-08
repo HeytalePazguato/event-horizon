@@ -104,6 +104,7 @@ function formatDuration(ms: number): string {
 }
 
 function formatCost(usd: number): string {
+  if (usd < 0 || usd === 0) return 'N/A';
   return `$${usd.toFixed(2)}`;
 }
 
