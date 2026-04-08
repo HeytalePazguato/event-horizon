@@ -158,28 +158,35 @@ export function activate(context: vscode.ExtensionContext): void {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return;
 
-    // Instruction file names to look for (order = priority)
-    const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md', 'copilot-instructions.md', '.copilot-instructions.md'];
+    // Instruction file basenames to look for
+    const INSTRUCTION_BASENAMES = new Set(['claude.md', 'agents.md', '.cursorrules', 'copilot-instructions.md', '.copilot-instructions.md']);
+    const SKIP_DIRS = new Set(['node_modules', 'dist', 'out', '.git', '.next', 'build', 'coverage', '__pycache__', '.venv', 'venv']);
+    const MAX_DEPTH = 4;
 
-    // Build candidate paths: root, .claude/, and one level of subdirs (backend/, frontend/, etc.)
+    // Recursively scan for instruction files
     const candidatePaths: Array<{ filePath: string; label: string }> = [];
-    for (const folder of folders) {
-      const root = folder.uri.fsPath;
-      for (const fname of INSTRUCTION_FILES) {
-        candidatePaths.push({ filePath: path.join(root, fname), label: fname });
-        candidatePaths.push({ filePath: path.join(root, '.claude', fname), label: `.claude/${fname}` });
-      }
-      // Scan immediate subdirectories (backend/, frontend/, packages/*, apps/*, etc.)
+
+    async function scanDir(dir: string, rootPath: string, depth: number): Promise<void> {
+      if (depth > MAX_DEPTH) return;
       try {
-        const entries = await fsp.readdir(root, { withFileTypes: true });
+        const entries = await fsp.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
-          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'out') continue;
-          for (const fname of INSTRUCTION_FILES) {
-            candidatePaths.push({ filePath: path.join(root, entry.name, fname), label: `${entry.name}/${fname}` });
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isFile()) {
+            if (INSTRUCTION_BASENAMES.has(entry.name.toLowerCase())) {
+              const rel = path.relative(rootPath, fullPath).replace(/\\/g, '/');
+              candidatePaths.push({ filePath: fullPath, label: rel });
+            }
+          } else if (entry.isDirectory() && !SKIP_DIRS.has(entry.name)) {
+            // Allow dotdirs like .claude, .github but skip .git
+            await scanDir(fullPath, rootPath, depth + 1);
           }
         }
-      } catch { /* readdir failed — skip */ }
+      } catch { /* permission error or similar — skip */ }
+    }
+
+    for (const folder of folders) {
+      await scanDir(folder.uri.fsPath, folder.uri.fsPath, 0);
     }
 
     // Read all found files and seed knowledge
