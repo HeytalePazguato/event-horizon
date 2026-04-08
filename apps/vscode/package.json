@@ -122,25 +122,39 @@
         },
         "eventHorizon.animationSpeed": {
           "type": "number",
-          "default": 1.0,
+          "default": 1,
           "minimum": 0.25,
-          "maximum": 3.0,
+          "maximum": 3,
           "description": "Animation speed multiplier (0.25 = slow-mo, 3.0 = fast-forward).",
           "order": 2
         },
         "eventHorizon.fontSize": {
           "type": "string",
           "default": "default",
-          "enum": ["small", "default", "large"],
-          "enumDescriptions": ["Smaller text (87%)", "Default text size", "Larger text for improved readability (115%)"],
+          "enum": [
+            "small",
+            "default",
+            "large"
+          ],
+          "enumDescriptions": [
+            "Smaller text (87%)",
+            "Default text size",
+            "Larger text for improved readability (115%)"
+          ],
           "description": "UI font size for the Event Horizon panel. Affects all text in the universe and operations views.",
           "order": 3
         },
         "eventHorizon.defaultView": {
           "type": "string",
           "default": "universe",
-          "enum": ["universe", "operations"],
-          "enumDescriptions": ["Cosmic planet visualization", "Full-screen dashboard with tabs"],
+          "enum": [
+            "universe",
+            "operations"
+          ],
+          "enumDescriptions": [
+            "Cosmic planet visualization",
+            "Full-screen dashboard with tabs"
+          ],
           "description": "Which view to show when opening Event Horizon.",
           "order": 3
         },
@@ -195,7 +209,7 @@
           "type": "number",
           "default": 1.35,
           "minimum": 0.4,
-          "maximum": 2.0,
+          "maximum": 2,
           "description": "Planet size multiplier for Claude Code agents.",
           "order": 20
         },
@@ -203,15 +217,15 @@
           "type": "number",
           "default": 0.72,
           "minimum": 0.4,
-          "maximum": 2.0,
+          "maximum": 2,
           "description": "Planet size multiplier for GitHub Copilot agents.",
           "order": 21
         },
         "eventHorizon.agentSizes.opencode": {
           "type": "number",
-          "default": 1.0,
+          "default": 1,
           "minimum": 0.4,
-          "maximum": 2.0,
+          "maximum": 2,
           "description": "Planet size multiplier for OpenCode agents.",
           "order": 22
         },
@@ -219,7 +233,7 @@
           "type": "number",
           "default": 0.92,
           "minimum": 0.4,
-          "maximum": 2.0,
+          "maximum": 2,
           "description": "Planet size multiplier for Cursor agents.",
           "order": 23
         },
@@ -227,14 +241,18 @@
           "type": "number",
           "default": 1.12,
           "minimum": 0.4,
-          "maximum": 2.0,
+          "maximum": 2,
           "description": "Planet size multiplier for unrecognized agent types.",
           "order": 24
         },
         "eventHorizon.spawnTerminalFocus": {
           "type": "string",
           "default": "focus-on-interaction",
-          "enum": ["background", "focus", "focus-on-interaction"],
+          "enum": [
+            "background",
+            "focus",
+            "focus-on-interaction"
+          ],
           "enumDescriptions": [
             "Keep terminal in background after spawning",
             "Focus the terminal immediately after spawning",
@@ -249,13 +267,35 @@
           "items": {
             "type": "object",
             "properties": {
-              "id": { "type": "string", "description": "Unique role identifier (lowercase, hyphens allowed)" },
-              "name": { "type": "string", "description": "Display name" },
-              "description": { "type": "string", "description": "What this role specializes in" },
-              "skills": { "type": "array", "items": { "type": "string" }, "description": "Skill names to recommend for this role" },
-              "instructions": { "type": "string", "description": "Markdown instructions sent to the agent when assigned this role" }
+              "id": {
+                "type": "string",
+                "description": "Unique role identifier (lowercase, hyphens allowed)"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name"
+              },
+              "description": {
+                "type": "string",
+                "description": "What this role specializes in"
+              },
+              "skills": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Skill names to recommend for this role"
+              },
+              "instructions": {
+                "type": "string",
+                "description": "Markdown instructions sent to the agent when assigned this role"
+              }
             },
-            "required": ["id", "name", "description"]
+            "required": [
+              "id",
+              "name",
+              "description"
+            ]
           },
           "markdownDescription": "Define custom agent roles beyond the 6 built-in ones (researcher, planner, implementer, reviewer, tester, debugger). Each role maps to skills and instructions.",
           "order": 20
@@ -263,7 +303,9 @@
         "eventHorizon.roles.assignments": {
           "type": "object",
           "default": {},
-          "additionalProperties": { "type": "string" },
+          "additionalProperties": {
+            "type": "string"
+          },
           "markdownDescription": "Map role IDs to default agent types. Example: `{ \"researcher\": \"claude-code\", \"reviewer\": \"copilot\" }`",
           "order": 21
         },
@@ -279,7 +321,7 @@
           "type": "number",
           "default": 0.8,
           "minimum": 0.1,
-          "maximum": 1.0,
+          "maximum": 1,
           "description": "Budget warning threshold (0.1 to 1.0). A warning is shown when spending reaches this percentage of the plan budget.",
           "order": 7
         }
@@ -362,13 +404,13 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/vscode": "^1.110.0",
-    "@vscode/vsce": "^3.2.1",
+    "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "typescript": "^5.7.2"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "typescript": "^5.9.3"
   }
 }
