@@ -2,6 +2,22 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.3.0] — 2026-04-07
+
+### Added — Token Optimization & Quality Assurance
+- **Acceptance criteria in plans**: tasks now support `**Accept**:` (criteria), `**Verify**:` (command), `<!-- complexity: low|medium|high -->`, and `<!-- model: haiku|sonnet|opus -->` metadata. Parsed automatically from plan markdown and stored in PlanTask
+- **Kanban complexity badges**: colored dots on task cards — green (low), amber (medium), red (high) — plus model tier label, verification status icon (checkmark/X/dash), and collapsible acceptance criteria section
+- **`eh_verify_task` MCP tool**: executes a task's verify command with 60s timeout, updates verificationStatus (passed/failed), returns exit code and truncated output. Auto-passes tasks without verify commands
+- **`eh:verify-task` skill**: batch-verifies all completed tasks, handles pass/fail/flaky decisions, broadcasts summary to all agents
+- **ModelTierManager**: tiered model selection that recommends the cheapest viable model per task complexity + role. Tracks first-attempt success rates, drops underperformers below threshold (default 30%), persists stats across sessions
+- **Model escalation on retry**: `eh_retry_task` auto-escalates to the next model tier (haiku → sonnet → opus) on verification failure. Success/failure stats feed back into recommendations
+- **Self-verification in `eh:work-on-plan`**: agents must check acceptance criteria and run verify commands before marking tasks done, with up to 2 self-fix attempts on failure
+
+### Improved
+- **`eh:create-plan` skill**: now requires Accept, Verify, complexity, and model metadata per task. Includes acceptance criteria clarification step and scope heuristic (low <50 lines, medium 50-200, high 200+)
+- **`eh:work-on-plan` skill**: agents must update BOTH the MCP state AND the plan markdown file when completing tasks. Added "ALWAYS UPDATE THE PLAN FILE" and "ALWAYS SELF-VERIFY" rules
+- **Orchestrator role instructions**: updated with tiered model workflow — use recommended models, verify completed work, handle verification failures with auto-escalation
+
 ## [1.2.1] — 2026-04-06
 
 ### Fixed

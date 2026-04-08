@@ -19,6 +19,7 @@ import type { HeartbeatManager } from './heartbeatManager.js';
 import type { WorktreeManager } from './worktreeManager.js';
 import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
+import type { ModelTierManager } from './modelTierManager.js';
 import { exec } from 'child_process';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
@@ -640,6 +641,7 @@ export interface McpServerDeps {
   showBudgetRequest?: (planId: string, currentLimit: number, requestedAmount: number, reason: string) => Promise<boolean>;
   traceStore?: TraceStore;
   workspaceRoot?: string;
+  modelTierManager?: ModelTierManager;
 }
 
 export class McpServer {
@@ -1120,9 +1122,13 @@ export class McpServer {
             });
           });
 
+          const mtm = this.deps.modelTierManager;
           if (result.exitCode === 0) {
             task.verificationStatus = 'passed';
             plan.lastUpdatedAt = Date.now();
+            if (mtm && task.modelTier && task.role && task.complexity) {
+              mtm.recordAttempt(task.modelTier, task.role, task.complexity, true, 0);
+            }
             return { verified: true, exitCode: 0, output: result.output, verificationStatus: 'passed' };
           } else {
             task.verificationStatus = 'failed';
@@ -1134,6 +1140,9 @@ export class McpServer {
               ts: Date.now(),
             });
             plan.lastUpdatedAt = Date.now();
+            if (mtm && task.modelTier && task.role && task.complexity) {
+              mtm.recordAttempt(task.modelTier, task.role, task.complexity, false, 0);
+            }
             return { verified: false, exitCode: result.exitCode, output: result.output, verificationStatus: 'failed' };
           }
         } catch (err) {
@@ -1152,12 +1161,28 @@ export class McpServer {
         if (!result.success) {
           return { retried: false, error: result.error };
         }
+
+        // Escalate model tier if ModelTierManager is available
+        const task = result.task!;
+        let escalatedModel: string | null = null;
+        const mtm = this.deps.modelTierManager;
+        if (mtm && task.modelTier) {
+          const nextTier = mtm.getNextTier(task.modelTier);
+          if (nextTier) {
+            task.modelTier = nextTier;
+            escalatedModel = nextTier;
+          }
+        }
+        // Reset verification status for the retried task
+        task.verificationStatus = null;
+
         return {
           retried: true,
           plan_id: result.planId,
-          task: { id: result.task!.id, title: result.task!.title, status: result.task!.status, retryCount: result.task!.retryCount },
+          task: { id: task.id, title: task.title, status: task.status, retryCount: task.retryCount, modelTier: task.modelTier },
           uncascaded: result.uncascaded,
           retryAfterMs: result.retryAfterMs,
+          escalatedModel,
         };
       }
 

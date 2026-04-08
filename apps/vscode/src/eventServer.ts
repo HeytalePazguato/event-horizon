@@ -51,6 +51,7 @@ import { HeartbeatManager } from './heartbeatManager.js';
 import { WorktreeManager } from './worktreeManager.js';
 import { BudgetManager } from './budgetManager.js';
 import { TraceStore } from './traceStore.js';
+import { ModelTierManager } from './modelTierManager.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -65,6 +66,7 @@ export const heartbeatManager = new HeartbeatManager();
 export const worktreeManager = new WorktreeManager();
 export const budgetManager = new BudgetManager();
 export const traceStore = new TraceStore();
+export const modelTierManager = new ModelTierManager();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -101,6 +103,7 @@ export function initMcpServer(deps: {
     budgetManager,
     traceStore,
     workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    modelTierManager,
   });
 }
 

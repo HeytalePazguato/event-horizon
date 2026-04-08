@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -125,6 +125,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
   if (savedProfiles) agentProfiler.restore(savedProfiles);
+
+  // Restore model tier stats from globalState
+  const savedModelTiers = context.globalState.get<ReturnType<typeof modelTierManager.serialize>>('modelTierStats');
+  if (savedModelTiers) modelTierManager.restore(savedModelTiers);
 
   // Restore shared knowledge from globalState
   const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
@@ -273,6 +277,7 @@ export function activate(context: vscode.ExtensionContext): void {
   planBoardManager.onChange((_boards, changedPlanId) => {
     // Persist all plans to globalState
     void context.globalState.update('planBoards', planBoardManager.serialize());
+    void context.globalState.update('modelTierStats', modelTierManager.serialize());
 
     // Write back checkbox status for the changed plan
     if (changedPlanId) {

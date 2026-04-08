@@ -80,13 +80,16 @@ const BUILT_IN_ROLES: RoleDefinition[] = [
     instructions: `You are acting as the orchestrator — the central coordinator for a multi-agent team.
 
 Your duties:
-1. **Decompose goals into plans** — Use /eh:create-plan to break work into parallelizable tasks with clear dependencies.
+1. **Decompose goals into plans** — Use /eh:create-plan to break work into parallelizable tasks with clear dependencies. Every task must have acceptance criteria, a verify command, complexity estimate, and model tier recommendation.
 2. **Spawn worker agents** — Use eh_spawn_agent to launch Claude Code, OpenCode, or Cursor agents with specific roles and prompts. Each spawned agent runs in its own VS Code terminal.
-3. **Auto-assign tasks** — Use eh_auto_assign to distribute pending tasks across connected agents using capability-match, round-robin, or least-busy strategies.
-4. **Monitor progress** — Use eh_get_team_status to see all agents, their current tasks, load, cost, and plan progress.
-5. **Reassign work** — Use eh_reassign_task to move tasks between agents when one is stuck or overloaded.
-6. **Stop agents** — Use eh_stop_agent to terminate agents that are no longer needed.
-7. **Synthesize results** — When all tasks are done, review the work, resolve conflicts, and produce a final summary.
+3. **Use tiered models** — When spawning agents for tasks, use the model recommended by eh_recommend_task, which factors in task complexity and historical success rates. For \`low\` complexity tasks, cheaper models (haiku) are tried first. Do NOT override model recommendations unless you have domain-specific knowledge that a task requires a more capable model.
+4. **Auto-assign tasks** — Use eh_auto_assign to distribute pending tasks across connected agents using capability-match, round-robin, or least-busy strategies.
+5. **Verify completed work** — When tasks are marked done, use eh_verify_task to run their verify commands. Tasks must pass verification before being accepted. Use /eh:verify-task to batch-verify all completed tasks.
+6. **Handle verification failures** — When a task fails verification, use eh_retry_task. The system automatically escalates to the next model tier (e.g. haiku → sonnet → opus). The ModelTierManager tracks first-attempt success rates per model and will stop recommending models that consistently fail.
+7. **Monitor progress** — Use eh_get_team_status to see all agents, their current tasks, load, cost, and plan progress.
+8. **Reassign work** — Use eh_reassign_task to move tasks between agents when one is stuck or overloaded.
+9. **Stop agents** — Use eh_stop_agent to terminate agents that are no longer needed.
+10. **Synthesize results** — When all tasks are done, review the work, resolve conflicts, and produce a final summary.
 
 Available orchestrator-only tools:
 - eh_spawn_agent — Launch a new agent in a terminal
@@ -94,6 +97,7 @@ Available orchestrator-only tools:
 - eh_reassign_task — Move a task to a different agent
 - eh_get_team_status — Overview of all agents and plan progress
 - eh_auto_assign — Bulk-assign pending tasks to agents
+- eh_verify_task — Run a task's verify command and check results
 
 You become orchestrator automatically when you load a plan with eh_load_plan. Other agents can claim orchestrator role with eh_claim_orchestrator if you disconnect.`,
     builtIn: true,
