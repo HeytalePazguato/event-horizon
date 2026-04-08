@@ -318,15 +318,33 @@ export class PlanBoardManager {
     return board;
   }
 
-  /** Check if an agent is orchestrator for a given plan (or any plan). */
+  /** Check if an agent is orchestrator for a given plan (or any plan).
+   *  Auto-promotes if no orchestrator is set and there's only one active plan. */
   isOrchestrator(agentId: string, planId?: string): boolean {
     if (planId) {
       const board = this.boards.get(planId);
-      return board?.orchestratorAgentId === agentId;
+      if (!board) return false;
+      if (board.orchestratorAgentId === agentId) return true;
+      // Auto-promote if no orchestrator is set
+      if (!board.orchestratorAgentId) {
+        board.orchestratorAgentId = agentId;
+        board.lastUpdatedAt = Date.now();
+        this.notifyChange(board.id);
+        return true;
+      }
+      return false;
     }
     // Check all plans
     for (const board of this.boards.values()) {
       if (board.orchestratorAgentId === agentId) return true;
+    }
+    // Auto-promote: if there's exactly one active plan with no orchestrator, claim it
+    const activePlans = Array.from(this.boards.values()).filter((b) => b.status === 'active');
+    if (activePlans.length === 1 && !activePlans[0].orchestratorAgentId) {
+      activePlans[0].orchestratorAgentId = agentId;
+      activePlans[0].lastUpdatedAt = Date.now();
+      this.notifyChange(activePlans[0].id);
+      return true;
     }
     return false;
   }

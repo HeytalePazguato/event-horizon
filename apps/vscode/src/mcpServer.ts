@@ -1359,7 +1359,10 @@ export class McpServer {
       case 'eh_spawn_agent': {
         const agentId = args.agent_id as string;
         if (!planBoardManager.isOrchestrator(agentId)) {
-          return { error: 'Only the orchestrator can spawn agents. Use eh_claim_orchestrator first.' };
+          // Include diagnostic info to help debug orchestrator mismatches
+          const activePlan = planBoardManager.getPlan();
+          const orchId = activePlan?.orchestratorAgentId ?? '(no plan loaded)';
+          return { error: `Only the orchestrator can spawn agents. Your agent_id="${agentId}" but the orchestrator is "${orchId}". Use eh_claim_orchestrator first, then use the SAME agent_id in all subsequent calls.` };
         }
         const { spawnRegistry } = this.deps;
         if (!spawnRegistry) {
