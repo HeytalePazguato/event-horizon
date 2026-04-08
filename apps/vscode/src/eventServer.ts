@@ -51,6 +51,8 @@ import { HeartbeatManager } from './heartbeatManager.js';
 import { WorktreeManager } from './worktreeManager.js';
 import { BudgetManager } from './budgetManager.js';
 import { TraceStore } from './traceStore.js';
+import { ModelTierManager } from './modelTierManager.js';
+import { TokenAnalyzer } from './tokenAnalyzer.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -65,6 +67,8 @@ export const heartbeatManager = new HeartbeatManager();
 export const worktreeManager = new WorktreeManager();
 export const budgetManager = new BudgetManager();
 export const traceStore = new TraceStore();
+export const modelTierManager = new ModelTierManager();
+export const tokenAnalyzer = new TokenAnalyzer();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -100,6 +104,9 @@ export function initMcpServer(deps: {
     worktreeManager,
     budgetManager,
     traceStore,
+    workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    modelTierManager,
+    tokenAnalyzer,
   });
 }
 
@@ -377,12 +384,19 @@ function tryListenOnPort(srv: http.Server, port: number): Promise<number> {
   });
 }
 
+/** Set a pre-existing auth token (restored from globalState). */
+export function setAuthToken(token: string): void {
+  authToken = token;
+}
+
 export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT): Promise<number> {
   callbacks = cbs;
   if (server) return port;
 
-  // Generate per-session auth token
-  authToken = crypto.randomBytes(24).toString('hex');
+  // Use existing token if set (restored from globalState), otherwise generate new one
+  if (!authToken) {
+    authToken = crypto.randomBytes(24).toString('hex');
+  }
 
   const srv = http.createServer(handleRequest);
   srv.on('connection', (socket) => {

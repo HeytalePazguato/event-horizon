@@ -2,6 +2,27 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.3.0] — 2026-04-07
+
+### Added — Token Optimization & Quality Assurance
+- **Acceptance criteria in plans**: tasks now support `**Accept**:` (criteria), `**Verify**:` (command), `<!-- complexity: low|medium|high -->`, and `<!-- model: haiku|sonnet|opus -->` metadata. Parsed automatically from plan markdown and stored in PlanTask
+- **Kanban complexity badges**: colored dots on task cards — green (low), amber (medium), red (high) — plus model tier label, verification status icon (checkmark/X/dash), and collapsible acceptance criteria section
+- **`eh_verify_task` MCP tool**: executes a task's verify command with 60s timeout, updates verificationStatus (passed/failed), returns exit code and truncated output. Auto-passes tasks without verify commands
+- **`eh:verify-task` skill**: batch-verifies all completed tasks, handles pass/fail/flaky decisions, broadcasts summary to all agents
+- **ModelTierManager**: tiered model selection that recommends the cheapest viable model per task complexity + role. Tracks first-attempt success rates, drops underperformers below threshold (default 30%), persists stats across sessions
+- **Model escalation on retry**: `eh_retry_task` auto-escalates to the next model tier (haiku → sonnet → opus) on verification failure. Success/failure stats feed back into recommendations
+- **Self-verification in `eh:work-on-plan`**: agents must check acceptance criteria and run verify commands before marking tasks done, with up to 2 self-fix attempts on failure
+- **TokenAnalyzer**: processes agent events to produce cost insights — cache hit ratios, compaction frequency, duplicate file reads, cost anomalies, and actionable recommendations. Insights forwarded to webview every 30 seconds
+- **`eh_get_cost_insights` MCP tool**: returns cache efficiency, compaction pressure, duplicate reads, anomalies, model efficiency stats, and text recommendations. Orchestrators can use this for cost-aware decisions
+- **Cost Insights panel**: new "Costs" tab in Operations view with 6 sections — Recommendations, Cache Efficiency (per-agent bar charts), Context Pressure (compaction frequency), Duplicate Reads (expandable with "Add to Shared Knowledge" button), Cost Anomalies, and Model Efficiency (success rate + avg cost grid). Updates live every 30 seconds
+- **Context Optimizer role**: 8th built-in role with `eh:optimize-context` skill. Analyzes instruction files (CLAUDE.md, .cursorrules, copilot-instructions.md), identifies redundancy, extracts path-scoped rules and on-demand skills, reports before/after token savings. Always creates backups
+- **Context optimization trigger**: on activation and file save, scans instruction files and shows a notification when they exceed the configurable token threshold (default 3000 tokens). "Optimize" button launches the context optimizer in a terminal. New `eventHorizon.contextOptimizer.threshold` setting
+
+### Improved
+- **`eh:create-plan` skill**: now requires Accept, Verify, complexity, and model metadata per task. Includes acceptance criteria clarification step and scope heuristic (low <50 lines, medium 50-200, high 200+)
+- **`eh:work-on-plan` skill**: agents must update BOTH the MCP state AND the plan markdown file when completing tasks. Added "ALWAYS UPDATE THE PLAN FILE" and "ALWAYS SELF-VERIFY" rules
+- **Orchestrator role instructions**: updated with tiered model workflow — use recommended models, verify completed work, handle verification failures with auto-escalation
+
 ## [1.2.1] — 2026-04-06
 
 ### Fixed

@@ -99,6 +99,55 @@ describe('parsePlanMarkdown', () => {
     expect(plan.tasks[0].title).toBe('Task title');
   });
 
+  it('parses acceptance criteria from **Accept** lines', () => {
+    const md = `# Plan
+- [ ] 1.1 Build auth module
+  - **Accept**: All existing tests pass and new auth routes respond with correct status codes.
+  - **Verify**: \`pnpm test -- --grep "auth"\``;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    expect(plan.tasks[0].acceptanceCriteria).toBe('All existing tests pass and new auth routes respond with correct status codes.');
+    expect(plan.tasks[0].verifyCommand).toBe('pnpm test -- --grep "auth"');
+  });
+
+  it('parses complexity and modelTier from HTML comments', () => {
+    const md = `# Plan
+- [ ] 1.1 Simple fix
+  <!-- complexity: low -->
+  <!-- model: haiku -->`;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    expect(plan.tasks[0].complexity).toBe('low');
+    expect(plan.tasks[0].modelTier).toBe('haiku');
+  });
+
+  it('defaults new fields to null when not present', () => {
+    const md = `# Plan
+- [ ] 1.1 Basic task`;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    expect(plan.tasks[0].acceptanceCriteria).toBeNull();
+    expect(plan.tasks[0].verifyCommand).toBeNull();
+    expect(plan.tasks[0].complexity).toBeNull();
+    expect(plan.tasks[0].modelTier).toBeNull();
+    expect(plan.tasks[0].verificationStatus).toBeNull();
+  });
+
+  it('parses all new fields together', () => {
+    const md = `# Plan
+- [ ] 2.1 Implement feature [role: implementer]
+  - depends: 1.1
+  - **Accept**: Feature works end-to-end with no regressions.
+  - **Verify**: \`pnpm test && pnpm build\`
+  <!-- complexity: high -->
+  <!-- model: opus -->`;
+    const plan = parsePlanMarkdown(md, 'plan.md');
+    const task = plan.tasks[0];
+    expect(task.role).toBe('implementer');
+    expect(task.blockedBy).toEqual(['1.1']);
+    expect(task.acceptanceCriteria).toBe('Feature works end-to-end with no regressions.');
+    expect(task.verifyCommand).toBe('pnpm test && pnpm build');
+    expect(task.complexity).toBe('high');
+    expect(task.modelTier).toBe('opus');
+  });
+
   it('parses a realistic plan with sections', () => {
     const md = `# Event Horizon v2.0
 
@@ -337,7 +386,7 @@ describe('Plan MCP tools', () => {
     expect(names).toContain('eh_get_plan');
     expect(names).toContain('eh_claim_task');
     expect(names).toContain('eh_update_task');
-    expect(result.tools).toHaveLength(39); // 6 lock + 7 plan + 2 messaging + 4 roles + 6 phase1 + 8 phase2 + 5 phase3 + 1 phase4 (traces)
+    expect(result.tools).toHaveLength(41); // 6 lock + 7 plan + 1 verify + 2 messaging + 4 roles + 6 phase1 + 8 phase2 + 5 phase3 + 1 phase4 (traces)
   });
 
   describe('eh_load_plan', () => {
@@ -453,6 +502,42 @@ describe('Plan MCP tools', () => {
       const res = await callTool('eh_update_task', { task_id: '1.1', agent_id: 'a2', status: 'done' });
       const parsed = parseResult(res) as Record<string, unknown>;
       expect(parsed).toMatchObject({ updated: false });
+    });
+  });
+
+  describe('eh_verify_task', () => {
+    const verifyPlan = `# Verify Plan
+- [ ] 1.1 Task with verify
+  - **Accept**: Output says hello
+  - **Verify**: \`echo hello\`
+- [ ] 1.2 Task without verify`;
+
+    beforeEach(async () => {
+      await callTool('eh_load_plan', { agent_id: 'a1', content: verifyPlan });
+      await callTool('eh_claim_task', { task_id: '1.1', agent_id: 'a1' });
+      await callTool('eh_claim_task', { task_id: '1.2', agent_id: 'a1' });
+    });
+
+    it('rejects verification of non-done task', async () => {
+      const res = await callTool('eh_verify_task', { task_id: '1.1', agent_id: 'a1' });
+      const parsed = parseResult(res) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ verified: false });
+      expect((parsed as { error: string }).error).toContain('not done');
+    });
+
+    it('auto-passes task with no verify command', async () => {
+      await callTool('eh_update_task', { task_id: '1.2', agent_id: 'a1', status: 'done' });
+      const res = await callTool('eh_verify_task', { task_id: '1.2', agent_id: 'a1' });
+      const parsed = parseResult(res) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ verified: true, verificationStatus: 'passed' });
+    });
+
+    it('runs verify command and returns result', async () => {
+      await callTool('eh_update_task', { task_id: '1.1', agent_id: 'a1', status: 'done' });
+      const res = await callTool('eh_verify_task', { task_id: '1.1', agent_id: 'a1' });
+      const parsed = parseResult(res) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ verified: true, exitCode: 0, verificationStatus: 'passed' });
+      expect((parsed as { output: string }).output).toContain('hello');
     });
   });
 

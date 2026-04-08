@@ -19,6 +19,9 @@ import type { HeartbeatManager } from './heartbeatManager.js';
 import type { WorktreeManager } from './worktreeManager.js';
 import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
+import type { ModelTierManager } from './modelTierManager.js';
+import type { TokenAnalyzer } from './tokenAnalyzer.js';
+import { exec } from 'child_process';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -292,6 +295,19 @@ export const MCP_TOOLS: McpToolDef[] = [
   // ── Phase 1: Retry, recommendations, shared knowledge ─────────────────────
 
   {
+    name: 'eh_verify_task',
+    description: 'Run the verify command for a completed task and update its verification status. Returns exit code, output, and pass/fail result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        task_id: { type: 'string', description: 'Task ID to verify (must be in done status)' },
+        plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+      },
+      required: ['agent_id', 'task_id'],
+    },
+  },
+  {
     name: 'eh_retry_task',
     description: 'Retry a failed task: resets it to pending, increments retry count, and un-cascades any dependents that were failed due to this task.',
     inputSchema: {
@@ -306,13 +322,13 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_recommend_task',
-    description: 'Get the best available task for you to work on, scored by role match, historical performance, current load, and dependency priority.',
+    description: 'Get the best available task for an agent to work on, scored by role match, historical performance, current load, and dependency priority. The agent_type must be a runtime type (claude-code, opencode, copilot, cursor), NOT a role name.',
     inputSchema: {
       type: 'object',
       properties: {
-        agent_id: { type: 'string', description: 'Your agent/session ID' },
-        agent_name: { type: 'string', description: 'Your display name' },
-        agent_type: { type: 'string', description: 'Your agent type (claude-code, opencode, copilot, etc.)' },
+        agent_id: { type: 'string', description: 'The agent ID to get recommendations for' },
+        agent_name: { type: 'string', description: 'Agent display name' },
+        agent_type: { type: 'string', description: 'REQUIRED. Agent runtime type: claude-code, opencode, copilot, or cursor. NOT a role name like "implementer".' },
         plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
       },
       required: ['agent_id', 'agent_type'],
@@ -390,18 +406,18 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_spawn_agent',
-    description: 'Spawn a new AI agent in a VS Code terminal. Orchestrator-only tool.',
+    description: 'Spawn a new AI agent in a VS Code terminal. Orchestrator-only. agent_type must be "claude-code", "opencode", or "cursor" (NOT a role name). prompt is REQUIRED — it must be a detailed instruction telling the agent what to do (e.g. "Work on task 1.1: implement the auth module. Run /eh:work-on-plan to claim and execute it.").',
     inputSchema: {
       type: 'object',
       properties: {
-        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
-        agent_type: { type: 'string', enum: ['claude-code', 'opencode', 'cursor'], description: 'Type of agent to spawn' },
-        role: { type: 'string', description: 'Role to assign (e.g. implementer, tester)' },
-        prompt: { type: 'string', description: 'Initial prompt for the agent' },
+        agent_id: { type: 'string', description: 'YOUR agent/session ID (the orchestrator calling this tool)' },
+        agent_type: { type: 'string', enum: ['claude-code', 'opencode', 'cursor'], description: 'Runtime to spawn. Must be one of: claude-code, opencode, cursor. This is the CLI tool, NOT a role name.' },
+        role: { type: 'string', description: 'Role to assign (e.g. implementer, tester, reviewer). Determines instructions and skills sent to the agent.' },
+        prompt: { type: 'string', description: 'REQUIRED. Detailed instruction for the agent. Must tell it what task to work on and how. Example: "You are assigned task 1.1 (Build auth module). Run /eh:work-on-plan to claim and implement it. The plan is already loaded."' },
         cwd: { type: 'string', description: 'Working directory (defaults to workspace root)' },
-        model: { type: 'string', description: 'Model to use (agent-specific, e.g. claude-sonnet-4-20250514)' },
-        plan_id: { type: 'string', description: 'Plan ID to associate with spawned agent' },
-        task_id: { type: 'string', description: 'Task ID for the spawned agent to work on' },
+        model: { type: 'string', description: 'Model override (e.g. claude-sonnet-4-20250514). Optional — defaults to the CLI default.' },
+        plan_id: { type: 'string', description: 'Plan ID to associate with the spawned agent' },
+        task_id: { type: 'string', description: 'Task ID the agent should work on' },
       },
       required: ['agent_id', 'agent_type', 'prompt'],
     },
@@ -472,12 +488,12 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_sync_skills',
-    description: 'Sync Event Horizon bundled skills to a target agent type skill directory. Orchestrator-only tool.',
+    description: 'Manually sync Event Horizon skills to an agent type skill directory. Rarely needed — skills sync automatically when spawning agents. Only call this if you suspect skills are out of date.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
-        target_agent_type: { type: 'string', description: 'Agent type to sync skills for (claude-code, opencode)' },
+        target_agent_type: { type: 'string', description: 'REQUIRED. Agent runtime type to sync skills for: claude-code, opencode, or cursor.' },
       },
       required: ['agent_id', 'target_agent_type'],
     },
@@ -568,6 +584,20 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id'],
     },
   },
+
+  // ── Cost insights ─────────────────────────────────────────────────────────
+
+  {
+    name: 'eh_get_cost_insights',
+    description: 'Get token usage insights: cache efficiency, compaction pressure, duplicate reads, cost anomalies, and actionable recommendations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['agent_id'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -625,6 +655,9 @@ export interface McpServerDeps {
   budgetManager?: BudgetManager;
   showBudgetRequest?: (planId: string, currentLimit: number, requestedAmount: number, reason: string) => Promise<boolean>;
   traceStore?: TraceStore;
+  workspaceRoot?: string;
+  modelTierManager?: ModelTierManager;
+  tokenAnalyzer?: TokenAnalyzer;
 }
 
 export class McpServer {
@@ -837,6 +870,11 @@ export class McpServer {
             assigneeId: t.assignee,
             blockedBy: t.blockedBy,
             notes: t.notes,
+            acceptanceCriteria: t.acceptanceCriteria ?? null,
+            verifyCommand: t.verifyCommand ?? null,
+            complexity: t.complexity ?? null,
+            modelTier: t.modelTier ?? null,
+            verificationStatus: t.verificationStatus ?? null,
           })),
         };
       }
@@ -1063,6 +1101,73 @@ export class McpServer {
         return { recommendations: agentProfiler.recommendForRole(roleId) };
       }
 
+      // ── Verification ──────────────────────────────────────────────────────
+
+      case 'eh_verify_task': {
+        const taskId = args.task_id as string;
+        const planId = args.plan_id as string | undefined;
+        const plan = planBoardManager.getPlan(planId);
+        if (!plan) {
+          return { verified: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+        }
+        const task = plan.tasks.find((t) => t.id === taskId);
+        if (!task) {
+          return { verified: false, error: `Task not found: ${taskId}` };
+        }
+        if (task.status !== 'done') {
+          return { verified: false, error: `Task is not done (status: ${task.status}). Only done tasks can be verified.` };
+        }
+        if (!task.verifyCommand) {
+          // No verify command — mark as passed by default
+          task.verificationStatus = 'passed';
+          plan.lastUpdatedAt = Date.now();
+          return { verified: true, exitCode: 0, output: 'No verify command defined — auto-passed.', verificationStatus: 'passed' };
+        }
+
+        // Execute verify command
+        const cwd = this.deps.workspaceRoot ?? process.cwd();
+        try {
+          const result = await new Promise<{ exitCode: number; output: string }>((resolve) => {
+            exec(task.verifyCommand!, { cwd, timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+              const output = ((stdout ?? '') + (stderr ? `\n--- stderr ---\n${stderr}` : '')).slice(0, 2000);
+              if (error) {
+                resolve({ exitCode: error.code ?? 1, output });
+              } else {
+                resolve({ exitCode: 0, output });
+              }
+            });
+          });
+
+          const mtm = this.deps.modelTierManager;
+          if (result.exitCode === 0) {
+            task.verificationStatus = 'passed';
+            plan.lastUpdatedAt = Date.now();
+            if (mtm && task.modelTier && task.role && task.complexity) {
+              mtm.recordAttempt(task.modelTier, task.role, task.complexity, true, 0);
+            }
+            return { verified: true, exitCode: 0, output: result.output, verificationStatus: 'passed' };
+          } else {
+            task.verificationStatus = 'failed';
+            const agentId = args.agent_id as string;
+            task.notes.push({
+              agentId,
+              agentName: agentId,
+              text: `Verification failed (exit ${result.exitCode}): ${result.output.slice(0, 500)}`,
+              ts: Date.now(),
+            });
+            plan.lastUpdatedAt = Date.now();
+            if (mtm && task.modelTier && task.role && task.complexity) {
+              mtm.recordAttempt(task.modelTier, task.role, task.complexity, false, 0);
+            }
+            return { verified: false, exitCode: result.exitCode, output: result.output, verificationStatus: 'failed' };
+          }
+        } catch (err) {
+          task.verificationStatus = 'failed';
+          plan.lastUpdatedAt = Date.now();
+          return { verified: false, exitCode: -1, output: `Execution error: ${String(err)}`.slice(0, 2000), verificationStatus: 'failed' };
+        }
+      }
+
       // ── Phase 1: Retry, recommendations, shared knowledge ──────────────────
 
       case 'eh_retry_task': {
@@ -1072,12 +1177,28 @@ export class McpServer {
         if (!result.success) {
           return { retried: false, error: result.error };
         }
+
+        // Escalate model tier if ModelTierManager is available
+        const task = result.task!;
+        let escalatedModel: string | null = null;
+        const mtm = this.deps.modelTierManager;
+        if (mtm && task.modelTier) {
+          const nextTier = mtm.getNextTier(task.modelTier);
+          if (nextTier) {
+            task.modelTier = nextTier;
+            escalatedModel = nextTier;
+          }
+        }
+        // Reset verification status for the retried task
+        task.verificationStatus = null;
+
         return {
           retried: true,
           plan_id: result.planId,
-          task: { id: result.task!.id, title: result.task!.title, status: result.task!.status, retryCount: result.task!.retryCount },
+          task: { id: task.id, title: task.title, status: task.status, retryCount: task.retryCount, modelTier: task.modelTier },
           uncascaded: result.uncascaded,
           retryAfterMs: result.retryAfterMs,
+          escalatedModel,
         };
       }
 
@@ -1238,7 +1359,10 @@ export class McpServer {
       case 'eh_spawn_agent': {
         const agentId = args.agent_id as string;
         if (!planBoardManager.isOrchestrator(agentId)) {
-          return { error: 'Only the orchestrator can spawn agents. Use eh_claim_orchestrator first.' };
+          // Include diagnostic info to help debug orchestrator mismatches
+          const activePlan = planBoardManager.getPlan();
+          const orchId = activePlan?.orchestratorAgentId ?? '(no plan loaded)';
+          return { error: `Only the orchestrator can spawn agents. Your agent_id="${agentId}" but the orchestrator is "${orchId}". Use eh_claim_orchestrator first, then use the SAME agent_id in all subsequent calls.` };
         }
         const { spawnRegistry } = this.deps;
         if (!spawnRegistry) {
@@ -1593,6 +1717,33 @@ export class McpServer {
         const spans = traceStore.getSpans(filterAgentId, spanType, limit);
         const aggregate = traceStore.getAggregate(filterAgentId);
         return { spans, aggregate, totalSpans: traceStore.size, openSpans: traceStore.openCount };
+      }
+
+      // ── Cost insights ──────────────────────────────────────────────────────
+
+      case 'eh_get_cost_insights': {
+        const { tokenAnalyzer, modelTierManager: mtm } = this.deps;
+        if (!tokenAnalyzer) return { error: 'Token analyzer not available' };
+        const insights = tokenAnalyzer.getInsights();
+        // Enrich with model efficiency from ModelTierManager
+        if (mtm) {
+          const stats = mtm.getStats();
+          for (const [model, roles] of Object.entries(stats)) {
+            let totalAttempts = 0, totalSuccesses = 0, totalCost = 0;
+            for (const role of Object.values(roles)) {
+              totalAttempts += role.attempts;
+              totalSuccesses += role.successes;
+              totalCost += role.avgCostUsd * role.attempts;
+            }
+            insights.modelEfficiency[model] = {
+              successRate: totalAttempts > 0 ? totalSuccesses / totalAttempts : 0,
+              avgCost: totalAttempts > 0 ? totalCost / totalAttempts : 0,
+              attempts: totalAttempts,
+            };
+          }
+        }
+        const recommendations = tokenAnalyzer.getRecommendations();
+        return { insights, recommendations };
       }
 
       default:

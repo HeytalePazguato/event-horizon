@@ -75,9 +75,17 @@ When Agent A writes to a file, Agent B is hard-blocked from accessing it. Locks 
 
 Per-plan budgets with warning at 80% and hard stop at 100%. Per-agent cost breakdowns. Agents can check remaining budget before expensive operations.
 
+### Token Optimization & Cost Insights
+
+- **Acceptance criteria** — every task gets testable acceptance criteria and a verify command, parsed from plan markdown
+- **Task verification** — `eh_verify_task` runs verify commands, updates pass/fail status, feeds into model efficiency tracking
+- **Tiered model selection** — cheapest viable model tried first per task complexity. Failed verification auto-escalates to the next tier (haiku → sonnet → opus). Success rates tracked per model per role
+- **Cost Insights panel** — cache efficiency, compaction pressure, duplicate file reads, cost anomalies, model efficiency comparisons, and actionable recommendations
+- **Context Optimizer** — analyzes instruction files (CLAUDE.md, .cursorrules, copilot-instructions.md), identifies redundancy, suggests splitting into path-scoped rules and on-demand skills. Triggered when files exceed configurable token threshold
+
 ### Agent Roles & Profiling
 
-Six built-in roles (researcher, planner, implementer, reviewer, tester, debugger) plus custom roles. The profiler tracks success rate, speed, and cost per agent type per role. The recommendation engine ranks agent types by suitability for each role based on real data.
+Eight built-in roles (researcher, planner, implementer, reviewer, tester, debugger, orchestrator, context-optimizer) plus custom roles. The profiler tracks success rate, speed, and cost per agent type per role. The recommendation engine ranks agent types by suitability for each role based on real data.
 
 ### Session Resume
 
@@ -112,22 +120,25 @@ Full-screen dashboard (`Ctrl+Shift+E O`) with:
 - **Plan** — Kanban board with progress bar and dependency annotations
 - **Dependencies** — DAG visualization with critical path highlighting
 - **Roles** — role definitions, assignments, per-role performance profiles
+- **Costs** — cache efficiency, compaction pressure, duplicate reads, cost anomalies, model efficiency
 - **Knowledge** — workspace and plan knowledge entries with real-time updates
 
-### 30+ MCP Coordination Tools
+### 40+ MCP Coordination Tools
 
 All agents access worker-level tools via the MCP server (auto-registered on connect). Orchestrators gain elevated tools for spawning agents, assigning tasks, managing worktrees, and controlling budgets.
 
-`eh_load_plan` `eh_get_plan` `eh_list_plans` `eh_claim_task` `eh_update_task` `eh_retry_task` `eh_recommend_task` `eh_archive_plan` `eh_delete_plan` `eh_send_message` `eh_get_messages` `eh_check_lock` `eh_acquire_lock` `eh_release_lock` `eh_wait_for_unlock` `eh_list_agents` `eh_file_activity` `eh_write_shared` `eh_read_shared` `eh_get_shared_summary` `eh_delete_shared` `eh_list_roles` `eh_assign_role` `eh_get_agent_profile` `eh_recommend_agent` `eh_heartbeat` `eh_get_budget` `eh_get_session` `eh_spawn_agent` `eh_stop_agent` `eh_reassign_task` `eh_get_team_status` `eh_auto_assign` `eh_create_worktree` `eh_remove_worktree` `eh_request_budget_increase` `eh_sync_skills`
+`eh_load_plan` `eh_get_plan` `eh_list_plans` `eh_claim_task` `eh_update_task` `eh_retry_task` `eh_recommend_task` `eh_verify_task` `eh_archive_plan` `eh_delete_plan` `eh_send_message` `eh_get_messages` `eh_check_lock` `eh_acquire_lock` `eh_release_lock` `eh_wait_for_unlock` `eh_list_agents` `eh_file_activity` `eh_write_shared` `eh_read_shared` `eh_get_shared_summary` `eh_delete_shared` `eh_list_roles` `eh_assign_role` `eh_get_agent_profile` `eh_recommend_agent` `eh_heartbeat` `eh_get_budget` `eh_get_session` `eh_get_cost_insights` `eh_spawn_agent` `eh_stop_agent` `eh_reassign_task` `eh_get_team_status` `eh_auto_assign` `eh_create_worktree` `eh_remove_worktree` `eh_request_budget_increase` `eh_sync_skills`
 
 ### Bundled Skills
 
-Seven coordination skills ship with the extension:
+Nine coordination skills ship with the extension:
 
 | Skill | Role | What it does |
 |-------|------|-------------|
-| `/eh:create-plan` | Planner | Generate a plan with parallel tracks, dependencies, and verify steps |
-| `/eh:work-on-plan` | Implementer | Claim tasks, implement, mark progress, broadcast breaking changes |
+| `/eh:create-plan` | Planner | Generate a plan with parallel tracks, dependencies, acceptance criteria, and verify steps |
+| `/eh:work-on-plan` | Implementer | Claim tasks, implement, self-verify against acceptance criteria, mark progress |
+| `/eh:verify-task` | Any | Batch-verify completed tasks by running their verify commands |
+| `/eh:optimize-context` | Context Optimizer | Analyze instruction files, reduce token costs by splitting rules and extracting skills |
 | `/eh:plan-status` | Any | View progress, blocked tasks, active agents, available work |
 | `/eh:research` | Researcher | Explore codebase, gather context, output structured findings |
 | `/eh:review` | Reviewer | Code review with severity levels, run tests if available |
@@ -146,8 +157,8 @@ Seven coordination skills ship with the extension:
 |-------|:-----:|:---------:|:------------:|:---------:|:--------------:|
 | **Claude Code** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **OpenCode** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **GitHub Copilot** | ✅ | ✅ | — | — | Partial |
-| **Cursor** | ✅ | ✅ | — | ✅ | — |
+| **GitHub Copilot** | ✅ | ✅ | — | — | ✅ |
+| **Cursor** | ✅ | ✅ | — | ✅ | ✅ |
 
 One-click connect for Claude Code, OpenCode, and Copilot. MCP server auto-registered in each agent's config. Hooks auto-updated on every extension activation.
 
@@ -207,7 +218,7 @@ See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for full guidelines.
 
 ```bash
 pnpm install && pnpm build    # build all packages
-pnpm test                      # run tests (500+)
+pnpm test                      # run tests (200+)
 pnpm dev                       # watch mode
 ```
 

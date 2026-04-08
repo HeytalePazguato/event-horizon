@@ -24,3 +24,5 @@ export type { Achievement } from './achievements/index.js';
 export { TracesPanel } from './panels/TracesPanel.js';
 export type { TraceSpanView, TracesPanelProps } from './panels/TracesPanel.js';
 export type { OperationsViewProps } from './OperationsView.js';
+export { CostInsightsPanel } from './panels/CostInsightsPanel.js';
+export type { CostInsightsData, CostInsightsPanelProps } from './panels/CostInsightsPanel.js';

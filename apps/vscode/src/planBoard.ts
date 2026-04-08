@@ -21,6 +21,9 @@ export type DependencyFailurePolicy = 'cascade' | 'block' | 'ignore';
 
 export type SchedulingStrategy = 'manual' | 'round-robin' | 'least-busy' | 'capability-match' | 'dependency-first';
 
+export type TaskComplexity = 'low' | 'medium' | 'high';
+export type VerificationStatus = 'pending' | 'passed' | 'failed';
+
 export interface PlanTask {
   id: string;
   title: string;
@@ -36,6 +39,11 @@ export interface PlanTask {
   retryCount: number;
   maxRetries: number;
   failedReason: string | null;
+  acceptanceCriteria: string | null;
+  verifyCommand: string | null;
+  complexity: TaskComplexity | null;
+  modelTier: string | null;
+  verificationStatus: VerificationStatus | null;
 }
 
 export interface PlanBoard {
@@ -143,6 +151,10 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
 
     const blockedBy: string[] = [];
     let description = '';
+    let acceptanceCriteria: string | null = null;
+    let verifyCommand: string | null = null;
+    let complexity: TaskComplexity | null = null;
+    let modelTier: string | null = null;
     for (let j = i + 1; j < lines.length; j++) {
       const nextLine = lines[j];
       if (/^\s*- \[[ xX]\]/.test(nextLine) || /^#{1,3}\s/.test(nextLine)) break;
@@ -151,10 +163,51 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
       if (depMatch) {
         const deps = depMatch[1].split(',').map((d) => d.trim()).filter(Boolean);
         blockedBy.push(...deps);
-      } else {
-        const trimmed = nextLine.trim();
-        if (trimmed && !trimmed.startsWith('-')) {
-          description += (description ? ' ' : '') + trimmed;
+        continue;
+      }
+
+      // Parse acceptance criteria: - **Accept**: ...
+      const acceptMatch = nextLine.match(/^\s+-\s*\*\*Accept\*\*:\s*(.+)/i);
+      if (acceptMatch) {
+        acceptanceCriteria = acceptMatch[1].trim();
+        continue;
+      }
+
+      // Parse verify command: - **Verify**: ...
+      const verifyMatch = nextLine.match(/^\s+-\s*\*\*Verify\*\*:\s*(.+)/i);
+      if (verifyMatch) {
+        verifyCommand = verifyMatch[1].trim().replace(/^`+|`+$/g, '');
+        continue;
+      }
+
+      // Parse complexity from HTML comment: <!-- complexity: low|medium|high -->
+      const complexityMatch = nextLine.match(/<!--\s*complexity:\s*(low|medium|high)\s*-->/i);
+      if (complexityMatch) {
+        complexity = complexityMatch[1].toLowerCase() as TaskComplexity;
+        // Don't continue — the line may also contain description text
+      }
+
+      // Parse model tier from HTML comment: <!-- model: haiku|sonnet|opus|... -->
+      const modelMatch = nextLine.match(/<!--\s*model:\s*(\S+)\s*-->/i);
+      if (modelMatch) {
+        modelTier = modelMatch[1].toLowerCase();
+        // Don't continue — the line may also contain description text
+      }
+
+      const trimmed = nextLine.trim();
+      if (trimmed && !trimmed.startsWith('-')) {
+        // Strip any HTML comments from the line before adding to description
+        let descLine = trimmed;
+        let cs = descLine.indexOf('<!--');
+        while (cs !== -1) {
+          const ce = descLine.indexOf('-->', cs + 4);
+          if (ce === -1) break;
+          descLine = descLine.slice(0, cs) + descLine.slice(ce + 3);
+          cs = descLine.indexOf('<!--');
+        }
+        descLine = descLine.trim();
+        if (descLine) {
+          description += (description ? ' ' : '') + descLine;
         }
       }
     }
@@ -179,6 +232,11 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
       retryCount: 0,
       maxRetries: 0,
       failedReason: null,
+      acceptanceCriteria,
+      verifyCommand,
+      complexity,
+      modelTier,
+      verificationStatus: null,
     });
   }
 
@@ -260,15 +318,33 @@ export class PlanBoardManager {
     return board;
   }
 
-  /** Check if an agent is orchestrator for a given plan (or any plan). */
+  /** Check if an agent is orchestrator for a given plan (or any plan).
+   *  Auto-promotes if no orchestrator is set and there's only one active plan. */
   isOrchestrator(agentId: string, planId?: string): boolean {
     if (planId) {
       const board = this.boards.get(planId);
-      return board?.orchestratorAgentId === agentId;
+      if (!board) return false;
+      if (board.orchestratorAgentId === agentId) return true;
+      // Auto-promote if no orchestrator is set
+      if (!board.orchestratorAgentId) {
+        board.orchestratorAgentId = agentId;
+        board.lastUpdatedAt = Date.now();
+        this.notifyChange(board.id);
+        return true;
+      }
+      return false;
     }
     // Check all plans
     for (const board of this.boards.values()) {
       if (board.orchestratorAgentId === agentId) return true;
+    }
+    // Auto-promote: if there's exactly one active plan with no orchestrator, claim it
+    const activePlans = Array.from(this.boards.values()).filter((b) => b.status === 'active');
+    if (activePlans.length === 1 && !activePlans[0].orchestratorAgentId) {
+      activePlans[0].orchestratorAgentId = agentId;
+      activePlans[0].lastUpdatedAt = Date.now();
+      this.notifyChange(activePlans[0].id);
+      return true;
     }
     return false;
   }

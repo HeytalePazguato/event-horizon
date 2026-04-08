@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -124,7 +124,28 @@ export function activate(context: vscode.ExtensionContext): void {
   if (savedRoles) roleManager.restore(savedRoles);
 
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
-  if (savedProfiles) agentProfiler.restore(savedProfiles);
+  if (savedProfiles) {
+    // Migrate stale records: fix 'unknown' agent types and -1 costs
+    for (const rec of savedProfiles) {
+      if (rec.agentType === 'unknown') {
+        const id = rec.agentId.toLowerCase();
+        if (id.includes('claude')) rec.agentType = 'claude-code';
+        else if (id.includes('opencode') || id.includes('crush')) rec.agentType = 'opencode';
+        else if (id.includes('copilot')) rec.agentType = 'copilot';
+        else if (id.includes('cursor')) rec.agentType = 'cursor';
+      }
+      if (rec.estimatedCostUsd < 0) rec.estimatedCostUsd = 0;
+      if (rec.inputTokens < 0) rec.inputTokens = 0;
+      if (rec.outputTokens < 0) rec.outputTokens = 0;
+    }
+    agentProfiler.restore(savedProfiles);
+    // Persist the cleaned-up data
+    void context.globalState.update('agentProfiles', agentProfiler.serialize());
+  }
+
+  // Restore model tier stats from globalState
+  const savedModelTiers = context.globalState.get<ReturnType<typeof modelTierManager.serialize>>('modelTierStats');
+  if (savedModelTiers) modelTierManager.restore(savedModelTiers);
 
   // Restore shared knowledge from globalState
   const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
@@ -137,31 +158,35 @@ export function activate(context: vscode.ExtensionContext): void {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return;
 
-    // Already seeded? Skip scan entirely.
-    if (sharedKnowledge.read('project-instructions').length > 0) return;
+    // Instruction file basenames to look for
+    const INSTRUCTION_BASENAMES = new Set(['claude.md', 'agents.md', '.cursorrules', 'copilot-instructions.md', '.copilot-instructions.md']);
+    const SKIP_DIRS = new Set(['node_modules', 'dist', 'out', '.git', '.next', 'build', 'coverage', '__pycache__', '.venv', 'venv']);
+    const MAX_DEPTH = 4;
 
-    // Instruction file names to look for (order = priority)
-    const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md', 'copilot-instructions.md', '.copilot-instructions.md'];
-
-    // Build candidate paths: root, .claude/, and one level of subdirs (backend/, frontend/, etc.)
+    // Recursively scan for instruction files
     const candidatePaths: Array<{ filePath: string; label: string }> = [];
-    for (const folder of folders) {
-      const root = folder.uri.fsPath;
-      for (const fname of INSTRUCTION_FILES) {
-        candidatePaths.push({ filePath: path.join(root, fname), label: fname });
-        candidatePaths.push({ filePath: path.join(root, '.claude', fname), label: `.claude/${fname}` });
-      }
-      // Scan immediate subdirectories (backend/, frontend/, packages/*, apps/*, etc.)
+
+    async function scanDir(dir: string, rootPath: string, depth: number): Promise<void> {
+      if (depth > MAX_DEPTH) return;
       try {
-        const entries = await fsp.readdir(root, { withFileTypes: true });
+        const entries = await fsp.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
-          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'out') continue;
-          for (const fname of INSTRUCTION_FILES) {
-            candidatePaths.push({ filePath: path.join(root, entry.name, fname), label: `${entry.name}/${fname}` });
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isFile()) {
+            if (INSTRUCTION_BASENAMES.has(entry.name.toLowerCase())) {
+              const rel = path.relative(rootPath, fullPath).replace(/\\/g, '/');
+              candidatePaths.push({ filePath: fullPath, label: rel });
+            }
+          } else if (entry.isDirectory() && !SKIP_DIRS.has(entry.name)) {
+            // Allow dotdirs like .claude, .github but skip .git
+            await scanDir(fullPath, rootPath, depth + 1);
           }
         }
-      } catch { /* readdir failed — skip */ }
+      } catch { /* permission error or similar — skip */ }
+    }
+
+    for (const folder of folders) {
+      await scanDir(folder.uri.fsPath, folder.uri.fsPath, 0);
     }
 
     // Read all found files and seed knowledge
@@ -257,6 +282,11 @@ export function activate(context: vscode.ExtensionContext): void {
         role: t.role,
         retryCount: t.retryCount ?? 0,
         failedReason: t.failedReason ?? null,
+        acceptanceCriteria: t.acceptanceCriteria ?? null,
+        verifyCommand: t.verifyCommand ?? null,
+        complexity: t.complexity ?? null,
+        modelTier: t.modelTier ?? null,
+        verificationStatus: t.verificationStatus ?? null,
       })),
     };
   }
@@ -268,6 +298,7 @@ export function activate(context: vscode.ExtensionContext): void {
   planBoardManager.onChange((_boards, changedPlanId) => {
     // Persist all plans to globalState
     void context.globalState.update('planBoards', planBoardManager.serialize());
+    void context.globalState.update('modelTierStats', modelTierManager.serialize());
 
     // Write back checkbox status for the changed plan
     if (changedPlanId) {
@@ -331,20 +362,31 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!task.assignee) return;
     const agent = agentStateManager.getAgent(task.assignee);
     const metrics = metricsEngine.getMetrics(task.assignee);
+
+    // Derive agent type: try state manager first, then infer from agent ID pattern
+    let agentType = agent?.type ?? 'unknown';
+    if (agentType === 'unknown') {
+      const id = task.assignee.toLowerCase();
+      if (id.includes('claude')) agentType = 'claude-code';
+      else if (id.includes('opencode') || id.includes('crush')) agentType = 'opencode';
+      else if (id.includes('copilot')) agentType = 'copilot';
+      else if (id.includes('cursor')) agentType = 'cursor';
+    }
+
     agentProfiler.recordTask({
       taskId: task.id,
       planId,
       agentId: task.assignee,
-      agentType: agent?.type ?? 'unknown',
+      agentType,
       agentName: task.assigneeName ?? task.assignee,
       role: task.role,
       claimedAt: task.claimedAt ?? Date.now(),
       completedAt: Date.now(),
       status: task.status === 'done' ? 'done' : 'failed',
       durationMs: task.claimedAt ? Date.now() - task.claimedAt : 0,
-      inputTokens: metrics?.inputTokens ?? -1,
-      outputTokens: metrics?.outputTokens ?? -1,
-      estimatedCostUsd: metrics?.estimatedCostUsd ?? -1,
+      inputTokens: metrics?.inputTokens ?? 0,
+      outputTokens: metrics?.outputTokens ?? 0,
+      estimatedCostUsd: metrics?.estimatedCostUsd ?? 0,
       toolCalls: metrics?.toolCalls ?? 0,
       errorCount: metrics?.errorCount ?? 0,
     });
@@ -574,6 +616,9 @@ export function activate(context: vscode.ExtensionContext): void {
   let lastRunSubagentParent: string | null = null;
 
   function onAgentEvent(event: AgentEvent): void {
+    // Feed event to TokenAnalyzer for cost insights
+    tokenAnalyzer.onEvent(event);
+
     // Inject workspace cwd if the agent/event doesn't provide one
     if (!event.payload?.cwd) {
       const primaryFolder = vscode.workspace.workspaceFolders?.[0];
@@ -898,6 +943,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
+  // Forward cost insights to webview every 30 seconds
+  const costInsightsInterval = setInterval(() => {
+    const insights = tokenAnalyzer.getInsights();
+    const recommendations = tokenAnalyzer.getRecommendations();
+    webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations });
+
+    // Log duplicate read warnings
+    for (const dup of insights.duplicateReads) {
+      if (dup.agents.length > 2) {
+        console.log(`[Event Horizon] ${dup.agents.length} agents read ${dup.file} — consider adding to shared knowledge`);
+      }
+    }
+  }, 30_000);
+  context.subscriptions.push({ dispose: () => clearInterval(costInsightsInterval) });
+
   const ehConfig = vscode.workspace.getConfiguration('eventHorizon');
   const configuredPort = ehConfig.get<number>('port', 28765);
   setFileLockingEnabled(ehConfig.get<boolean>('fileLockingEnabled', false));
@@ -925,8 +985,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // Restore auth token from globalState so hooks/MCP configs stay valid across restarts
+  const savedToken = context.globalState.get<string>('eventServerToken');
+  if (savedToken) {
+    setAuthToken(savedToken);
+  }
+
   startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
     .then(async (actualPort) => {
+      // Persist the auth token (may be restored or newly generated)
+      void context.globalState.update('eventServerToken', getAuthToken());
       // If the port changed (fallback), update the port reference for hooks
       if (actualPort !== configuredPort) {
         // Update the in-memory port so hooks point to the right port
@@ -936,8 +1004,8 @@ export function activate(context: vscode.ExtensionContext): void {
       await ensureLockScripts();
 
       // Auto-update all installed hooks/plugins/MCP configs on every activation.
-      // This ensures hooks stay current when the extension upgrades, the auth
-      // token rotates, or new features are added — no manual reinstall needed.
+      // Token is now stable (persisted in globalState), so this just ensures
+      // hooks stay current when the extension upgrades or new features are added.
       const [hasClaude, hasOpenCode, hasCopilot, hasCursor] = await Promise.all([
         isClaudeCodeHooksInstalled(),
         isOpenCodeHooksInstalled(),
@@ -984,6 +1052,53 @@ export function activate(context: vscode.ExtensionContext): void {
     cachedSkills = skills;
     return skills;
   };
+  // ── Context optimization trigger ──────────────────────────────────────────
+  const contextOptThreshold = vscode.workspace.getConfiguration('eventHorizon').get<number>('contextOptimizer.threshold', 3000);
+  const CONTEXT_OPT_FILES = ['CLAUDE.md', '.cursorrules', 'copilot-instructions.md', '.copilot-instructions.md', '.github/copilot-instructions.md', 'AGENTS.md'];
+  const checkedFilesThisSession = new Set<string>();
+
+  async function checkContextFileSize(filePath: string): Promise<void> {
+    if (checkedFilesThisSession.has(filePath)) return;
+    try {
+      const content = await fsp.readFile(filePath, 'utf8');
+      const lines = content.split('\n').length;
+      const estimatedTokens = Math.round(content.length / 4);
+      if (estimatedTokens > contextOptThreshold || lines > 200) {
+        checkedFilesThisSession.add(filePath);
+        const fileName = path.basename(filePath);
+        const action = await vscode.window.showInformationMessage(
+          `${fileName} is ~${estimatedTokens.toLocaleString()} tokens (${lines} lines) — every spawned agent pays this at startup. Run the Context Optimizer to reduce it?`,
+          'Optimize',
+          'Dismiss',
+        );
+        if (action === 'Optimize') {
+          // Open terminal and run the context optimizer skill
+          const terminal = vscode.window.createTerminal({ name: `EH: Context Optimizer` });
+          terminal.show();
+          terminal.sendText(`claude -p "Please run /eh:optimize-context to analyze and optimize the instruction files in this workspace."`, true);
+        }
+      }
+    } catch {
+      // File doesn't exist or can't be read — ignore
+    }
+  }
+
+  // Check on activation
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    for (const fname of CONTEXT_OPT_FILES) {
+      void checkContextFileSize(path.join(folder.uri.fsPath, fname));
+    }
+  }
+
+  // Watch for saves of instruction files
+  const contextOptWatcher = vscode.workspace.onDidSaveTextDocument((doc) => {
+    const fileName = path.basename(doc.uri.fsPath);
+    if (CONTEXT_OPT_FILES.includes(fileName)) {
+      void checkContextFileSize(doc.uri.fsPath);
+    }
+  });
+  context.subscriptions.push(contextOptWatcher);
+
   // ── Main universe panel (editor area) ──────────────────────────────────────
   const openUniverse = () => openUniversePanel(
     context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills,

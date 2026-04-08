@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, Component, type Reac
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn, SpawnBeam, KnowledgeLink } from '@event-horizon/renderer';
 import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, useCommandCenterStore } from '@event-horizon/ui';
-import type { CreateSkillRequest, MarketplaceSkillResult } from '@event-horizon/ui';
+import type { CreateSkillRequest, MarketplaceSkillResult, CostInsightsData } from '@event-horizon/ui';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 
 import { useWebviewMessages } from './hooks/useWebviewMessages';
@@ -154,6 +154,8 @@ function App() {
   const [traceAggregate, setTraceAggregate] = useState<Record<string, number>>({});
   const [mcpServers, setMcpServers] = useState<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>({});
   const [compactingAgentIds, setCompactingAgentIds] = useState<Record<string, boolean>>({});
+  const [costInsights, setCostInsights] = useState<unknown>(null);
+  const [costRecommendations, setCostRecommendations] = useState<string[]>([]);
   const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
   const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
 
@@ -215,6 +217,7 @@ function App() {
     setTraceSpans, setTraceAggregate,
     setMcpServers, setCompactingAgentIds,
     setSpawnBeams, setOrchestratorAgentIds,
+    setCostInsights, setCostRecommendations,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -568,7 +571,10 @@ function App() {
           onKnowledgeEdit={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope })}
           onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })}
           traceSpans={traceSpans as import('@event-horizon/ui').OperationsViewProps['traceSpans']}
-          traceAggregate={traceAggregate} />
+          traceAggregate={traceAggregate}
+          costInsights={costInsights as import('@event-horizon/ui').CostInsightsData | null}
+          costRecommendations={costRecommendations}
+          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
       )}
 
       <AchievementToasts />
