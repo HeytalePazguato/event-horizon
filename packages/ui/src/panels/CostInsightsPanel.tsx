@@ -68,7 +68,16 @@ const Section: FC<{ title: string; children: React.ReactNode; count?: number }> 
 export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recommendations, onAddToSharedKnowledge }) => {
   const [expandedDup, setExpandedDup] = useState<string | null>(null);
 
-  if (!insights) {
+  const agentCacheEntries = insights ? Object.entries(insights.cacheHitByAgent) : [];
+  const compactionEntries = insights ? Object.entries(insights.compactionFrequency) : [];
+  const modelEntries = insights ? Object.entries(insights.modelEfficiency) : [];
+
+  // Show empty state when there's no meaningful data at all
+  const hasData = agentCacheEntries.length > 0 || compactionEntries.length > 0
+    || modelEntries.length > 0 || (insights?.duplicateReads?.length ?? 0) > 0
+    || (insights?.anomalies?.length ?? 0) > 0 || recommendations.length > 0;
+
+  if (!insights || !hasData) {
     return (
       <div style={{
         padding: sizes.spacing.xl, color: colors.text.dim, fontFamily: fonts.mono,
@@ -78,16 +87,12 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
           No Cost Data Yet
         </div>
         <div style={{ maxWidth: 420, margin: '0 auto', lineHeight: 1.6 }}>
-          Cost insights will appear once agents start processing tasks.
-          Token usage, cache efficiency, and duplicate reads are tracked automatically.
+          Cost insights appear once agents start processing tasks and sending hook events.
+          Cache efficiency, compaction pressure, and duplicate reads are tracked automatically from agent tool calls.
         </div>
       </div>
     );
   }
-
-  const agentCacheEntries = Object.entries(insights.cacheHitByAgent);
-  const compactionEntries = Object.entries(insights.compactionFrequency);
-  const modelEntries = Object.entries(insights.modelEfficiency);
 
   return (
     <div style={{ padding: sizes.spacing.lg, fontFamily: fonts.mono, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
@@ -113,7 +118,7 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
       )}
 
       {/* ── Cache Efficiency ─────────────────────────────────────────────── */}
-      <Section title="Cache Efficiency">
+      {agentCacheEntries.length > 0 && <Section title="Cache Efficiency">
         <div style={{
           display: 'flex', alignItems: 'center', gap: sizes.spacing.md,
           marginBottom: sizes.spacing.sm,
@@ -157,7 +162,7 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
             ))}
           </div>
         )}
-      </Section>
+      </Section>}
 
       {/* ── Context Pressure ─────────────────────────────────────────────── */}
       {compactionEntries.length > 0 && (
@@ -306,12 +311,7 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
         </Section>
       )}
 
-      {/* ── Empty state if no notable data ───────────────────────────────── */}
-      {recommendations.length === 0 && insights.duplicateReads.length === 0 && insights.anomalies.length === 0 && compactionEntries.length === 0 && modelEntries.length === 0 && agentCacheEntries.length === 0 && (
-        <div style={{ color: colors.text.dim, fontSize: sizes.text.sm, textAlign: 'center', marginTop: 40 }}>
-          Collecting data... insights will appear as agents work.
-        </div>
-      )}
+      {/* This shouldn't render since we check hasData above, but just in case */}
     </div>
   );
 };
