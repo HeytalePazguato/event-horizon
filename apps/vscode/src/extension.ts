@@ -158,9 +158,6 @@ export function activate(context: vscode.ExtensionContext): void {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return;
 
-    // Already seeded? Skip scan entirely.
-    if (sharedKnowledge.read('project-instructions').length > 0) return;
-
     // Instruction file names to look for (order = priority)
     const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md', 'copilot-instructions.md', '.copilot-instructions.md'];
 
