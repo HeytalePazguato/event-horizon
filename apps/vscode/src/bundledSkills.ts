@@ -456,6 +456,72 @@ You are a debugger agent. Your job is to diagnose bugs, trace root causes, and a
 Call \`eh_update_task\` with your task ID, status \`done\`, and your findings as the \`note\` parameter. Include: root cause, fix applied, verification results.
 `,
   },
+  {
+    dirName: 'eh-optimize-context',
+    content: `---
+name: eh:optimize-context
+description: "Analyze and optimize instruction files to reduce per-session token costs"
+user-invocable: true
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+metadata:
+  category: optimization
+  tags: tokens, cost, context, optimization
+---
+
+You are a context optimizer. Your job is to reduce the token cost of instruction files that every agent pays at startup.
+
+## Target files
+
+Scan the workspace for these instruction files:
+- \`CLAUDE.md\` — Claude Code instructions
+- \`.cursorrules\` — Cursor instructions
+- \`copilot-instructions.md\` or \`.github/copilot-instructions.md\` — GitHub Copilot instructions
+- \`AGENTS.md\` — General agent instructions
+
+## Analysis
+
+For each file found:
+
+1. **Estimate token count** — Count characters, divide by 4 (approximate tokens for English text). Report: file name, line count, estimated tokens.
+
+2. **Identify redundancy** — Look for:
+   - Duplicate sections across files (e.g. same build commands in CLAUDE.md and .cursorrules)
+   - Verbose explanations that could be summarized
+   - Examples that repeat the same pattern multiple times
+   - Boilerplate that could be extracted into rules
+
+3. **Identify path-scoped candidates** — Sections that only apply to specific directories or file types could become \`.claude/rules/*.md\` files with glob patterns, so they only load when relevant.
+
+4. **Identify skill candidates** — Detailed step-by-step procedures (e.g. "how to add a new API endpoint") could be extracted into on-demand skills that agents invoke only when needed, instead of paying the token cost on every session.
+
+## Actions
+
+Present your analysis first, then offer these optimizations (with user approval):
+
+1. **Split large CLAUDE.md** — Move path-specific rules to \`.claude/rules/\` with appropriate glob patterns in frontmatter:
+   \\\`\\\`\\\`markdown
+   ---
+   description: Rules for React components
+   globs: packages/ui/**/*.tsx
+   ---
+   [rules that only apply to UI components]
+   \\\`\\\`\\\`
+
+2. **Extract procedures into skills** — Move detailed how-to procedures into \`.claude/skills/\` as on-demand skills agents can invoke when needed.
+
+3. **Deduplicate across files** — If the same information exists in multiple instruction files, consolidate into one source and reference it from others.
+
+4. **Summarize verbose sections** — Replace long explanations with concise bullet points. Keep the meaning, reduce the words.
+
+## Safety
+
+- **ALWAYS create backups** — Before modifying any file, copy it to \`<filename>.backup\` in the same directory.
+- **Never delete content** — Only move content to other files. Every line removed from one file must appear in another.
+- **Report before/after** — Show estimated token savings: "CLAUDE.md: 4,200 → 2,100 tokens (saved 2,100 tokens per session)".
+- **Ask before modifying** — Present the plan and get user confirmation before making changes.
+`,
+  },
 ];
 
 // ── Accessor ────────────────────────────────────────────────────────────────

@@ -102,6 +102,14 @@ Available orchestrator-only tools:
 You become orchestrator automatically when you load a plan with eh_load_plan. Other agents can claim orchestrator role with eh_claim_orchestrator if you disconnect.`,
     builtIn: true,
   },
+  {
+    id: 'context-optimizer',
+    name: 'Context Optimizer',
+    description: 'Analyzes and optimizes instruction files (CLAUDE.md, .cursorrules, copilot-instructions.md) to reduce per-session token costs.',
+    skills: ['eh-optimize-context'],
+    instructions: 'You optimize context files to reduce token consumption. Analyze instruction files, identify redundancy, split large files into conditional rules, and extract detailed procedures into on-demand skills. Always create backups before modifying. Never delete content — only move it.',
+    builtIn: true,
+  },
 ];
 
 // ── RoleManager ────────────────────────────────────────────────────────────

@@ -267,6 +267,14 @@
           "markdownDescription": "Map role IDs to default agent types. Example: `{ \"researcher\": \"claude-code\", \"reviewer\": \"copilot\" }`",
           "order": 21
         },
+        "eventHorizon.contextOptimizer.threshold": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 500,
+          "maximum": 20000,
+          "description": "Token threshold for context optimization suggestions. A notification appears when instruction files (CLAUDE.md, .cursorrules, etc.) exceed this estimated token count.",
+          "order": 8
+        },
         "eventHorizon.budgetWarningThreshold": {
           "type": "number",
           "default": 0.8,

@@ -1012,6 +1012,53 @@ export function activate(context: vscode.ExtensionContext): void {
     cachedSkills = skills;
     return skills;
   };
+  // ── Context optimization trigger ──────────────────────────────────────────
+  const contextOptThreshold = vscode.workspace.getConfiguration('eventHorizon').get<number>('contextOptimizer.threshold', 3000);
+  const CONTEXT_OPT_FILES = ['CLAUDE.md', '.cursorrules', 'copilot-instructions.md', '.copilot-instructions.md', '.github/copilot-instructions.md', 'AGENTS.md'];
+  const checkedFilesThisSession = new Set<string>();
+
+  async function checkContextFileSize(filePath: string): Promise<void> {
+    if (checkedFilesThisSession.has(filePath)) return;
+    try {
+      const content = await fsp.readFile(filePath, 'utf8');
+      const lines = content.split('\n').length;
+      const estimatedTokens = Math.round(content.length / 4);
+      if (estimatedTokens > contextOptThreshold || lines > 200) {
+        checkedFilesThisSession.add(filePath);
+        const fileName = path.basename(filePath);
+        const action = await vscode.window.showInformationMessage(
+          `${fileName} is ~${estimatedTokens.toLocaleString()} tokens (${lines} lines) — every spawned agent pays this at startup. Run the Context Optimizer to reduce it?`,
+          'Optimize',
+          'Dismiss',
+        );
+        if (action === 'Optimize') {
+          // Open terminal and run the context optimizer skill
+          const terminal = vscode.window.createTerminal({ name: `EH: Context Optimizer` });
+          terminal.show();
+          terminal.sendText(`claude -p "Please run /eh:optimize-context to analyze and optimize the instruction files in this workspace."`, true);
+        }
+      }
+    } catch {
+      // File doesn't exist or can't be read — ignore
+    }
+  }
+
+  // Check on activation
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    for (const fname of CONTEXT_OPT_FILES) {
+      void checkContextFileSize(path.join(folder.uri.fsPath, fname));
+    }
+  }
+
+  // Watch for saves of instruction files
+  const contextOptWatcher = vscode.workspace.onDidSaveTextDocument((doc) => {
+    const fileName = path.basename(doc.uri.fsPath);
+    if (CONTEXT_OPT_FILES.includes(fileName)) {
+      void checkContextFileSize(doc.uri.fsPath);
+    }
+  });
+  context.subscriptions.push(contextOptWatcher);
+
   // ── Main universe panel (editor area) ──────────────────────────────────────
   const openUniverse = () => openUniversePanel(
     context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills,

@@ -15,6 +15,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **TokenAnalyzer**: processes agent events to produce cost insights — cache hit ratios, compaction frequency, duplicate file reads, cost anomalies, and actionable recommendations. Insights forwarded to webview every 30 seconds
 - **`eh_get_cost_insights` MCP tool**: returns cache efficiency, compaction pressure, duplicate reads, anomalies, model efficiency stats, and text recommendations. Orchestrators can use this for cost-aware decisions
 - **Cost Insights panel**: new "Costs" tab in Operations view with 6 sections — Recommendations, Cache Efficiency (per-agent bar charts), Context Pressure (compaction frequency), Duplicate Reads (expandable with "Add to Shared Knowledge" button), Cost Anomalies, and Model Efficiency (success rate + avg cost grid). Updates live every 30 seconds
+- **Context Optimizer role**: 8th built-in role with `eh:optimize-context` skill. Analyzes instruction files (CLAUDE.md, .cursorrules, copilot-instructions.md), identifies redundancy, extracts path-scoped rules and on-demand skills, reports before/after token savings. Always creates backups
+- **Context optimization trigger**: on activation and file save, scans instruction files and shows a notification when they exceed the configurable token threshold (default 3000 tokens). "Optimize" button launches the context optimizer in a terminal. New `eventHorizon.contextOptimizer.threshold` setting
 
 ### Improved
 - **`eh:create-plan` skill**: now requires Accept, Verify, complexity, and model metadata per task. Includes acceptance criteria clarification step and scope heuristic (low <50 lines, medium 50-200, high 200+)
