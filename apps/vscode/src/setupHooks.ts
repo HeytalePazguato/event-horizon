@@ -273,8 +273,8 @@ export async function setupClaudeCodeHooks(): Promise<void> {
 }
 
 /**
- * Register Event Horizon as an MCP server in ~/.claude.json.
- * Reads existing config, merges our entry without overwriting other servers.
+ * Register Event Horizon as an MCP server in ~/.claude.json (global only).
+ * Also cleans up any stale project-level .claude.json entries to prevent conflicts.
  */
 export async function registerMcpServer(): Promise<void> {
   const claudeJsonPath = path.join(os.homedir(), '.claude.json');
@@ -295,6 +295,34 @@ export async function registerMcpServer(): Promise<void> {
   config.mcpServers = servers;
 
   await fsp.writeFile(claudeJsonPath, JSON.stringify(config, null, 2), 'utf8');
+
+  // Clean up project-level .claude.json entries that may have stale tokens
+  void cleanupProjectMcpEntries();
+}
+
+/** Remove event-horizon MCP entries from project-level .claude.json files to prevent stale token conflicts. */
+async function cleanupProjectMcpEntries(): Promise<void> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders) return;
+
+  for (const folder of folders) {
+    const projectClaudeJson = path.join(folder.uri.fsPath, '.claude.json');
+    try {
+      const raw = await fsp.readFile(projectClaudeJson, 'utf8');
+      const config = JSON.parse(raw) as Record<string, unknown>;
+      const servers = config.mcpServers as Record<string, unknown> | undefined;
+      if (servers && 'event-horizon' in servers) {
+        delete servers['event-horizon'];
+        // If no servers left, remove the key entirely
+        if (Object.keys(servers).length === 0) {
+          delete config.mcpServers;
+        }
+        await fsp.writeFile(projectClaudeJson, JSON.stringify(config, null, 2), 'utf8');
+      }
+    } catch {
+      // File doesn't exist or can't be parsed — fine
+    }
+  }
 }
 
 export async function runSetupClaudeCodeHooks(): Promise<void> {

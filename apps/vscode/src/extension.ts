@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -953,8 +953,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // Restore auth token from globalState so hooks/MCP configs stay valid across restarts
+  const savedToken = context.globalState.get<string>('eventServerToken');
+  if (savedToken) {
+    setAuthToken(savedToken);
+  }
+
   startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
     .then(async (actualPort) => {
+      // Persist the auth token (may be restored or newly generated)
+      void context.globalState.update('eventServerToken', getAuthToken());
       // If the port changed (fallback), update the port reference for hooks
       if (actualPort !== configuredPort) {
         // Update the in-memory port so hooks point to the right port
@@ -964,8 +972,8 @@ export function activate(context: vscode.ExtensionContext): void {
       await ensureLockScripts();
 
       // Auto-update all installed hooks/plugins/MCP configs on every activation.
-      // This ensures hooks stay current when the extension upgrades, the auth
-      // token rotates, or new features are added — no manual reinstall needed.
+      // Token is now stable (persisted in globalState), so this just ensures
+      // hooks stay current when the extension upgrades or new features are added.
       const [hasClaude, hasOpenCode, hasCopilot, hasCursor] = await Promise.all([
         isClaudeCodeHooksInstalled(),
         isOpenCodeHooksInstalled(),
