@@ -12,6 +12,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **ModelTierManager**: tiered model selection that recommends the cheapest viable model per task complexity + role. Tracks first-attempt success rates, drops underperformers below threshold (default 30%), persists stats across sessions
 - **Model escalation on retry**: `eh_retry_task` auto-escalates to the next model tier (haiku → sonnet → opus) on verification failure. Success/failure stats feed back into recommendations
 - **Self-verification in `eh:work-on-plan`**: agents must check acceptance criteria and run verify commands before marking tasks done, with up to 2 self-fix attempts on failure
+- **TokenAnalyzer**: processes agent events to produce cost insights — cache hit ratios, compaction frequency, duplicate file reads, cost anomalies, and actionable recommendations. Insights forwarded to webview every 30 seconds
+- **`eh_get_cost_insights` MCP tool**: returns cache efficiency, compaction pressure, duplicate reads, anomalies, model efficiency stats, and text recommendations. Orchestrators can use this for cost-aware decisions
 
 ### Improved
 - **`eh:create-plan` skill**: now requires Accept, Verify, complexity, and model metadata per task. Includes acceptance criteria clarification step and scope heuristic (low <50 lines, medium 50-200, high 200+)

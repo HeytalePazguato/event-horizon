@@ -20,6 +20,7 @@ import type { WorktreeManager } from './worktreeManager.js';
 import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
+import type { TokenAnalyzer } from './tokenAnalyzer.js';
 import { exec } from 'child_process';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
@@ -583,6 +584,20 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id'],
     },
   },
+
+  // ── Cost insights ─────────────────────────────────────────────────────────
+
+  {
+    name: 'eh_get_cost_insights',
+    description: 'Get token usage insights: cache efficiency, compaction pressure, duplicate reads, cost anomalies, and actionable recommendations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+      },
+      required: ['agent_id'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -642,6 +657,7 @@ export interface McpServerDeps {
   traceStore?: TraceStore;
   workspaceRoot?: string;
   modelTierManager?: ModelTierManager;
+  tokenAnalyzer?: TokenAnalyzer;
 }
 
 export class McpServer {
@@ -1698,6 +1714,33 @@ export class McpServer {
         const spans = traceStore.getSpans(filterAgentId, spanType, limit);
         const aggregate = traceStore.getAggregate(filterAgentId);
         return { spans, aggregate, totalSpans: traceStore.size, openSpans: traceStore.openCount };
+      }
+
+      // ── Cost insights ──────────────────────────────────────────────────────
+
+      case 'eh_get_cost_insights': {
+        const { tokenAnalyzer, modelTierManager: mtm } = this.deps;
+        if (!tokenAnalyzer) return { error: 'Token analyzer not available' };
+        const insights = tokenAnalyzer.getInsights();
+        // Enrich with model efficiency from ModelTierManager
+        if (mtm) {
+          const stats = mtm.getStats();
+          for (const [model, roles] of Object.entries(stats)) {
+            let totalAttempts = 0, totalSuccesses = 0, totalCost = 0;
+            for (const role of Object.values(roles)) {
+              totalAttempts += role.attempts;
+              totalSuccesses += role.successes;
+              totalCost += role.avgCostUsd * role.attempts;
+            }
+            insights.modelEfficiency[model] = {
+              successRate: totalAttempts > 0 ? totalSuccesses / totalAttempts : 0,
+              avgCost: totalAttempts > 0 ? totalCost / totalAttempts : 0,
+              attempts: totalAttempts,
+            };
+          }
+        }
+        const recommendations = tokenAnalyzer.getRecommendations();
+        return { insights, recommendations };
       }
 
       default:

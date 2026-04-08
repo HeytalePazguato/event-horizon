@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -584,6 +584,9 @@ export function activate(context: vscode.ExtensionContext): void {
   let lastRunSubagentParent: string | null = null;
 
   function onAgentEvent(event: AgentEvent): void {
+    // Feed event to TokenAnalyzer for cost insights
+    tokenAnalyzer.onEvent(event);
+
     // Inject workspace cwd if the agent/event doesn't provide one
     if (!event.payload?.cwd) {
       const primaryFolder = vscode.workspace.workspaceFolders?.[0];
@@ -907,6 +910,21 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
+
+  // Forward cost insights to webview every 30 seconds
+  const costInsightsInterval = setInterval(() => {
+    const insights = tokenAnalyzer.getInsights();
+    const recommendations = tokenAnalyzer.getRecommendations();
+    webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations });
+
+    // Log duplicate read warnings
+    for (const dup of insights.duplicateReads) {
+      if (dup.agents.length > 2) {
+        console.log(`[Event Horizon] ${dup.agents.length} agents read ${dup.file} — consider adding to shared knowledge`);
+      }
+    }
+  }, 30_000);
+  context.subscriptions.push({ dispose: () => clearInterval(costInsightsInterval) });
 
   const ehConfig = vscode.workspace.getConfiguration('eventHorizon');
   const configuredPort = ehConfig.get<number>('port', 28765);
