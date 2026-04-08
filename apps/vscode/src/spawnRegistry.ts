@@ -267,6 +267,8 @@ export class ClaudeCodeSpawner implements SpawnBackend {
 
     // Build command — --verbose is required when using -p with --output-format stream-json
     const parts = ['claude', '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json'];
+    // Pre-authorize tools so spawned agents can actually edit files without permission prompts
+    parts.push('--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit'));
     if (opts.model) parts.push('--model', opts.model);
     if (opts.role) {
       parts.push('--append-system-prompt', shellQuote(`You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon.`));
@@ -325,7 +327,8 @@ export class ClaudeCodeSpawner implements SpawnBackend {
   async resume(agentId: string, sessionId: string, prompt: string): Promise<SpawnResult> {
     const terminalName = `\u2600\uFE0F Claude \u2014 Resume (${sessionId.slice(0, 8)})`;
     const pf = await writePromptFile(prompt, agentId);
-    const parts = ['claude', '--resume', sessionId, '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json'];
+    const parts = ['claude', '--resume', sessionId, '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json',
+      '--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit')];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
