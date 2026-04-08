@@ -322,13 +322,13 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_recommend_task',
-    description: 'Get the best available task for you to work on, scored by role match, historical performance, current load, and dependency priority.',
+    description: 'Get the best available task for an agent to work on, scored by role match, historical performance, current load, and dependency priority. The agent_type must be a runtime type (claude-code, opencode, copilot, cursor), NOT a role name.',
     inputSchema: {
       type: 'object',
       properties: {
-        agent_id: { type: 'string', description: 'Your agent/session ID' },
-        agent_name: { type: 'string', description: 'Your display name' },
-        agent_type: { type: 'string', description: 'Your agent type (claude-code, opencode, copilot, etc.)' },
+        agent_id: { type: 'string', description: 'The agent ID to get recommendations for' },
+        agent_name: { type: 'string', description: 'Agent display name' },
+        agent_type: { type: 'string', description: 'REQUIRED. Agent runtime type: claude-code, opencode, copilot, or cursor. NOT a role name like "implementer".' },
         plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
       },
       required: ['agent_id', 'agent_type'],
@@ -406,18 +406,18 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_spawn_agent',
-    description: 'Spawn a new AI agent in a VS Code terminal. Orchestrator-only tool.',
+    description: 'Spawn a new AI agent in a VS Code terminal. Orchestrator-only. agent_type must be "claude-code", "opencode", or "cursor" (NOT a role name). prompt is REQUIRED — it must be a detailed instruction telling the agent what to do (e.g. "Work on task 1.1: implement the auth module. Run /eh:work-on-plan to claim and execute it.").',
     inputSchema: {
       type: 'object',
       properties: {
-        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
-        agent_type: { type: 'string', enum: ['claude-code', 'opencode', 'cursor'], description: 'Type of agent to spawn' },
-        role: { type: 'string', description: 'Role to assign (e.g. implementer, tester)' },
-        prompt: { type: 'string', description: 'Initial prompt for the agent' },
+        agent_id: { type: 'string', description: 'YOUR agent/session ID (the orchestrator calling this tool)' },
+        agent_type: { type: 'string', enum: ['claude-code', 'opencode', 'cursor'], description: 'Runtime to spawn. Must be one of: claude-code, opencode, cursor. This is the CLI tool, NOT a role name.' },
+        role: { type: 'string', description: 'Role to assign (e.g. implementer, tester, reviewer). Determines instructions and skills sent to the agent.' },
+        prompt: { type: 'string', description: 'REQUIRED. Detailed instruction for the agent. Must tell it what task to work on and how. Example: "You are assigned task 1.1 (Build auth module). Run /eh:work-on-plan to claim and implement it. The plan is already loaded."' },
         cwd: { type: 'string', description: 'Working directory (defaults to workspace root)' },
-        model: { type: 'string', description: 'Model to use (agent-specific, e.g. claude-sonnet-4-20250514)' },
-        plan_id: { type: 'string', description: 'Plan ID to associate with spawned agent' },
-        task_id: { type: 'string', description: 'Task ID for the spawned agent to work on' },
+        model: { type: 'string', description: 'Model override (e.g. claude-sonnet-4-20250514). Optional — defaults to the CLI default.' },
+        plan_id: { type: 'string', description: 'Plan ID to associate with the spawned agent' },
+        task_id: { type: 'string', description: 'Task ID the agent should work on' },
       },
       required: ['agent_id', 'agent_type', 'prompt'],
     },
@@ -488,12 +488,12 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_sync_skills',
-    description: 'Sync Event Horizon bundled skills to a target agent type skill directory. Orchestrator-only tool.',
+    description: 'Manually sync Event Horizon skills to an agent type skill directory. Rarely needed — skills sync automatically when spawning agents. Only call this if you suspect skills are out of date.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
-        target_agent_type: { type: 'string', description: 'Agent type to sync skills for (claude-code, opencode)' },
+        target_agent_type: { type: 'string', description: 'REQUIRED. Agent runtime type to sync skills for: claude-code, opencode, or cursor.' },
       },
       required: ['agent_id', 'target_agent_type'],
     },

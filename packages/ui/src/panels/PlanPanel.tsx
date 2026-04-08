@@ -227,13 +227,22 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
       </div>
 
       {viewMode === 'kanban' ? (
-        <>
-          {/* Column headers — fixed row */}
+        /* Single scrollable container so headers and cards share the same width */
+        <div style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'auto',
+        }}>
+          {/* Column headers — sticky at top */}
           <div style={{
             display: 'flex',
             gap: sizes.spacing.md,
-            flexShrink: 0,
-            marginBottom: sizes.spacing.sm,
+            position: 'sticky',
+            top: 0,
+            zIndex: 1,
+            background: colors.bg.primary,
+            paddingBottom: sizes.spacing.sm,
           }}>
             {visibleColumns.map((col) => (
               <div key={col.status} style={{
@@ -272,14 +281,10 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
             ))}
           </div>
 
-          {/* Task cards — scrollable area */}
+          {/* Task cards */}
           <div style={{
             display: 'flex',
             gap: sizes.spacing.md,
-            overflowY: 'auto',
-            overflowX: 'auto',
-            flex: 1,
-            minHeight: 0,
           }}>
             {visibleColumns.map((col) => (
               <div key={col.status} style={{
@@ -295,7 +300,7 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
               </div>
             ))}
           </div>
-        </>
+        </div>
       ) : (
         /* Dependencies DAG view */
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
