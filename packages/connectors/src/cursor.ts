@@ -141,6 +141,25 @@ export function mapCursorHookToEvent(payload: unknown): AgentEvent | null {
     }
   }
 
+  // Token/cost tracking — capture from stop, sessionEnd, afterAgentResponse, and subagentStop
+  if (hookEvent === 'stop' || hookEvent === 'sessionEnd' || hookEvent === 'afterAgentResponse' || hookEvent === 'subagentStop') {
+    if (typeof p.total_cost_usd === 'number') safePayload.costUsd = p.total_cost_usd;
+    if (typeof p.total_cost === 'number' && !safePayload.costUsd) safePayload.costUsd = p.total_cost;
+    const usage = (p.usage as Record<string, unknown> | undefined);
+    if (usage) {
+      if (typeof usage.input_tokens === 'number') safePayload.inputTokens = usage.input_tokens;
+      if (typeof usage.output_tokens === 'number') safePayload.outputTokens = usage.output_tokens;
+      if (typeof usage.total_tokens === 'number') safePayload.totalTokens = usage.total_tokens;
+      if (typeof usage.cache_read_input_tokens === 'number') safePayload.cacheReadTokensDelta = usage.cache_read_input_tokens;
+      if (typeof usage.cache_creation_input_tokens === 'number') safePayload.cacheCreationTokensDelta = usage.cache_creation_input_tokens;
+    }
+    // Also check top-level token fields
+    if (typeof p.input_tokens === 'number') safePayload.inputTokens = p.input_tokens;
+    if (typeof p.output_tokens === 'number') safePayload.outputTokens = p.output_tokens;
+    if (typeof p.total_tokens === 'number') safePayload.totalTokens = p.total_tokens;
+    if (typeof p.num_turns === 'number') safePayload.numTurns = p.num_turns;
+  }
+
   // Context compaction
   if (hookEvent === 'preCompact') {
     safePayload.hookType = 'context_compaction';
