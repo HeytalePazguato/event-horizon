@@ -54,6 +54,8 @@ export interface WebviewMessageDeps {
   setCompactingAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setSpawnBeams?: React.Dispatch<React.SetStateAction<Array<{ fromAgentId: string; toAgentId: string; color: number; startTime: number }>>>;
   setOrchestratorAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setCostInsights?: React.Dispatch<React.SetStateAction<unknown>>;
+  setCostRecommendations?: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -198,6 +200,17 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         }
         if (data.aggregate && depsRef.current.setTraceAggregate) {
           depsRef.current.setTraceAggregate(data.aggregate);
+        }
+        return;
+      }
+      if (msg?.type === 'cost-insights-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (depsRef.current.setCostInsights) {
+          depsRef.current.setCostInsights(data.insights ?? null);
+        }
+        if (depsRef.current.setCostRecommendations) {
+          depsRef.current.setCostRecommendations(data.recommendations ?? []);
         }
         return;
       }

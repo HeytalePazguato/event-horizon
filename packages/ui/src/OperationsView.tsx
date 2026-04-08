@@ -22,7 +22,9 @@ import { KnowledgePanel } from './panels/KnowledgePanel.js';
 import type { KnowledgeEntry } from './panels/KnowledgePanel.js';
 import { TracesPanel } from './panels/TracesPanel.js';
 import type { TraceSpanView } from './panels/TracesPanel.js';
-type OpsTab = 'overview' | 'activity' | 'files' | 'skills' | 'plan' | 'roles' | 'knowledge';
+import { CostInsightsPanel } from './panels/CostInsightsPanel.js';
+import type { CostInsightsData } from './panels/CostInsightsPanel.js';
+type OpsTab = 'overview' | 'activity' | 'files' | 'skills' | 'plan' | 'roles' | 'knowledge' | 'costs';
 type ActivityView = 'timeline' | 'traces' | 'logs';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
@@ -67,6 +69,9 @@ export interface OperationsViewProps {
   onKnowledgeDelete?: (key: string, scope: 'workspace' | 'plan') => void;
   traceSpans?: TraceSpanView[];
   traceAggregate?: Record<string, number>;
+  costInsights?: CostInsightsData | null;
+  costRecommendations?: string[];
+  onAddToSharedKnowledge?: (file: string) => void;
 }
 
 const OPS_TOOLTIP_STYLE: React.CSSProperties = {
@@ -84,7 +89,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {} }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], onAddToSharedKnowledge }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -156,6 +161,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
             </button>
             <button type="button" style={tabStyle(activeTab === 'roles')} onClick={() => setActiveTab('roles')}>
               Roles{roles && roles.length > 0 ? ` (${roles.length})` : ''}
+            </button>
+            <button type="button" style={tabStyle(activeTab === 'costs')} onClick={() => setActiveTab('costs')}>
+              Costs{costRecommendations.length > 0 ? ` (${costRecommendations.length})` : ''}
             </button>
             <button type="button" style={tabStyle(activeTab === 'knowledge')} onClick={() => setActiveTab('knowledge')}>
               Knowledge{(knowledgeWorkspace.length + knowledgePlan.length) > 0 ? ` (${knowledgeWorkspace.length + knowledgePlan.length})` : ''}
@@ -252,6 +260,9 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 <RolesPanel roles={roles ?? []} assignments={roleAssignments ?? []} profiles={agentProfiles ?? []} agents={agents.map((a) => ({ id: a.id, name: a.name, type: a.agentType }))} onAssignRole={onAssignRole} onCreateRole={onCreateRole} onEditRole={onEditRole} onDeleteRole={onDeleteRole} />
               </div>
+            )}
+            {activeTab === 'costs' && (
+              <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} onAddToSharedKnowledge={onAddToSharedKnowledge} />
             )}
             {activeTab === 'knowledge' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
