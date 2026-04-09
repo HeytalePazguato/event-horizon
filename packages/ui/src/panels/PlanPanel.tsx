@@ -227,79 +227,65 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
       </div>
 
       {viewMode === 'kanban' ? (
-        /* Single scrollable container so headers and cards share the same width */
+        /* CSS Grid — single grid ensures headers and cards share exact same column widths */
         <div style={{
           flex: 1,
           minHeight: 0,
           overflowY: 'auto',
           overflowX: 'auto',
+          display: 'grid',
+          gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(160px, 1fr))`,
+          gridTemplateRows: 'auto 1fr',
+          gap: `0 ${sizes.spacing.md}px`,
+          alignContent: 'start',
         }}>
-          {/* Column headers — sticky at top */}
-          <div style={{
-            display: 'flex',
-            gap: sizes.spacing.md,
-            position: 'sticky',
-            top: 0,
-            zIndex: 1,
-            background: colors.bg.primary,
-            paddingBottom: sizes.spacing.sm,
-          }}>
-            {visibleColumns.map((col) => (
-              <div key={col.status} style={{
-                flex: '1 1 180px',
-                minWidth: 160,
-                maxWidth: 280,
-                display: 'flex',
-                alignItems: 'center',
-                gap: sizes.spacing.xs,
-                padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
-                borderBottom: `2px solid ${taskStatusColor(col.status)}`,
+          {/* Column headers — row 1 */}
+          {visibleColumns.map((col) => (
+            <div key={`h-${col.status}`} style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: sizes.spacing.xs,
+              padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
+              borderBottom: `2px solid ${taskStatusColor(col.status)}`,
+              position: 'sticky',
+              top: 0,
+              zIndex: 1,
+              background: colors.bg.primary,
+              marginBottom: sizes.spacing.sm,
+            }}>
+              <div style={{
+                width: 6, height: 6, borderRadius: 1,
+                background: taskStatusColor(col.status),
+                boxShadow: `0 0 4px ${taskStatusColor(col.status)}`,
+                flexShrink: 0,
+              }} />
+              <span style={{
+                fontSize: sizes.text.sm,
+                color: taskStatusColor(col.status),
+                fontWeight: 600,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
               }}>
-                <div style={{
-                  width: 6, height: 6, borderRadius: 1,
-                  background: taskStatusColor(col.status),
-                  boxShadow: `0 0 4px ${taskStatusColor(col.status)}`,
-                  flexShrink: 0,
-                }} />
-                <span style={{
-                  fontSize: sizes.text.sm,
-                  color: taskStatusColor(col.status),
-                  fontWeight: 600,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                }}>
-                  {col.label}
-                </span>
-                <span style={{
-                  fontSize: sizes.text.xs,
-                  color: colors.text.dim,
-                  marginLeft: 'auto',
-                }}>
-                  {col.tasks.length}
-                </span>
-              </div>
-            ))}
-          </div>
+                {col.label}
+              </span>
+              <span style={{
+                fontSize: sizes.text.xs,
+                color: colors.text.dim,
+                marginLeft: 'auto',
+              }}>
+                {col.tasks.length}
+              </span>
+            </div>
+          ))}
 
-          {/* Task cards */}
-          <div style={{
-            display: 'flex',
-            gap: sizes.spacing.md,
-          }}>
-            {visibleColumns.map((col) => (
-              <div key={col.status} style={{
-                flex: '1 1 180px',
-                minWidth: 160,
-                maxWidth: 280,
-              }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
-                  {col.tasks.map((task) => (
-                    <TaskCard key={task.id} task={task} />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          {/* Task cards — row 2, one column per status */}
+          {visibleColumns.map((col) => (
+            <div key={`c-${col.status}`} style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
+              {col.tasks.map((task) => (
+                <TaskCard key={task.id} task={task} />
+              ))}
+            </div>
+          ))}
         </div>
       ) : (
         /* Dependencies DAG view */

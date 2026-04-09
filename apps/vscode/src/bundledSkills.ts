@@ -64,7 +64,9 @@ You are a software architect creating a plan for multi-agent parallel execution.
    - **Placeholder scan**: Search for vague language — "add appropriate handling", "similar to task N", "TBD", "implement as needed". Replace with concrete details.
    - **Consistency**: Do file paths, function names, and type signatures match across tasks? A function called \`createTheme()\` in task 1.1 but \`buildTheme()\` in task 2.3 is a bug. Fix inline.
 
-10. **Register with Event Horizon** — After writing the plan file, call the \`eh_load_plan\` MCP tool. You MUST pass the full markdown text in the \`content\` parameter (the server cannot read files). Also pass \`file_path\` for reference and your \`agent_id\`.
+10. **Register with Event Horizon** — After writing the plan file:
+    a. Call \`eh_load_plan\` with the full markdown text in the \`content\` parameter (the server cannot read files). Also pass \`file_path\` for reference and your \`agent_id\`.
+    b. Call \`eh_claim_orchestrator\` with your \`agent_id\` to become the orchestrator for this plan. This gives you access to spawn agents, assign tasks, and monitor the team. Loading a plan auto-promotes you, but calling claim explicitly ensures it sticks.
 
 ## Output format
 
@@ -469,7 +471,7 @@ metadata:
   tags: tokens, cost, context, optimization
 ---
 
-You are a context optimizer. Your job is to reduce the token cost of instruction files that every agent pays at startup.
+You are a context optimizer. Your job is to manage instruction files — create them if missing, optimize them if too large.
 
 ## Target files
 
@@ -479,7 +481,20 @@ Scan the workspace for these instruction files:
 - \`copilot-instructions.md\` or \`.github/copilot-instructions.md\` — GitHub Copilot instructions
 - \`AGENTS.md\` — General agent instructions
 
-## Analysis
+## If NO instruction files exist
+
+If the workspace has no instruction files at all, offer to create them:
+
+1. **Explore the project** — Read package.json, look at the directory structure, check for existing configs (tsconfig, eslint, etc.), identify the tech stack.
+2. **Generate CLAUDE.md** — Create a concise CLAUDE.md with:
+   - What the project is (1-2 sentences)
+   - Build/test/lint commands
+   - Architecture overview (key directories and their purpose)
+   - Important conventions or patterns
+   Keep it under 150 lines / ~2000 tokens. Concise > comprehensive.
+3. **Generate other files if relevant** — If the project uses Cursor or Copilot, offer to create \`.cursorrules\` or \`.github/copilot-instructions.md\` with equivalent content adapted to that agent's format.
+
+## Analysis (when files exist)
 
 For each file found:
 

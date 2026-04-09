@@ -206,12 +206,14 @@ export function activate(context: vscode.ExtensionContext): void {
       const lines = content.split(/\r?\n/);
       let currentSection = '';
       let currentBody: string[] = [];
+      let fileSectionCount = 0;
 
       for (const line of lines) {
         const heading = line.match(/^#{1,3}\s+(.+)/);
         if (heading) {
           if (currentSection && currentBody.length > 0) {
             allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
+            fileSectionCount++;
           }
           currentSection = heading[1].trim();
           currentBody = [];
@@ -221,9 +223,10 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       if (currentSection && currentBody.length > 0) {
         allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
+        fileSectionCount++;
       }
-      // For files without headings (like .cursorrules), seed the whole content
-      if (allSections.length === 0 && content.trim()) {
+      // For files without headings (like .cursorrules, copilot-instructions.md), seed the whole content
+      if (fileSectionCount === 0 && content.trim()) {
         allSections.push(`**${label}**: ${content.trim().slice(0, 400)}`);
       }
     }
@@ -1055,47 +1058,68 @@ export function activate(context: vscode.ExtensionContext): void {
   // ── Context optimization trigger ──────────────────────────────────────────
   const contextOptThreshold = vscode.workspace.getConfiguration('eventHorizon').get<number>('contextOptimizer.threshold', 3000);
   const CONTEXT_OPT_FILES = ['CLAUDE.md', '.cursorrules', 'copilot-instructions.md', '.copilot-instructions.md', '.github/copilot-instructions.md', 'AGENTS.md'];
-  const checkedFilesThisSession = new Set<string>();
+  let contextOptShownThisSession = false;
 
-  async function checkContextFileSize(filePath: string): Promise<void> {
-    if (checkedFilesThisSession.has(filePath)) return;
+  // Scan all workspace folders, collect large files, show ONE notification
+  void (async () => {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || contextOptShownThisSession) return;
+
+    const largeFiles: Array<{ name: string; tokens: number; lines: number }> = [];
+    for (const folder of folders) {
+      for (const fname of CONTEXT_OPT_FILES) {
+        try {
+          const content = await fsp.readFile(path.join(folder.uri.fsPath, fname), 'utf8');
+          const lines = content.split('\n').length;
+          const estimatedTokens = Math.round(content.length / 4);
+          if (estimatedTokens > contextOptThreshold || lines > 200) {
+            largeFiles.push({ name: `${path.basename(folder.uri.fsPath)}/${fname}`, tokens: estimatedTokens, lines });
+          }
+        } catch { /* not found */ }
+      }
+    }
+
+    if (largeFiles.length > 0) {
+      contextOptShownThisSession = true;
+      const totalTokens = largeFiles.reduce((s, f) => s + f.tokens, 0);
+      const summary = largeFiles.length === 1
+        ? `${largeFiles[0].name} is ~${largeFiles[0].tokens.toLocaleString()} tokens`
+        : `${largeFiles.length} instruction files total ~${totalTokens.toLocaleString()} tokens`;
+      const action = await vscode.window.showInformationMessage(
+        `${summary} — every spawned agent pays this at startup. Run the Context Optimizer?`,
+        'Optimize',
+        'Dismiss',
+      );
+      if (action === 'Optimize') {
+        const terminal = vscode.window.createTerminal({ name: `EH: Context Optimizer` });
+        terminal.show();
+        terminal.sendText(`claude -p "Please run /eh:optimize-context to analyze and optimize the instruction files in this workspace."`, true);
+      }
+    }
+  })();
+
+  // Watch for saves — show notification only once per session
+  const contextOptWatcher = vscode.workspace.onDidSaveTextDocument(async (doc) => {
+    if (contextOptShownThisSession) return;
+    const fileName = path.basename(doc.uri.fsPath);
+    if (!CONTEXT_OPT_FILES.includes(fileName)) return;
     try {
-      const content = await fsp.readFile(filePath, 'utf8');
-      const lines = content.split('\n').length;
+      const content = await fsp.readFile(doc.uri.fsPath, 'utf8');
       const estimatedTokens = Math.round(content.length / 4);
-      if (estimatedTokens > contextOptThreshold || lines > 200) {
-        checkedFilesThisSession.add(filePath);
-        const fileName = path.basename(filePath);
+      if (estimatedTokens > contextOptThreshold || content.split('\n').length > 200) {
+        contextOptShownThisSession = true;
         const action = await vscode.window.showInformationMessage(
-          `${fileName} is ~${estimatedTokens.toLocaleString()} tokens (${lines} lines) — every spawned agent pays this at startup. Run the Context Optimizer to reduce it?`,
+          `${fileName} is ~${estimatedTokens.toLocaleString()} tokens — Run the Context Optimizer?`,
           'Optimize',
           'Dismiss',
         );
         if (action === 'Optimize') {
-          // Open terminal and run the context optimizer skill
           const terminal = vscode.window.createTerminal({ name: `EH: Context Optimizer` });
           terminal.show();
           terminal.sendText(`claude -p "Please run /eh:optimize-context to analyze and optimize the instruction files in this workspace."`, true);
         }
       }
-    } catch {
-      // File doesn't exist or can't be read — ignore
-    }
-  }
-
-  // Check on activation
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    for (const fname of CONTEXT_OPT_FILES) {
-      void checkContextFileSize(path.join(folder.uri.fsPath, fname));
-    }
-  }
-
-  // Watch for saves of instruction files
-  const contextOptWatcher = vscode.workspace.onDidSaveTextDocument((doc) => {
-    const fileName = path.basename(doc.uri.fsPath);
-    if (CONTEXT_OPT_FILES.includes(fileName)) {
-      void checkContextFileSize(doc.uri.fsPath);
-    }
+    } catch { /* ignore */ }
   });
   context.subscriptions.push(contextOptWatcher);
 
