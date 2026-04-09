@@ -2,6 +2,31 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [1.3.1] — 2026-04-08
+
+### Fixed
+- **Kanban column alignment (final fix)**: replaced dual-flex layout with CSS Grid — headers and cards now share the exact same grid column tracks, so they cannot diverge when the sidebar opens/closes or the panel resizes
+- **Knowledge tab missing copilot-instructions.md**: the "no headings" fallback for non-markdown files only triggered when no sections had been found globally, so once CLAUDE.md populated sections, all subsequent files without markdown headings (copilot-instructions.md, .cursorrules) were silently skipped. Now tracks per-file
+- **Context optimizer fired per project in multi-root workspaces**: 8 projects produced 8 separate notifications. Now collects all large instruction files first and shows ONE summary notification per session
+- **Orchestrator role not claimed after creating a plan**: `eh:create-plan` now explicitly calls `eh_claim_orchestrator` after loading the plan so the orchestrator role persists across MCP calls
+- **Auth token rotated on every extension restart**: hooks and MCP configs became stale after every VS Code reload. Token is now persisted in globalState and only generated once on first install
+- **Stale project-level MCP server entries**: project-level `.claude.json` files with old tokens caused "SDK auth failed" errors. Now cleaned up automatically — MCP server is registered globally only
+- **Spawned agents couldn't use Edit/Write tools**: agents spawned with `-p` (print mode) lacked tool permissions. Now passes `--allowedTools Edit,Write,Read,Grep,Glob,Bash,NotebookEdit` to spawn and resume commands
+- **Agent profiler showed "UNKNOWN" type and "$-1.00" cost**: agents interacting only via MCP weren't in the state manager. Now infers agent type from ID pattern and defaults costs to 0. Stale profiler data in globalState is migrated on restore
+- **Orchestrator spawn failures ("Only the orchestrator can spawn agents")**: `isOrchestrator()` now auto-promotes the calling agent if no orchestrator is set on the plan. Diagnostic error messages show the ID mismatch
+- **Costs tab showed 0% with no data**: cache efficiency section rendered even when no agents had sent token data. Now shows "No Cost Data Yet" empty state when there's nothing meaningful to display
+- **MCP tool descriptions confused the orchestrator**: `eh_spawn_agent` agent_type was confused with role names, prompt was omitted. Descriptions now include explicit examples and warnings
+
+### Improved
+- **`eh:optimize-context` skill**: now offers to create CLAUDE.md and other instruction files if none exist in the workspace (explores project, generates concise context)
+- **`eh:create-plan` skill**: explicitly claims orchestrator role after loading the plan
+- **Cursor token tracking**: captures input/output tokens, cache read/creation, cost, and num_turns from stop, sessionEnd, afterAgentResponse, and subagentStop hooks
+- **Knowledge auto-seed recursive scan**: discovers instruction files up to 4 levels deep in nested monorepo structures
+- **Orchestrator role instructions**: clearer spawn examples with all required parameters, warns against using Skill tool directly
+
+### Security
+- **Vite 7.3.1 → 7.3.2**: fixes 3 CVEs — arbitrary file read via WebSocket, path traversal in optimized deps, server.fs.deny bypass
+
 ## [1.3.0] — 2026-04-07
 
 ### Added — Token Optimization & Quality Assurance
