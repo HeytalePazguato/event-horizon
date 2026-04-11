@@ -400,12 +400,14 @@
     "@event-horizon/core": "workspace:*",
     "@event-horizon/renderer": "workspace:*",
     "@event-horizon/ui": "workspace:*",
-    "html2canvas": "^1.4.1"
+    "html2canvas": "^1.4.1",
+    "sql.js": "^1.14.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
     "@types/vscode": "^1.110.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.0",

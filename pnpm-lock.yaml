@@ -58,6 +58,9 @@ importers:
       html2canvas:
         specifier: ^1.4.1
         version: 1.4.1
+      sql.js:
+        specifier: ^1.14.1
+        version: 1.14.1
     devDependencies:
       '@types/node':
         specifier: ^25.5.2
@@ -68,6 +71,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.14)
+      '@types/sql.js':
+        specifier: ^1.4.11
+        version: 1.4.11
       '@types/vscode':
         specifier: ^1.110.0
         version: 1.110.0
@@ -846,6 +852,9 @@ packages:
   '@types/earcut@3.0.0':
     resolution: {integrity: sha512-k/9fOUGO39yd2sCjrbAJvGDEQvRwRnQIZlBz43roGwUZo5SHAmyVvSFyaVVZkicRVCaDXPKlbxrUcBuJoSWunQ==}
 
+  '@types/emscripten@1.41.5':
+    resolution: {integrity: sha512-cMQm7pxu6BxtHyqJ7mQZ2kXWV5SLmugybFdHCBbJ5eHzOo6VhBckEgAT3//rP5FwPHNPeEiq4SmQ5ucBwsOo4Q==}
+
   '@types/esrecurse@4.3.1':
     resolution: {integrity: sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw==}
 
@@ -871,6 +880,9 @@ packages:
 
   '@types/sarif@2.1.7':
     resolution: {integrity: sha512-kRz0VEkJqWLf1LLVN4pT1cg1Z9wAuvI6L97V3m2f5B76Tg8d413ddvLBPTEHAZJlnn4XSvu0FkZtViCQGVyrXQ==}
+
+  '@types/sql.js@1.4.11':
+    resolution: {integrity: sha512-QXIx38p2ZThJaK9vP5ZdqdlRe1FG9I8SmCZOS7FHfB/2qPAjZwkL7/vlfPg6N/oWHuuOaGg/P/IRwfP2W0kWVQ==}
 
   '@types/vscode@1.110.0':
     resolution: {integrity: sha512-AGuxUEpU4F4mfuQjxPPaQVyuOMhs+VT/xRok1jiHVBubHK7lBRvCuOMZG0LKUwxncrPorJ5qq/uil3IdZBd5lA==}
@@ -2065,6 +2077,9 @@ packages:
   spdx-license-ids@3.0.23:
     resolution: {integrity: sha512-CWLcCCH7VLu13TgOH+r8p1O/Znwhqv/dbb6lqWy67G+pT1kHmeD/+V36AVb/vq8QMIQwVShJ6Ssl5FPh0fuSdw==}
 
+  sql.js@1.14.1:
+    resolution: {integrity: sha512-gcj8zBWU5cFsi9WUP+4bFNXAyF1iRpA3LLyS/DP5xlrNzGmPIizUeBggKa8DbDwdqaKwUcTEnChtd2grWo/x/A==}
+
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
 
@@ -2920,6 +2935,8 @@ snapshots:
 
   '@types/earcut@3.0.0': {}
 
+  '@types/emscripten@1.41.5': {}
+
   '@types/esrecurse@4.3.1': {}
 
   '@types/estree@1.0.8': {}
@@ -2941,6 +2958,11 @@ snapshots:
       csstype: 3.2.3
 
   '@types/sarif@2.1.7': {}
+
+  '@types/sql.js@1.4.11':
+    dependencies:
+      '@types/emscripten': 1.41.5
+      '@types/node': 25.5.2
 
   '@types/vscode@1.110.0': {}
 
@@ -4315,6 +4337,8 @@ snapshots:
       spdx-license-ids: 3.0.23
 
   spdx-license-ids@3.0.23: {}
+
+  sql.js@1.14.1: {}
 
   stackback@0.0.2: {}
 
