@@ -18,6 +18,10 @@ export interface KnowledgeEntry {
   authorId: string;      // agent ID or 'user'
   createdAt: number;
   updatedAt: number;
+  /** Timestamp when the entry becomes valid (defaults to createdAt). */
+  validFrom?: number;
+  /** Timestamp when the entry expires. Undefined = never expires. */
+  validUntil?: number;
 }
 
 const MAX_WORKSPACE_ENTRIES = 200;
@@ -47,6 +51,7 @@ export class SharedKnowledgeStore {
     author: string,
     authorId: string,
     planId?: string,
+    validUntil?: number,
   ): KnowledgeEntry {
     const now = Date.now();
 
@@ -60,6 +65,8 @@ export class SharedKnowledgeStore {
         authorId,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
+        validFrom: existing?.validFrom ?? now,
+        validUntil,
       };
       this.workspace.set(key, entry);
       this.enforceLimit(this.workspace, MAX_WORKSPACE_ENTRIES);
@@ -82,6 +89,8 @@ export class SharedKnowledgeStore {
       authorId,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      validFrom: existing?.validFrom ?? now,
+      validUntil,
     };
     planMap.set(key, entry);
     this.enforceLimit(planMap, MAX_PLAN_ENTRIES);
@@ -92,30 +101,40 @@ export class SharedKnowledgeStore {
   /**
    * Read entries. If key provided, returns single entry (merged lookup: plan first, then workspace).
    * If no key, returns all entries merged (workspace + active plan).
+   * By default excludes expired entries — pass includeExpired=true to see them.
    */
-  read(key?: string, planId?: string): KnowledgeEntry[] {
+  read(key?: string, planId?: string, includeExpired = false): KnowledgeEntry[] {
     const pid = planId ?? '_default';
     const planMap = this.planEntries.get(pid);
+    const now = Date.now();
+    const isValid = (e: KnowledgeEntry) => includeExpired || !e.validUntil || e.validUntil > now;
 
     if (key) {
       const planEntry = planMap?.get(key);
-      if (planEntry) return [planEntry];
+      if (planEntry && isValid(planEntry)) return [planEntry];
       const wsEntry = this.workspace.get(key);
-      if (wsEntry) return [wsEntry];
+      if (wsEntry && isValid(wsEntry)) return [wsEntry];
       return [];
     }
 
     // Return all: workspace first, then plan
     const results: KnowledgeEntry[] = [];
     for (const entry of this.workspace.values()) {
-      results.push(entry);
+      if (isValid(entry)) results.push(entry);
     }
     if (planMap) {
       for (const entry of planMap.values()) {
-        results.push(entry);
+        if (isValid(entry)) results.push(entry);
       }
     }
     return results;
+  }
+
+  /**
+   * Read all entries including expired (for UI display with stale styling).
+   */
+  readAll(planId?: string): KnowledgeEntry[] {
+    return this.read(undefined, planId, true);
   }
 
   /**

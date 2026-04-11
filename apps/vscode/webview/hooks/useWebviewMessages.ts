@@ -56,6 +56,7 @@ export interface WebviewMessageDeps {
   setOrchestratorAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setCostInsights?: React.Dispatch<React.SetStateAction<unknown>>;
   setCostRecommendations?: React.Dispatch<React.SetStateAction<string[]>>;
+  setContextLayers?: React.Dispatch<React.SetStateAction<Record<string, unknown> | null>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -211,6 +212,9 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         }
         if (depsRef.current.setCostRecommendations) {
           depsRef.current.setCostRecommendations(data.recommendations ?? []);
+        }
+        if (data.contextLayers && depsRef.current.setContextLayers) {
+          depsRef.current.setContextLayers(data.contextLayers);
         }
         return;
       }

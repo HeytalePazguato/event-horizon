@@ -18,6 +18,8 @@ export interface KnowledgeEntry {
   authorId: string;
   createdAt: number;
   updatedAt: number;
+  validFrom?: number;
+  validUntil?: number;
 }
 
 export interface KnowledgePanelProps {
@@ -165,10 +167,26 @@ const EntryRow: FC<{
       border: `1px solid ${colors.border.primary}`,
       borderRadius: sizes.radius.sm,
       fontSize: sizes.text.sm,
+      opacity: entry.validUntil && entry.validUntil < Date.now() ? 0.4 : 1,
     }}>
       {/* Header: key + actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
-        <span style={{ color: colors.text.primary, fontWeight: 600 }}>{entry.key}</span>
+        <span style={{
+          color: entry.validUntil && entry.validUntil < Date.now() ? colors.text.dim : colors.text.primary,
+          fontWeight: 600,
+          textDecoration: entry.validUntil && entry.validUntil < Date.now() ? 'line-through' : 'none',
+        }}>{entry.key}</span>
+        {entry.validUntil && entry.validUntil < Date.now() && (
+          <span style={{
+            fontSize: sizes.text.xs, color: '#cc4444', fontWeight: 600,
+            padding: '0 4px', background: 'rgba(204,68,68,0.12)', borderRadius: 3,
+          }}>EXPIRED</span>
+        )}
+        {entry.validUntil && entry.validUntil >= Date.now() && (
+          <span style={{ fontSize: sizes.text.xs, color: '#cc8833' }}>
+            expires {relativeTime(entry.validUntil).replace(' ago', '')}
+          </span>
+        )}
         <span style={{ color: colors.text.dim, fontSize: sizes.text.xs, marginLeft: 'auto', flexShrink: 0 }}>
           {entry.author} &middot; {relativeTime(entry.updatedAt)}
         </span>

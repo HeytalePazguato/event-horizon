@@ -143,6 +143,8 @@ export interface UniverseProps {
   knowledgeLinks?: KnowledgeLink[];
   /** Agent type per agent ID — used for constellation coloring. */
   agentTypesMap?: Record<string, string>;
+  /** Context usage ratio per agent (0-1) — drives planet fuel gauge. */
+  contextUsage?: Record<string, number>;
 }
 
 // --- constants -----------------------------------------------------------
@@ -345,6 +347,7 @@ export const Universe: FC<UniverseProps> = ({
   spawnBeams = [],
   knowledgeLinks = [],
   agentTypesMap = {},
+  contextUsage = {},
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -432,6 +435,7 @@ export const Universe: FC<UniverseProps> = ({
   const orchestratorIdsRef = useRef(orchestratorAgentIds);
   const heartbeatStatusesRef = useRef(heartbeatStatuses);
   const compactingAgentIdsRef = useRef(compactingAgentIds);
+  const contextUsageRef = useRef(contextUsage);
   const mcpServersRef = useRef(mcpServers);
   const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
@@ -518,6 +522,7 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { orchestratorIdsRef.current = orchestratorAgentIds; }, [orchestratorAgentIds]);
   useEffect(() => { heartbeatStatusesRef.current = heartbeatStatuses; }, [heartbeatStatuses]);
   useEffect(() => { compactingAgentIdsRef.current = compactingAgentIds; }, [compactingAgentIds]);
+  useEffect(() => { contextUsageRef.current = contextUsage; }, [contextUsage]);
   useEffect(() => { mcpServersRef.current = mcpServers; }, [mcpServers]);
   useEffect(() => { visibleRef.current = visible; }, [visible]);
   useEffect(() => { spawnBeamsRef.current = spawnBeams; }, [spawnBeams]);
@@ -1520,6 +1525,7 @@ export const Universe: FC<UniverseProps> = ({
         isolatedAgentId: isolatedRef.current,
         heartbeatStatuses: heartbeatStatusesRef.current,
         compactingAgentIds: compactingAgentIdsRef.current,
+        contextUsage: contextUsageRef.current,
       });
 
       // Animate skill orbit rings

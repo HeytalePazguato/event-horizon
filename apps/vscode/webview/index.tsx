@@ -156,6 +156,7 @@ function App() {
   const [compactingAgentIds, setCompactingAgentIds] = useState<Record<string, boolean>>({});
   const [costInsights, setCostInsights] = useState<unknown>(null);
   const [costRecommendations, setCostRecommendations] = useState<string[]>([]);
+  const [contextLayers, setContextLayers] = useState<Record<string, unknown> | null>(null);
   const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
   const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
 
@@ -218,6 +219,7 @@ function App() {
     setMcpServers, setCompactingAgentIds,
     setSpawnBeams, setOrchestratorAgentIds,
     setCostInsights, setCostRecommendations,
+    setContextLayers,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -552,6 +554,9 @@ function App() {
             spawnBeams={spawnBeams}
             knowledgeLinks={knowledgeLinksComputed}
             agentTypesMap={agentTypesMap}
+            contextUsage={contextLayers ? Object.fromEntries(
+              Object.entries(contextLayers).map(([id, layer]) => [id, (layer as { usageRatio?: number }).usageRatio ?? 0])
+            ) : undefined}
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
@@ -574,6 +579,7 @@ function App() {
           traceAggregate={traceAggregate}
           costInsights={costInsights as CostInsightsData | null}
           costRecommendations={costRecommendations}
+          contextLayers={contextLayers as Record<string, import('@event-horizon/ui').ContextLayerBreakdown> | null}
           onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
       )}
 

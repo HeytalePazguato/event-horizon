@@ -2,6 +2,30 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [2.0.0] — Unreleased
+
+### Added — Persistence & Infrastructure (Competitive Integration Plan — Phases 1-2)
+- **SQLite event persistence**: all agent events stored verbatim in a local SQLite database (sql.js WASM) at the extension's global storage path. Events survive VS Code reloads and restarts. Configurable via `eventHorizon.persistence.enabled` and `eventHorizon.persistence.retentionDays` (default 30 days)
+- **Event replay on reload**: on webview hydration, last 24 hours of historical events and agent sessions are sent to the UI. Logs tab shows previous session events, agents from recent sessions appear in the agent list
+- **Full-text event search**: FTS5-indexed events searchable by payload content (tool names, file paths, agent names). Falls back to LIKE-based search when FTS5 is unavailable
+- **Agent session tracking**: spawn/terminate events create session records with token usage, cost, and event count aggregates
+- **Auto-pruning**: events older than the retention period are automatically cleaned up on activation
+- **WebSocket endpoint**: bidirectional WebSocket server at `/ws` path with auth token verification, debounced broadcasts (100ms batching), and ping/pong health checks. Configurable via `eventHorizon.websocket.enabled`
+- **EventBus batch debouncing**: new `onBatch(prefix, handler, windowMs)` method accumulates rapid events by type prefix and delivers them as a single array after the window. Existing synchronous listeners unchanged
+- **Hierarchical event metadata**: `AgentEvent` now carries optional `workspace` and `category` fields for structured filtering. `deriveEventCategory()` helper extracts category from event type prefix
+- **Knowledge temporal validity**: persistence layer supports `validFrom`/`validUntil` timestamps on knowledge entries, enabling expiration and point-in-time queries
+
+### Added — Context Intelligence (Phase 3)
+- **Context layer classification**: TokenAnalyzer now classifies token usage per agent into 4 layers inspired by MemPalace's L0-L3 stack — System Prompt (estimated from first cache creation), Conversation History, Tool Results, and Cached Tokens. Tracks usage ratio against configurable context window size (default 200k)
+- **Context fuel gauge on planets**: 270-degree arc around each planet showing context window usage. Color shifts from cyan (<50%) to amber (50-80%) to red (>80%). Critical usage (>90%) triggers pulse animation. Configurable via `eventHorizon.contextGauge.windowSize`
+- **Context Layers panel section**: new first section in the Costs tab showing per-agent stacked horizontal bars with System (blue), Conversation (teal), and Tool Results (amber) breakdown. Shows usage as "124k / 200k (62%)" with color-coded percentage
+- **Knowledge temporal validity**: `validFrom`/`validUntil` fields on shared knowledge entries. Agents can set expiration via `eh_write_shared` (`valid_until` parameter). `eh_read_shared` excludes expired entries by default (`include_expired: true` to see them). Expired entries shown dimmed with strikethrough and red "EXPIRED" badge in Knowledge panel
+
+### Improved
+- **Reviewer role**: now requires full verification pipeline (lint + build + test must all pass) and completeness check (all requested tasks must be done) before approving work
+- **`eh:review` skill**: expanded from 5-step to 4-phase process — completeness check, build verification pipeline, code review, cross-check. Blocker/suggestion/nit severity system
+- **`eh:work-on-plan` skill**: added mandatory `pnpm lint && pnpm build && pnpm test` verification step after completing all tasks, before committing
+
 ## [1.3.1] — 2026-04-08
 
 ### Fixed

@@ -1032,10 +1032,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
   // Forward cost insights to webview every 30 seconds
+  // Read context window size from settings
+  const contextWindowSetting = vscode.workspace.getConfiguration('eventHorizon').get<number>('contextGauge.windowSize', 200000);
+  tokenAnalyzer.setContextWindowSize(contextWindowSetting);
+
   const costInsightsInterval = setInterval(() => {
     const insights = tokenAnalyzer.getInsights();
     const recommendations = tokenAnalyzer.getRecommendations();
-    webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations });
+    const contextLayers = tokenAnalyzer.getContextLayers();
+    webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations, contextLayers });
 
     // Log duplicate read warnings
     for (const dup of insights.duplicateReads) {

@@ -71,6 +71,7 @@ export interface OperationsViewProps {
   traceAggregate?: Record<string, number>;
   costInsights?: CostInsightsData | null;
   costRecommendations?: string[];
+  contextLayers?: Record<string, import('./panels/CostInsightsPanel.js').ContextLayerBreakdown> | null;
   onAddToSharedKnowledge?: (file: string) => void;
 }
 
@@ -89,7 +90,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], onAddToSharedKnowledge }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -262,7 +263,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               </div>
             )}
             {activeTab === 'costs' && (
-              <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} onAddToSharedKnowledge={onAddToSharedKnowledge} />
+              <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} contextLayers={contextLayers} onAddToSharedKnowledge={onAddToSharedKnowledge} />
             )}
             {activeTab === 'knowledge' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

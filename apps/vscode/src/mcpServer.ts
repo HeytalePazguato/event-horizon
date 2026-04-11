@@ -346,19 +346,21 @@ export const MCP_TOOLS: McpToolDef[] = [
         value: { type: 'string', description: 'Knowledge value' },
         scope: { type: 'string', enum: ['workspace', 'plan'], description: 'Scope: workspace (persistent) or plan (scoped to active plan). Defaults to plan.' },
         plan_id: { type: 'string', description: 'Plan ID for plan-scoped entries (optional, defaults to active plan)' },
+        valid_until: { type: 'string', description: 'Expiration timestamp (ISO 8601 string or epoch ms). Entry will be excluded from reads after this time. Omit for no expiration.' },
       },
       required: ['agent_id', 'key', 'value'],
     },
   },
   {
     name: 'eh_read_shared',
-    description: 'Read shared knowledge entries. Returns merged workspace + active plan entries. Optionally filter by key.',
+    description: 'Read shared knowledge entries. Returns merged workspace + active plan entries. By default excludes expired entries.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent/session ID' },
         key: { type: 'string', description: 'Specific key to read (optional, omit for all entries)' },
         plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+        include_expired: { type: 'boolean', description: 'Include expired entries (default: false)' },
       },
       required: ['agent_id'],
     },
@@ -1302,15 +1304,24 @@ export class McpServer {
         const value = args.value as string;
         const scope = (args.scope as 'workspace' | 'plan') ?? 'plan';
         const planId = args.plan_id as string | undefined;
-        const entry = sharedKnowledge.write(key, value, scope, agentName, agentId, planId);
-        return { written: true, key: entry.key, scope: entry.scope, author: entry.author };
+        // Parse valid_until — accept ISO 8601 string or epoch ms
+        let validUntil: number | undefined;
+        if (args.valid_until) {
+          const raw = args.valid_until as string;
+          const parsed = Number(raw);
+          validUntil = Number.isFinite(parsed) ? parsed : new Date(raw).getTime();
+          if (!Number.isFinite(validUntil)) validUntil = undefined;
+        }
+        const entry = sharedKnowledge.write(key, value, scope, agentName, agentId, planId, validUntil);
+        return { written: true, key: entry.key, scope: entry.scope, author: entry.author, validUntil: entry.validUntil };
       }
 
       case 'eh_read_shared': {
         const { sharedKnowledge } = this.deps;
         const key = args.key as string | undefined;
         const planId = args.plan_id as string | undefined;
-        const entries = sharedKnowledge.read(key, planId);
+        const includeExpired = args.include_expired === true;
+        const entries = sharedKnowledge.read(key, planId, includeExpired);
         return {
           entries: entries.map((e) => ({
             key: e.key,
@@ -1318,6 +1329,8 @@ export class McpServer {
             scope: e.scope,
             author: e.author,
             updatedAt: e.updatedAt,
+            validUntil: e.validUntil,
+            expired: e.validUntil ? e.validUntil < Date.now() : false,
           })),
           count: entries.length,
         };

@@ -7,6 +7,24 @@ import type { AgentEvent } from '@event-horizon/core';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+/** Per-agent context window breakdown inspired by MemPalace's L0-L3 layers. */
+export interface ContextLayerBreakdown {
+  /** L0: System prompt / instruction files — estimated from first cache creation event. */
+  systemPrompt: number;
+  /** L1: Conversation history — accumulated input minus system prompt and tool results. */
+  conversationHistory: number;
+  /** L2: Tool results — tokens from tool.result events. */
+  toolResults: number;
+  /** L3: Cached tokens — cacheRead tokens (reused context, not consuming fresh window). */
+  cachedTokens: number;
+  /** Total context window used (systemPrompt + conversationHistory + toolResults). */
+  totalUsed: number;
+  /** Estimated context window size (configurable, default 200k for Claude). */
+  contextWindowSize: number;
+  /** Usage ratio: totalUsed / contextWindowSize. */
+  usageRatio: number;
+}
+
 export interface CostInsights {
   /** cacheRead / (cacheRead + cacheCreation + input) — higher is better. */
   cacheHitRatio: number;
@@ -56,6 +74,14 @@ interface TaskCostRecord {
 const TOKENS_PER_FILE_READ = 500;
 const HIGH_PRESSURE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const ANOMALY_RATIO_THRESHOLD = 3; // 3x average = anomaly
+const DEFAULT_CONTEXT_WINDOW = 200_000; // 200k tokens for Claude
+
+interface ContextLayerTracking {
+  systemPromptEstimate: number;   // estimated from first cache creation
+  toolResultTokens: number;        // accumulated from tool.result events
+  hasSeenFirstCacheCreation: boolean;
+  totalInputSeen: number;          // latest cumulative input token count
+}
 
 // ── Analyzer ───────────────────────────────────────────────────────────────
 
@@ -64,6 +90,8 @@ export class TokenAnalyzer {
   private compactions = new Map<string, CompactionRecord>();
   private fileReads = new Map<string, FileReadRecord>();
   private taskCosts: TaskCostRecord[] = [];
+  private contextTracking = new Map<string, ContextLayerTracking>();
+  private contextWindowSize = DEFAULT_CONTEXT_WINDOW;
 
   /** Process an incoming agent event. */
   onEvent(event: AgentEvent): void {
@@ -77,6 +105,24 @@ export class TokenAnalyzer {
       if (typeof payload.cacheReadTokensDelta === 'number') tokens.cacheRead += payload.cacheReadTokensDelta as number;
       if (typeof payload.cacheCreationTokensDelta === 'number') tokens.cacheCreation += payload.cacheCreationTokensDelta as number;
       if (typeof payload.costUsd === 'number') tokens.costUsd = payload.costUsd as number;
+
+      // ── Context layer tracking ──
+      const ctx = this.getOrCreateContextTracking(agentId);
+      // Estimate system prompt from first cache creation (system prompt gets cached on first request)
+      if (typeof payload.cacheCreationTokensDelta === 'number' && !ctx.hasSeenFirstCacheCreation) {
+        ctx.systemPromptEstimate = payload.cacheCreationTokensDelta as number;
+        ctx.hasSeenFirstCacheCreation = true;
+      }
+      // Track cumulative input tokens
+      if (typeof payload.inputTokens === 'number') {
+        ctx.totalInputSeen = payload.inputTokens as number;
+      }
+    }
+
+    // Track tool result tokens for context layer breakdown
+    if (type === 'tool.result' && payload && typeof payload.outputTokens === 'number') {
+      const ctx = this.getOrCreateContextTracking(agentId);
+      ctx.toolResultTokens += payload.outputTokens as number;
     }
 
     // Track file reads from tool.call events
@@ -98,10 +144,15 @@ export class TokenAnalyzer {
     // Track compaction events
     if (type === 'task.progress' && payload?.compaction === true) {
       this.recordCompaction(agentId, timestamp);
+      // Compaction resets conversation history (context was truncated)
+      const ctx = this.getOrCreateContextTracking(agentId);
+      ctx.toolResultTokens = 0;
     }
     // Also catch PostCompact-style events
     if (payload?.hook === 'PostCompact' || payload?.event === 'post_compact') {
       this.recordCompaction(agentId, timestamp);
+      const ctx = this.getOrCreateContextTracking(agentId);
+      ctx.toolResultTokens = 0;
     }
 
     // Track task completion costs
@@ -163,7 +214,47 @@ export class TokenAnalyzer {
     return recs;
   }
 
+  /** Set the estimated context window size (tokens). */
+  setContextWindowSize(size: number): void {
+    this.contextWindowSize = size;
+  }
+
+  /** Get per-agent context layer breakdown (inspired by MemPalace's L0-L3 stack). */
+  getContextLayers(): Record<string, ContextLayerBreakdown> {
+    const result: Record<string, ContextLayerBreakdown> = {};
+    for (const [agentId, ctx] of this.contextTracking) {
+      const tokens = this.agentTokens.get(agentId);
+      const systemPrompt = ctx.systemPromptEstimate;
+      const toolResults = ctx.toolResultTokens;
+      const cachedTokens = tokens?.cacheRead ?? 0;
+      // Conversation = total input - system prompt - tool results (clamped to 0)
+      const conversationHistory = Math.max(0, ctx.totalInputSeen - systemPrompt - toolResults);
+      const totalUsed = systemPrompt + conversationHistory + toolResults;
+      const usageRatio = this.contextWindowSize > 0 ? Math.min(1, totalUsed / this.contextWindowSize) : 0;
+
+      result[agentId] = {
+        systemPrompt,
+        conversationHistory,
+        toolResults,
+        cachedTokens,
+        totalUsed,
+        contextWindowSize: this.contextWindowSize,
+        usageRatio,
+      };
+    }
+    return result;
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────
+
+  private getOrCreateContextTracking(agentId: string): ContextLayerTracking {
+    let ctx = this.contextTracking.get(agentId);
+    if (!ctx) {
+      ctx = { systemPromptEstimate: 0, toolResultTokens: 0, hasSeenFirstCacheCreation: false, totalInputSeen: 0 };
+      this.contextTracking.set(agentId, ctx);
+    }
+    return ctx;
+  }
 
   private getOrCreateAgentTokens(agentId: string): AgentTokens {
     let tokens = this.agentTokens.get(agentId);

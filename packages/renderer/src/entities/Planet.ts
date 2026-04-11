@@ -77,6 +77,8 @@ export type ExtendedPlanet = Container & {
   __aura?: Graphics;
   __orchestratorGlow?: Graphics;
   __heartbeatRing?: Graphics;
+  __contextGauge?: Graphics;
+  __contextUsage?: number;  // 0-1 ratio
 };
 
 /** Resolve the effective size multiplier (exported for testing). */
@@ -166,6 +168,13 @@ export function createPlanet(props: PlanetProps): ExtendedPlanet {
   heartbeatRing.alpha = 0;
   container.addChild(heartbeatRing);
   container.__heartbeatRing = heartbeatRing;
+
+  // ── Context fuel gauge (270° arc showing context usage, hidden by default) ──
+  const contextGauge = new Graphics();
+  contextGauge.visible = false;
+  container.addChild(contextGauge);
+  container.__contextGauge = contextGauge;
+  container.__contextUsage = 0;
 
   // ── Thinking ring (orbiting dots, hidden by default) ────────────────────
   const ringColor = resolveRingColor(agentType, ringColorOverride);
