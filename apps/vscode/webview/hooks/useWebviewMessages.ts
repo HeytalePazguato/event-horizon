@@ -296,6 +296,52 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         return;
       }
 
+      // ── Historical event replay from persistence ──
+      if (msg?.type === 'event-history') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        const events = (data.events ?? []) as Array<{
+          agentId: string; agentName: string; agentType: string; type: string;
+          timestamp: number; payload?: Record<string, unknown>;
+        }>;
+        const sessions = (data.sessions ?? []) as Array<{
+          agentId: string; agentName?: string; agentType: string;
+          sessionStart: number; sessionEnd?: number; cwd?: string;
+        }>;
+
+        // Replay historical agents from sessions
+        for (const session of sessions) {
+          const existing = agentMapRef.current[session.agentId];
+          if (!existing) {
+            const state: AgentState = {
+              id: session.agentId,
+              name: session.agentName ?? session.agentId,
+              type: session.agentType as AgentRuntimeState,
+              state: session.sessionEnd ? 'idle' : 'idle',
+              cwd: session.cwd,
+            } as AgentState;
+            setAgentMap((prev) => ({ ...prev, [session.agentId]: state }));
+            setAgents((prev) => {
+              if (prev.some((a) => a.id === session.agentId)) return prev;
+              return [...prev, { id: session.agentId, name: session.agentName ?? session.agentId, agentType: session.agentType, cwd: session.cwd }];
+            });
+          }
+        }
+
+        // Replay historical log entries (most recent first → reverse for chronological add)
+        for (const evt of [...events].reverse()) {
+          addLog({
+            id: `hist-${evt.timestamp}-${evt.agentId}`,
+            ts: new Date(evt.timestamp).toLocaleTimeString(),
+            agentId: evt.agentId,
+            agentName: evt.agentName ?? evt.agentId,
+            type: evt.type,
+            skillName: evt.payload?.isSkill ? (evt.payload.skillName as string | undefined) : undefined,
+          });
+        }
+        return;
+      }
+
       if (msg?.type !== 'event' || !msg.payload) return;
 
       // ── Agent event processing ──

@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, wsBroadcast } from './eventServer';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -20,9 +20,17 @@ import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
 import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
 import { ensureBundledSkills } from './bundledSkills';
+import { EventHorizonDB } from './persistence';
+import { deriveEventCategory } from '@event-horizon/core';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
+let ehDatabase: EventHorizonDB | null = null;
+
+/** Access the persistence database (if enabled). Used by webviewProvider for event replay. */
+export function getDatabase(): EventHorizonDB | null {
+  return ehDatabase;
+}
 
 /** Forward an event to the main webview. */
 function broadcastEvent(event: AgentEvent): void {
@@ -150,6 +158,46 @@ export function activate(context: vscode.ExtensionContext): void {
   // Restore shared knowledge from globalState
   const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
   if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
+
+  // ── Initialize SQLite persistence ──
+  const persistenceEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('persistence.enabled', true);
+  if (persistenceEnabled) {
+    const dbDir = context.globalStorageUri.fsPath;
+    const dbPath = path.join(dbDir, 'event-horizon.db');
+    (async () => {
+      try {
+        await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+        // Try loading existing DB from disk
+        let dbData: Uint8Array | undefined;
+        try {
+          dbData = await vscode.workspace.fs.readFile(vscode.Uri.file(dbPath));
+        } catch { /* no existing DB — will create new */ }
+        ehDatabase = await EventHorizonDB.create(dbData);
+
+        // Prune old events on startup
+        const retentionDays = vscode.workspace.getConfiguration('eventHorizon').get<number>('persistence.retentionDays', 30);
+        const pruned = ehDatabase.pruneEvents(retentionDays * 24 * 60 * 60 * 1000);
+        if (pruned > 0) {
+          console.log(`[Event Horizon] Pruned ${pruned} events older than ${retentionDays} days`);
+        }
+
+        // Auto-save DB to disk every 60 seconds
+        const dbSaveInterval = setInterval(() => {
+          if (ehDatabase) {
+            try {
+              const data = ehDatabase.save();
+              void vscode.workspace.fs.writeFile(vscode.Uri.file(dbPath), data);
+            } catch { /* save failed — will retry next interval */ }
+          }
+        }, 60_000);
+        context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
+
+        console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
+      } catch (err) {
+        console.error('[Event Horizon] Failed to initialize persistence:', err);
+      }
+    })();
+  }
 
   // Auto-seed workspace knowledge from project instruction files on first activation.
   // Scans all workspace folders + immediate subdirectories for CLAUDE.md, .cursorrules, AGENTS.md, etc.
@@ -622,6 +670,42 @@ export function activate(context: vscode.ExtensionContext): void {
     // Feed event to TokenAnalyzer for cost insights
     tokenAnalyzer.onEvent(event);
 
+    // ── Persist event to SQLite (verbatim, MemPalace principle) ──
+    if (ehDatabase) {
+      try {
+        const workspace = (event.payload?.cwd as string)
+          ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const category = deriveEventCategory(event.type);
+        ehDatabase.insertEvent(event, workspace, category);
+
+        // Track agent sessions
+        if (event.type === 'agent.spawn') {
+          ehDatabase.upsertSession({
+            agentId: event.agentId,
+            agentName: event.agentName,
+            agentType: event.agentType,
+            sessionStart: event.timestamp,
+            cwd: (event.payload?.cwd as string) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            totalTokensIn: 0, totalTokensOut: 0, totalCostUsd: 0, eventCount: 1,
+          });
+        } else if (event.type === 'agent.terminate' || event.type === 'agent.idle') {
+          // Update session end + stats on terminate/idle
+          const sessions = ehDatabase.getSessions();
+          const session = sessions.find((s) => s.agentId === event.agentId && !s.sessionEnd);
+          if (session) {
+            ehDatabase.upsertSession({
+              ...session,
+              sessionEnd: event.type === 'agent.terminate' ? event.timestamp : undefined,
+              totalTokensIn: session.totalTokensIn + ((event.payload?.inputTokens as number) ?? 0),
+              totalTokensOut: session.totalTokensOut + ((event.payload?.outputTokens as number) ?? 0),
+              totalCostUsd: session.totalCostUsd + ((event.payload?.costUsd as number) ?? 0),
+              eventCount: session.eventCount + 1,
+            });
+          }
+        }
+      } catch { /* persistence failure should never block event processing */ }
+    }
+
     // Inject workspace cwd if the agent/event doesn't provide one
     if (!event.payload?.cwd) {
       const primaryFolder = vscode.workspace.workspaceFolders?.[0];
@@ -687,6 +771,7 @@ export function activate(context: vscode.ExtensionContext): void {
     metricsEngine.process(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
+    wsBroadcast(event);
     updateStatusBar();
 
     // ── Rate extension prompt (one-time, after 2+ agents connect) ──
@@ -1303,12 +1388,33 @@ export function activate(context: vscode.ExtensionContext): void {
       openCodeSSEWatchers.clear();
       // Clean up spawn registry
       spawnRegistry.dispose();
+      // Close persistence DB (save handled by deactivate)
+      if (ehDatabase) {
+        try { ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
+      }
       webviewRef.current = null;
     },
   });
 }
 
 export function deactivate(): void {
+  // Save and close persistence DB
+  if (ehDatabase) {
+    try {
+      const data = ehDatabase.save();
+      // Synchronous write on deactivation — vscode.workspace.fs is async
+      // so we use Node fs.writeFileSync for guaranteed save
+      const fss = require('fs');
+      const p = require('path');
+      const dbDir = p.join(process.env.VSCODE_GLOBAL_STORAGE ?? '', '');
+      // Fallback: save was already happening via interval; this is best-effort
+      try {
+        fss.writeFileSync(p.join(dbDir, 'event-horizon.db'), data);
+      } catch { /* interval saves should have already persisted */ }
+      ehDatabase.close();
+      ehDatabase = null;
+    } catch { /* best effort */ }
+  }
   stopEventServer();
   webviewRef.current = null;
 }

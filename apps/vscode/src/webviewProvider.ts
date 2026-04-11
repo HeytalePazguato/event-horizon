@@ -13,6 +13,7 @@ import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } fro
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
 import { planBoardManager, roleManager, agentProfiler, sharedKnowledge } from './eventServer.js';
+import { getDatabase } from './extension.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -320,6 +321,23 @@ function wireUniverseWebview(
     const metrics = metricsEngine.getAllMetrics();
     if (agents.length > 0) {
       void webview.postMessage({ type: 'init-state', agents, metrics });
+    }
+
+    // ── Send historical events from persistence for replay ──
+    const db = getDatabase();
+    if (db) {
+      try {
+        const since = Date.now() - 24 * 60 * 60 * 1000; // last 24 hours
+        const historicalEvents = db.queryEvents({ since, limit: 500 });
+        const sessions = db.getSessions(since);
+        if (historicalEvents.length > 0) {
+          void webview.postMessage({
+            type: 'event-history',
+            events: historicalEvents,
+            sessions,
+          });
+        }
+      } catch { /* persistence not ready yet — skip history */ }
     }
 
     const savedMedals = context.globalState.get<{

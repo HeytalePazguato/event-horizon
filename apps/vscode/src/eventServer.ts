@@ -6,6 +6,7 @@
 import * as crypto from 'crypto';
 import * as http from 'http';
 import * as vscode from 'vscode';
+import { WebSocketServer, WebSocket } from 'ws';
 import type { AgentEvent } from '@event-horizon/core';
 import { AGENT_EVENT_TYPES, AGENT_TYPES } from '@event-horizon/core';
 import { mapOpenCodeToEvent, mapClaudeHookToEvent, mapCopilotHookToEvent, mapCursorHookToEvent } from '@event-horizon/connectors';
@@ -27,6 +28,42 @@ export interface EventServerCallbacks {
 let server: http.Server | null = null;
 let callbacks: EventServerCallbacks | null = null;
 const activeSockets = new Set<import('net').Socket>();
+
+// ── WebSocket state ──
+let wss: WebSocketServer | null = null;
+const wsClients = new Set<WebSocket>();
+
+/** Debounced broadcast buffer — accumulates events for 100ms before sending. */
+let wsBroadcastBuffer: Array<{ type: string; agentId: string; timestamp: number }> = [];
+let wsBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+const WS_DEBOUNCE_MS = 100;
+const WS_PING_INTERVAL_MS = 30_000;
+
+function wsBroadcast(event: AgentEvent): void {
+  wsBroadcastBuffer.push({
+    type: event.type,
+    agentId: event.agentId,
+    timestamp: event.timestamp,
+  });
+  if (wsBroadcastTimer === null) {
+    wsBroadcastTimer = setTimeout(flushWsBroadcast, WS_DEBOUNCE_MS);
+  }
+}
+
+function flushWsBroadcast(): void {
+  wsBroadcastTimer = null;
+  if (wsBroadcastBuffer.length === 0 || wsClients.size === 0) {
+    wsBroadcastBuffer = [];
+    return;
+  }
+  const payload = JSON.stringify({ type: 'events-processed', events: wsBroadcastBuffer });
+  wsBroadcastBuffer = [];
+  for (const client of wsClients) {
+    if (client.readyState === WebSocket.OPEN) {
+      try { client.send(payload); } catch { /* drop failed sends */ }
+    }
+  }
+}
 
 // Per-session auth token — generated once at server start, required on all requests.
 let authToken: string | null = null;
@@ -404,6 +441,67 @@ export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT
     socket.on('close', () => activeSockets.delete(socket));
   });
 
+  // ── WebSocket server on /ws path ──
+  const wsEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('websocket.enabled', true);
+  if (wsEnabled) {
+    wss = new WebSocketServer({ noServer: true });
+
+    srv.on('upgrade', (req, socket, head) => {
+      // Only upgrade on /ws path
+      if (req.url !== '/ws') {
+        socket.destroy();
+        return;
+      }
+      // Verify auth token (query param or header)
+      const url = new URL(req.url, `http://127.0.0.1`);
+      const token = url.searchParams.get('token')
+        ?? req.headers['authorization']?.replace('Bearer ', '');
+      if (authToken && token !== authToken) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      wss!.handleUpgrade(req, socket, head, (ws) => {
+        wss!.emit('connection', ws, req);
+      });
+    });
+
+    wss.on('connection', (ws) => {
+      wsClients.add(ws);
+      let alive = true;
+
+      ws.on('pong', () => { alive = true; });
+      ws.on('close', () => { wsClients.delete(ws); });
+      ws.on('error', () => { wsClients.delete(ws); });
+
+      // Handle incoming events via WebSocket
+      ws.on('message', (raw) => {
+        try {
+          const data = JSON.parse(String(raw));
+          if (data && typeof data === 'object' && data.type && data.agentId) {
+            // Treat as raw AgentEvent
+            if (callbacks) callbacks.onEvent(data as AgentEvent);
+            ws.send(JSON.stringify({ ok: true, id: data.id }));
+          }
+        } catch { /* malformed message — ignore */ }
+      });
+
+      // Ping/pong health check
+      const pingInterval = setInterval(() => {
+        if (!alive) {
+          ws.terminate();
+          wsClients.delete(ws);
+          clearInterval(pingInterval);
+          return;
+        }
+        alive = false;
+        ws.ping();
+      }, WS_PING_INTERVAL_MS);
+
+      ws.on('close', () => clearInterval(pingInterval));
+    });
+  }
+
   // Try configured port, then fallback to next ports
   let lastError: Error | null = null;
 
@@ -441,6 +539,21 @@ export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT
 }
 
 export function stopEventServer(): void {
+  // Close WebSocket connections
+  if (wss) {
+    for (const client of wsClients) {
+      try { client.terminate(); } catch { /* best effort */ }
+    }
+    wsClients.clear();
+    wss.close();
+    wss = null;
+  }
+  if (wsBroadcastTimer) {
+    clearTimeout(wsBroadcastTimer);
+    wsBroadcastTimer = null;
+  }
+  wsBroadcastBuffer = [];
+
   if (server) {
     // Destroy active connections so the port is released immediately
     for (const socket of activeSockets) socket.destroy();
@@ -452,6 +565,9 @@ export function stopEventServer(): void {
   authToken = null;
   rateCounts.clear();
 }
+
+/** Broadcast an event notification to all connected WebSocket clients (debounced at 100ms). */
+export { wsBroadcast };
 
 let boundPort = DEFAULT_PORT;
 
