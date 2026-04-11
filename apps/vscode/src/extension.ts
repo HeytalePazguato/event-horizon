@@ -1398,22 +1398,9 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  // Save and close persistence DB
+  // Close persistence DB — interval saves already persisted data to disk
   if (ehDatabase) {
-    try {
-      const data = ehDatabase.save();
-      // Synchronous write on deactivation — vscode.workspace.fs is async
-      // so we use Node fs.writeFileSync for guaranteed save
-      const fss = require('fs');
-      const p = require('path');
-      const dbDir = p.join(process.env.VSCODE_GLOBAL_STORAGE ?? '', '');
-      // Fallback: save was already happening via interval; this is best-effort
-      try {
-        fss.writeFileSync(p.join(dbDir, 'event-horizon.db'), data);
-      } catch { /* interval saves should have already persisted */ }
-      ehDatabase.close();
-      ehDatabase = null;
-    } catch { /* best effort */ }
+    try { ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
   }
   stopEventServer();
   webviewRef.current = null;

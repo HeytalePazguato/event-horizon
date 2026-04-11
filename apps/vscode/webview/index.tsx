@@ -572,7 +572,7 @@ function App() {
           onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })}
           traceSpans={traceSpans as import('@event-horizon/ui').OperationsViewProps['traceSpans']}
           traceAggregate={traceAggregate}
-          costInsights={costInsights as import('@event-horizon/ui').CostInsightsData | null}
+          costInsights={costInsights as CostInsightsData | null}
           costRecommendations={costRecommendations}
           onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
       )}
