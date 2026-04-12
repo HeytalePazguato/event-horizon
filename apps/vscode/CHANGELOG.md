@@ -21,7 +21,11 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Context Layers panel section**: new first section in the Costs tab showing per-agent stacked horizontal bars with System (blue), Conversation (teal), and Tool Results (amber) breakdown. Shows usage as "124k / 200k (62%)" with color-coded percentage
 - **Knowledge temporal validity**: `validFrom`/`validUntil` fields on shared knowledge entries. Agents can set expiration via `eh_write_shared` (`valid_until` parameter). `eh_read_shared` excludes expired entries by default (`include_expired: true` to see them). Expired entries shown dimmed with strikethrough and red "EXPIRED" badge in Knowledge panel
 
+### Added — Orchestration Skill
+- **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails (auth errors, model failures). Supports `--agent` flag to override worker agent type (e.g. `--agent opencode`). Agent type resolution: user override → task metadata → same as orchestrator
+
 ### Improved
+- **`eh:create-plan` skill**: reinforced `eh_claim_orchestrator` as CRITICAL mandatory step — added to both step 10 and Rules section. Addresses 100% skip rate in previous usage
 - **Reviewer role**: now requires full verification pipeline (lint + build + test must all pass) and completeness check (all requested tasks must be done) before approving work
 - **`eh:review` skill**: expanded from 5-step to 4-phase process — completeness check, build verification pipeline, code review, cross-check. Blocker/suggestion/nit severity system
 - **`eh:work-on-plan` skill**: added mandatory `pnpm lint && pnpm build && pnpm test` verification step after completing all tasks, before committing

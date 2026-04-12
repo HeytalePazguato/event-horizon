@@ -64,9 +64,9 @@ You are a software architect creating a plan for multi-agent parallel execution.
    - **Placeholder scan**: Search for vague language — "add appropriate handling", "similar to task N", "TBD", "implement as needed". Replace with concrete details.
    - **Consistency**: Do file paths, function names, and type signatures match across tasks? A function called \`createTheme()\` in task 1.1 but \`buildTheme()\` in task 2.3 is a bug. Fix inline.
 
-10. **Register with Event Horizon** — After writing the plan file:
+10. **Register with Event Horizon** — After writing the plan file, you MUST do BOTH of these steps (not just one):
     a. Call \`eh_load_plan\` with the full markdown text in the \`content\` parameter (the server cannot read files). Also pass \`file_path\` for reference and your \`agent_id\`.
-    b. Call \`eh_claim_orchestrator\` with your \`agent_id\` to become the orchestrator for this plan. This gives you access to spawn agents, assign tasks, and monitor the team. Loading a plan auto-promotes you, but calling claim explicitly ensures it sticks.
+    b. **CRITICAL — Call \`eh_claim_orchestrator\`** with your \`agent_id\` and the \`plan_id\` returned from step (a). You MUST do this — without it, no agent can spawn workers or manage the plan. This is the most commonly skipped step and it breaks the entire orchestration flow.
 
 ## Output format
 
@@ -134,6 +134,7 @@ The plan MUST use this structure, as this is what Event Horizon parses:
 - **Mark completed work** — Use \`- [x]\` for tasks that are already done.
 - **Write the plan file** — If the user specified an output folder, save the plan there. Otherwise, ask where they'd like it saved. Use the pattern \`[PLAN_NAME]_PLAN.md\` for the filename.
 - **Register the plan** — After writing the file, call \`eh_load_plan\` with the \`content\` parameter set to the full markdown text (not just the file path — the server cannot read files from disk). This is critical — it makes the plan visible to all agents in Event Horizon.
+- **ALWAYS claim orchestrator** — After \`eh_load_plan\`, you MUST call \`eh_claim_orchestrator\` with your \`agent_id\` and the plan's \`plan_id\`. Never skip this. Without it, the plan has no manager and \`eh_spawn_agent\` will fail for all agents.
 `,
   },
   {
@@ -569,6 +570,97 @@ Present your analysis first, then offer these optimizations (with user approval)
 - **Never delete content** — Only move content to other files. Every line removed from one file must appear in another.
 - **Report before/after** — Show estimated token savings: "CLAUDE.md: 4,200 → 2,100 tokens (saved 2,100 tokens per session)".
 - **Ask before modifying** — Present the plan and get user confirmation before making changes.
+`,
+  },
+  {
+    dirName: 'eh-orchestrate',
+    content: `---
+name: eh:orchestrate
+description: "Orchestrate a plan — spawn agents, assign tasks, monitor progress, handle failures"
+user-invocable: true
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Bash
+argument-hint: "[plan name or ID] [optional: phase or task range] [optional: --agent opencode|claude-code|cursor]"
+metadata:
+  category: coordination
+  tags: orchestration, multi-agent, coordination, management
+---
+
+You are an orchestrator agent. Your job is to MANAGE a plan — spawn worker agents, assign tasks, monitor their progress, and handle failures. You do NOT implement tasks yourself.
+
+## Startup
+
+1. **Claim orchestrator** — Call \`eh_claim_orchestrator\` with your \`agent_id\` and the plan's \`plan_id\`. This is MANDATORY — without it you cannot spawn agents. Do this FIRST, every time, even if you think you already have the role.
+
+2. **Get the plan** — Call \`eh_get_plan\` to load the current plan. If the user specified a plan name or ID, use it. Otherwise use the most recent active plan.
+
+3. **Determine worker agent type** — Decide which agent CLI to use when spawning workers, in this priority order:
+   a. **User specified \`--agent\`** in the arguments (e.g. \`--agent opencode\`) → use that for all spawns
+   b. **Task specifies agent type** in plan metadata (e.g. \`[agent: opencode]\`) → use per-task
+   c. **Same as orchestrator** — if you (the orchestrator) are running as \`claude-code\`, spawn \`claude-code\` workers. If you're \`opencode\`, spawn \`opencode\`. This is the default.
+
+   Common reason to override: the user's organization requires authentication per session for one agent type but not another (e.g. claude-code needs auth but opencode doesn't).
+
+4. **Assess the scope** — The user may specify a phase ("Phase 4"), a task range ("tasks 4.1-4.5"), or nothing (work on all pending tasks). Identify which tasks to work on.
+
+5. **Identify ready tasks** — From the plan, find tasks that are:
+   - Status: \`pending\` (not claimed, not done, not failed)
+   - Dependencies satisfied: all \`blockedBy\` tasks are \`done\`
+   These are the tasks you can assign NOW.
+
+## Orchestration loop
+
+For each batch of ready tasks:
+
+1. **Spawn agents** — For each ready task, call \`eh_spawn_agent\` with:
+   - \`agent_id\`: your agent ID
+   - \`agent_type\`: the resolved agent type from step 3 (user override → task metadata → same as you)
+   - \`role\`: the role from the task (e.g. \`implementer\`, \`tester\`, \`reviewer\`)
+   - \`model\`: the model from the task metadata (e.g. \`haiku\`, \`sonnet\`, \`opus\`)
+   - \`plan_id\`: the plan ID
+   - \`task_id\`: the task ID
+   - \`prompt\`: A clear prompt telling the agent what to do. Include:
+     - The task title and description from the plan
+     - The acceptance criteria
+     - The verify command
+     - The file paths to modify
+     - Instruction to use \`/eh:work-on-plan\` skill with the specific task ID
+
+   Spawn as many parallel agents as there are independent ready tasks (up to 5 at a time to avoid overload).
+
+2. **Monitor progress** — Every 30-60 seconds, call \`eh_get_team_status\` to check:
+   - Which agents are still working
+   - Which tasks changed status
+   - Any failures or blockers
+
+3. **Handle failures** — If a task fails:
+   - Read the failure note via \`eh_get_plan\`
+   - Decide: retry with same model, escalate to higher model via \`eh_retry_task\`, or skip and report to user
+   - If retrying, spawn a new agent for the retried task
+
+4. **Unblock next phase** — When all tasks in a dependency group complete, identify newly-unblocked tasks and spawn agents for them.
+
+5. **Check messages** — Call \`eh_get_messages\` periodically to see if worker agents reported issues.
+
+## Completion
+
+When all requested tasks are done (or failed with no more retries):
+
+1. Call \`eh_get_team_status\` for a final summary
+2. Run the full verification pipeline yourself: \`pnpm lint && pnpm build && pnpm test\`
+3. If verification fails, identify which task's changes caused the failure and spawn a debugger agent to fix it
+4. Report to the user: what completed, what failed, what needs attention
+5. If the user asked to commit, stage the changes, commit with a descriptive message, and push
+
+## Rules
+
+- **Prefer spawning over doing** — Your primary job is to spawn worker agents and coordinate. Only implement tasks yourself as a fallback when: (a) spawning fails due to auth/permission errors, (b) all model tiers fail to load, (c) there's a single trivial task where spawn overhead isn't justified, or (d) the user explicitly asks you to do the work. When you do fall back to implementing, use \`/eh:work-on-plan\` with the specific task ID.
+- **Always claim orchestrator first** — Call \`eh_claim_orchestrator\` before doing anything else. Every time. Even if you think you already have the role.
+- **Spawn in parallel** — Independent tasks should be assigned to separate agents simultaneously. Don't serialize work that can be parallelized.
+- **Respect the plan's roles** — If a task says \`[role: tester]\`, spawn the agent with role \`tester\`. Don't make every agent an implementer.
+- **Use the plan's model recommendations** — If a task says \`<!-- model: haiku -->\`, pass \`model: haiku\` to \`eh_spawn_agent\`. The ModelTierManager will override if it has better data.
+- **Communicate with workers** — Use \`eh_send_message\` to notify agents of relevant changes (e.g. "task 2.1 is done, you can start 2.2 now").
+- **Update task statuses** — Call \`eh_update_task\` to mark tasks as they progress. Workers should do this themselves, but verify via \`eh_get_team_status\`.
 `,
   },
 ];
