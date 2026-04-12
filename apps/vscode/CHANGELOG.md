@@ -42,6 +42,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **`eh_get_team_status` MCP tool** includes `contextUsageRatio`, `contextTokensUsed`, and `contextWindowSize` per agent. Orchestrators can avoid assigning new tasks to agents near their context limit
 
 ### Fixed
+- **`eh_stop_agent` now actually terminates the spawned process**: previously it only disposed the VS Code terminal, but the underlying `claude -p` / `opencode` / `cursor` process kept running and burned tokens. Spawned agents are now wired to a `vscode.Pseudoterminal` backed by a real `child_process.ChildProcess`, tracked by PID. Stop performs a graceful SIGTERM and escalates to SIGKILL if the process hasn't exited within 3 seconds. User-closing the terminal also kills the process
 - **Spawned agents couldn't call EH MCP tools**: `--allowedTools` only listed built-in tools (Edit, Write, Read, etc.) but not MCP tools, so spawned workers got "permission denied" errors. Now includes `mcp__event-horizon__*` and `Skill` tool patterns
 - **Spawned agents had wrong working directory**: when no `cwd` was passed to `eh_spawn_agent`, it fell back to `vscode.workspace.workspaceFolders[0]` which could be empty or wrong. Now falls back to the orchestrator's `cwd` from agent state before the workspace folder
 - **Demo mode crash**: OperationsView was calling `setTimeout → setState` during render body, creating an infinite re-render loop. Moved elapsed-time calculation into a proper `useEffect`
