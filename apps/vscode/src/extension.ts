@@ -1130,6 +1130,47 @@ export function activate(context: vscode.ExtensionContext): void {
       if (hasCopilot) { await setupCopilotHooks(); await registerCopilotMcpServer(); }
       if (hasCursor) { await setupCursorHooks(); await registerCursorMcpServer(); }
 
+      // ── Agent CLI auto-detection ──
+      // Scan PATH for installed agent CLIs without configured hooks and offer one-click setup.
+      const autoDetectEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('autoDetect.enabled', true);
+      if (autoDetectEnabled) {
+        const { AgentDetector } = await import('./agentDetector.js');
+        const detector = new AgentDetector({
+          isClaudeCodeHooksInstalled,
+          isOpenCodeHooksInstalled,
+          isCopilotHooksInstalled,
+          isCursorHooksInstalled,
+          copilotExtensionInstalled: !!vscode.extensions.getExtension('GitHub.copilot'),
+        });
+        const unconfigured = await detector.detectUnconfigured();
+        if (unconfigured.length > 0) {
+          const names = unconfigured.map((a) => a.name).join(', ');
+          void vscode.window.showInformationMessage(
+            `Event Horizon detected ${names} ${unconfigured.length === 1 ? 'is' : 'are'} installed but ${unconfigured.length === 1 ? 'has' : 'have'} no EH hooks configured. Set up hooks to start visualizing?`,
+            'Configure',
+            'Dismiss',
+          ).then(async (choice) => {
+            if (choice !== 'Configure') return;
+            const picks = await vscode.window.showQuickPick(
+              unconfigured.map((a) => ({ label: a.name, picked: true, agent: a })),
+              { canPickMany: true, placeHolder: 'Select agents to configure hooks for' },
+            );
+            if (!picks || picks.length === 0) return;
+            for (const pick of picks) {
+              try {
+                if (pick.agent.type === 'claude-code') { await setupClaudeCodeHooks(); await registerMcpServer(); }
+                else if (pick.agent.type === 'opencode') { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
+                else if (pick.agent.type === 'cursor') { await setupCursorHooks(); await registerCursorMcpServer(); }
+                else if (pick.agent.type === 'copilot') { await setupCopilotHooks(); await registerCopilotMcpServer(); }
+              } catch (err) {
+                void vscode.window.showWarningMessage(`Event Horizon: failed to configure ${pick.agent.name} — ${String(err)}`);
+              }
+            }
+            void vscode.window.showInformationMessage(`Event Horizon: configured ${picks.length} agent(s).`);
+          });
+        }
+      }
+
       // Write bundled skills to ~/.claude/skills/
       await ensureBundledSkills();
 
@@ -1249,6 +1290,85 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('eventHorizon.toggleView', () => {
       webviewRef.current?.postMessage({ type: 'toggle-view' });
+    })
+  );
+
+  // ── Export data command ──────────────────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('eventHorizon.exportData', async () => {
+      if (!ehDatabase) {
+        void vscode.window.showWarningMessage('Event Horizon: persistence is disabled. Enable eventHorizon.persistence.enabled to use export.');
+        return;
+      }
+      // Step 1: pick format
+      const format = await vscode.window.showQuickPick(
+        [
+          { label: 'Events (JSON)', detail: 'All persisted events as JSON array', id: 'events-json' },
+          { label: 'Events (CSV)', detail: 'Events with summary columns: id, type, agentId, agentType, timestamp, payload', id: 'events-csv' },
+          { label: 'Agent Sessions (JSON)', detail: 'Session history with token usage and cost', id: 'sessions-json' },
+        ] as const,
+        { placeHolder: 'Choose export format' }
+      );
+      if (!format) return;
+
+      // Step 2: pick date range
+      const range = await vscode.window.showQuickPick(
+        [
+          { label: 'Last 24 hours', ms: 24 * 60 * 60 * 1000 },
+          { label: 'Last 7 days', ms: 7 * 24 * 60 * 60 * 1000 },
+          { label: 'Last 30 days', ms: 30 * 24 * 60 * 60 * 1000 },
+          { label: 'All time', ms: 0 },
+        ] as const,
+        { placeHolder: 'Choose date range' }
+      );
+      if (!range) return;
+
+      // Step 3: save dialog
+      const ext = format.id.endsWith('csv') ? 'csv' : 'json';
+      const defaultName = `event-horizon-${format.id}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(defaultName),
+        filters: ext === 'csv' ? { 'CSV': ['csv'] } : { 'JSON': ['json'] },
+      });
+      if (!uri) return;
+
+      // Step 4: query + serialize
+      try {
+        const since = range.ms > 0 ? Date.now() - range.ms : undefined;
+        let content: string;
+        if (format.id === 'sessions-json') {
+          const sessions = ehDatabase.getSessions(since);
+          content = JSON.stringify(sessions, null, 2);
+        } else {
+          const events = ehDatabase.queryEvents({ since, limit: 100_000 });
+          if (format.id === 'events-csv') {
+            // CSV: id,type,agentId,agentType,timestamp,payload
+            const escape = (s: string) => `"${s.replace(/"/g, '""')}"`;
+            const header = 'id,type,agentId,agentType,timestamp,payload\n';
+            const rows = events.map((e) => [
+              escape(e.id),
+              escape(e.type),
+              escape(e.agentId),
+              escape(e.agentType),
+              String(e.timestamp),
+              escape(JSON.stringify(e.payload ?? {})),
+            ].join(','));
+            content = header + rows.join('\n');
+          } else {
+            content = JSON.stringify(events, null, 2);
+          }
+        }
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+        const choice = await vscode.window.showInformationMessage(
+          `Event Horizon: exported ${format.label} to ${uri.fsPath}`,
+          'Open File',
+        );
+        if (choice === 'Open File') {
+          void vscode.commands.executeCommand('vscode.open', uri);
+        }
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Event Horizon: export failed — ${String(err)}`);
+      }
     })
   );
 

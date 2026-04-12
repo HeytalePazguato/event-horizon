@@ -29,6 +29,17 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Wormhole visuals on planets**: purple swirling portals appear at correlated agents' planets, connected by a flowing-particle line. Stronger correlations are more opaque. Portals spin in opposite directions; particles flow along the connection
 - **Execution replay drill-down**: done/failed plan tasks now have a "▶ View Execution" button. Opens a modal showing all events from the agent during that task's execution window — tool calls, file reads/writes, results. Queries persisted events via `db.queryEvents()` filtered by agentId + claim time + complete time
 
+### Added — Quality of Life (Phase 5)
+- **Agent CLI auto-detection**: on extension activation, scans PATH for installed agent CLIs (`claude`, `opencode`, `cursor`) and checks for the GitHub Copilot extension. When any agent is installed but missing EH hooks, shows a notification with a "Configure" button → multi-select QuickPick → runs hook setup. Toggleable via `eventHorizon.autoDetect.enabled` (default on). New `apps/vscode/src/agentDetector.ts` with 10 unit tests
+- **Data export command**: new "Event Horizon: Export Data..." command in the command palette. 3-step UI: format pick (Events JSON/CSV, Agent Sessions JSON) → date range pick (24h / 7d / 30d / all) → save dialog. CSV exports include payload as escaped JSON string. "Open File" button on success notification
+- **6 new VS Code settings** under `eventHorizon.*`:
+  - `persistence.enabled` (default true) — toggle SQLite persistence
+  - `persistence.retentionDays` (default 30) — auto-prune old events
+  - `websocket.enabled` (default true) — toggle WS endpoint at `/ws`
+  - `contextGauge.enabled` (default true) — toggle planet fuel gauge
+  - `contextGauge.windowSize` (default 200000) — context window size for gauge
+  - `autoDetect.enabled` (default true) — toggle agent CLI auto-detection on startup
+
 ### Added — Orchestration Skill
 - **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails (auth errors, model failures). Supports `--agent` flag to override worker agent type (e.g. `--agent opencode`). Agent type resolution: user override → task metadata → same as orchestrator
 

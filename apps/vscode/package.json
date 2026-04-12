@@ -70,6 +70,11 @@
       {
         "command": "eventHorizon.focusWaitingAgent",
         "title": "Event Horizon: Focus Waiting Agent"
+      },
+      {
+        "command": "eventHorizon.exportData",
+        "title": "Event Horizon: Export Data...",
+        "icon": "$(export)"
       }
     ],
     "menus": {
@@ -324,6 +329,46 @@
           "maximum": 1,
           "description": "Budget warning threshold (0.1 to 1.0). A warning is shown when spending reaches this percentage of the plan budget.",
           "order": 7
+        },
+        "eventHorizon.persistence.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable SQLite persistence for events and knowledge. Disable to run in ephemeral mode (events lost on reload).",
+          "order": 30
+        },
+        "eventHorizon.persistence.retentionDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 365,
+          "description": "Number of days to retain persisted events before auto-pruning on startup.",
+          "order": 31
+        },
+        "eventHorizon.websocket.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable WebSocket endpoint at /ws for bidirectional agent communication. External tools can connect to ws://127.0.0.1:<port>/ws and receive debounced event broadcasts.",
+          "order": 32
+        },
+        "eventHorizon.contextGauge.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show context usage gauge (270° arc) on planet visuals. Color shifts cyan → amber → red as agents approach their context window limit.",
+          "order": 33
+        },
+        "eventHorizon.contextGauge.windowSize": {
+          "type": "number",
+          "default": 200000,
+          "minimum": 1000,
+          "maximum": 2000000,
+          "description": "Estimated context window size in tokens (drives the planet fuel-gauge calculation). Default is 200000 for Claude Sonnet/Opus.",
+          "order": 34
+        },
+        "eventHorizon.autoDetect.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "On extension activation, scan PATH for installed AI agent CLIs (claude, opencode, cursor) and offer one-click hook setup if any are found without configured hooks.",
+          "order": 35
         }
       }
     },
