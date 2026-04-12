@@ -43,6 +43,14 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Added — Orchestration Skill
 - **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails (auth errors, model failures). Supports `--agent` flag to override worker agent type (e.g. `--agent opencode`). Agent type resolution: user override → task metadata → same as orchestrator
 
+### Improved — Knowledge Tab Surfaces Temporal Validity
+- **Stats header**: shows count of active / permanent / expiring soon (next 24h) / expired entries with color coding (amber for expiring soon, red for expired)
+- **"Show expired" toggle**: hidden by default (matches what agents see via `eh_read_shared`). Toggle on to inspect the full audit trail including expired entries
+- **"Expires after" dropdown in Add form**: choose from Never / 1h / 6h / 24h / 7d / 30d when creating a knowledge entry — finally usable from the UI (previously could only be set via the MCP tool)
+- **Expiration controls in edit mode**: existing entries can have their expiration changed or extended. "Keep current" option preserves the existing validUntil
+- **+24h "Extend" button on expired entries**: one-click resurrection — bumps validUntil to now+24h
+- All changes are backward compatible — the AddForm/Edit defaults preserve prior behavior (no expiration when unset)
+
 ### Improved — Skills + Tools Leverage CIP Features
 - **`eh:research` skill**: now instructs researchers to call `eh_search_events` and `eh_read_shared` BEFORE re-exploring the codebase. Prior agent activity on related files is searchable in the persisted event database — researchers should stand on those shoulders. Also instructs saving non-trivial findings via `eh_write_shared` with `valid_until` for time-bound facts
 - **`eh:debug` skill**: explicit guidance to use `eh_search_events` for: error message recurrence (`type: agent.error`), tool-call history on suspect files (`type: tool.call`), prior task failures (`type: task.fail`), and recent file writers (`type: file.write`). Often surfaces the introducing change in seconds vs hours of git blame. Findings should cite the introducing event (timestamp + agent + tool call)

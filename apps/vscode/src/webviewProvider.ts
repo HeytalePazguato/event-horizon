@@ -601,9 +601,11 @@ function wireUniverseWebview(
         }
       });
     } else if (msg?.type === 'knowledge-add') {
-      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+      const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil);
     } else if (msg?.type === 'knowledge-edit') {
-      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+      const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil);
     } else if (msg?.type === 'knowledge-delete') {
       sharedKnowledge.delete(msg.key as string, msg.scope as 'workspace' | 'plan', 'user');
     } else if (msg?.type === 'search-events') {

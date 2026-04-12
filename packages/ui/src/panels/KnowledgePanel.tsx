@@ -26,9 +26,26 @@ export interface KnowledgePanelProps {
   workspace: KnowledgeEntry[];
   plan: KnowledgeEntry[];
   planName?: string;
-  onAdd: (key: string, value: string, scope: 'workspace' | 'plan') => void;
-  onEdit: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onAdd: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
+  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
   onDelete: (key: string, scope: 'workspace' | 'plan') => void;
+}
+
+// ── Expiration presets (MemPalace-inspired temporal validity) ──────────────
+
+const EXPIRATION_PRESETS: Array<{ label: string; ms: number | null }> = [
+  { label: 'Never', ms: null },
+  { label: '1 hour', ms: 60 * 60 * 1000 },
+  { label: '6 hours', ms: 6 * 60 * 60 * 1000 },
+  { label: '24 hours', ms: 24 * 60 * 60 * 1000 },
+  { label: '7 days', ms: 7 * 24 * 60 * 60 * 1000 },
+  { label: '30 days', ms: 30 * 24 * 60 * 60 * 1000 },
+];
+
+function expirationFromPreset(label: string): number | undefined {
+  const preset = EXPIRATION_PRESETS.find((p) => p.label === label);
+  if (!preset || preset.ms === null) return undefined;
+  return Date.now() + preset.ms;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -49,19 +66,21 @@ const TRUNCATE_LENGTH = 200;
 
 // ── Inline add form ────────────────────────────────────────────────────────
 
-const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: string, scope: 'workspace' | 'plan') => void; onCancel: () => void }> = ({ scope, onSave, onCancel }) => {
+const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void; onCancel: () => void }> = ({ scope, onSave, onCancel }) => {
   const [key, setKey] = useState('');
   const [value, setValue] = useState('');
+  const [expiration, setExpiration] = useState<string>('Never');
 
   const handleSave = useCallback(() => {
     const k = key.trim();
     const v = value.trim();
     if (!k || !v) return;
-    onSave(k, v, scope);
+    onSave(k, v, scope, expirationFromPreset(expiration));
     setKey('');
     setValue('');
+    setExpiration('Never');
     onCancel();
-  }, [key, value, scope, onSave, onCancel]);
+  }, [key, value, scope, expiration, onSave, onCancel]);
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
@@ -101,6 +120,27 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
         rows={3}
         style={{ ...inputStyle, resize: 'vertical' }}
       />
+      {/* Expiration — MemPalace temporal validity. Default "Never" preserves prior behavior. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
+        <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+          Expires after:
+        </label>
+        <select
+          value={expiration}
+          onChange={(e) => setExpiration(e.target.value)}
+          style={{
+            ...inputStyle,
+            width: 'auto',
+            flex: 1,
+            cursor: 'pointer',
+          }}
+          title="When this entry should auto-expire. Expired entries are excluded from agent reads by default but still visible in the UI."
+        >
+          {EXPIRATION_PRESETS.map((p) => (
+            <option key={p.label} value={p.label}>{p.label}</option>
+          ))}
+        </select>
+      </div>
       <div style={{ display: 'flex', gap: sizes.spacing.xs, justifyContent: 'flex-end' }}>
         <button
           type="button"
@@ -143,22 +183,35 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
 
 const EntryRow: FC<{
   entry: KnowledgeEntry;
-  onEdit: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
   onDelete: (key: string, scope: 'workspace' | 'plan') => void;
 }> = ({ entry, onEdit, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(entry.value);
+  const [editExpiration, setEditExpiration] = useState<string>(
+    entry.validUntil ? 'Keep current' : 'Never'
+  );
 
   const isTruncated = entry.value.length > TRUNCATE_LENGTH;
   const displayValue = expanded || !isTruncated ? entry.value : entry.value.slice(0, TRUNCATE_LENGTH) + '...';
+  const isExpired = entry.validUntil !== undefined && entry.validUntil < Date.now();
 
   const handleSaveEdit = useCallback(() => {
     const v = editValue.trim();
     if (!v) return;
-    onEdit(entry.key, v, entry.scope);
+    // "Keep current" → preserve existing validUntil; preset → recompute; "Never" → undefined
+    let validUntil: number | undefined;
+    if (editExpiration === 'Keep current') validUntil = entry.validUntil;
+    else validUntil = expirationFromPreset(editExpiration);
+    onEdit(entry.key, v, entry.scope, validUntil);
     setEditing(false);
-  }, [editValue, entry.key, entry.scope, onEdit]);
+  }, [editValue, editExpiration, entry.key, entry.scope, entry.validUntil, onEdit]);
+
+  // Quick-action: Extend an expired entry by 24h (resets its validUntil)
+  const handleExtend = useCallback(() => {
+    onEdit(entry.key, entry.value, entry.scope, Date.now() + 24 * 60 * 60 * 1000);
+  }, [entry.key, entry.value, entry.scope, onEdit]);
 
   return (
     <div style={{
@@ -190,9 +243,28 @@ const EntryRow: FC<{
         <span style={{ color: colors.text.dim, fontSize: sizes.text.xs, marginLeft: 'auto', flexShrink: 0 }}>
           {entry.author} &middot; {relativeTime(entry.updatedAt)}
         </span>
+        {isExpired && (
+          <button
+            type="button"
+            onClick={handleExtend}
+            title="Extend by 24 hours"
+            style={{
+              background: 'rgba(204,136,51,0.15)',
+              border: '1px solid #cc8833',
+              color: '#cc8833',
+              cursor: 'pointer',
+              padding: '0 6px',
+              fontSize: sizes.text.xs,
+              fontFamily: fonts.mono,
+              borderRadius: 3,
+            }}
+          >
+            +24h
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => { setEditing(!editing); setEditValue(entry.value); }}
+          onClick={() => { setEditing(!editing); setEditValue(entry.value); setEditExpiration(entry.validUntil ? 'Keep current' : 'Never'); }}
           title="Edit"
           style={{
             background: 'transparent',
@@ -245,6 +317,33 @@ const EntryRow: FC<{
               boxSizing: 'border-box',
             }}
           />
+          {/* Expiration — preserved by default (Keep current), can be reset to never or a preset */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
+            <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+              Expires after:
+            </label>
+            <select
+              value={editExpiration}
+              onChange={(e) => setEditExpiration(e.target.value)}
+              style={{
+                width: 'auto', flex: 1,
+                padding: '3px 6px',
+                fontSize: sizes.text.sm,
+                fontFamily: fonts.mono,
+                background: colors.bg.primary,
+                border: `1px solid ${colors.border.accent}`,
+                borderRadius: sizes.radius.sm,
+                color: colors.text.primary,
+                outline: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              {entry.validUntil && <option value="Keep current">Keep current ({relativeTime(entry.validUntil).replace(' ago', '')} {entry.validUntil < Date.now() ? 'ago — expired' : 'left'})</option>}
+              {EXPIRATION_PRESETS.map((p) => (
+                <option key={p.label} value={p.label}>{p.label}</option>
+              ))}
+            </select>
+          </div>
           <div style={{ display: 'flex', gap: sizes.spacing.xs, justifyContent: 'flex-end' }}>
             <button
               type="button"
@@ -398,23 +497,41 @@ const Section: FC<{
 
 export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planName, onAdd, onEdit, onDelete }) => {
   const [search, setSearch] = useState('');
+  const [showExpired, setShowExpired] = useState(false);
 
   const filterEntries = useCallback((entries: KnowledgeEntry[]): KnowledgeEntry[] => {
+    const now = Date.now();
+    let result = entries;
+    // Temporal filter — by default hide expired entries (they're still in the data, just hidden)
+    if (!showExpired) {
+      result = result.filter((e) => !e.validUntil || e.validUntil > now);
+    }
     const q = search.trim().toLowerCase();
-    if (!q) return entries;
+    if (!q) return result;
     // Exact scope match
     if (q === 'workspace' || q === 'plan') {
-      return entries.filter((e) => e.scope === q);
+      return result.filter((e) => e.scope === q);
     }
-    return entries.filter((e) =>
+    return result.filter((e) =>
       e.key.toLowerCase().includes(q) ||
       e.author.toLowerCase().includes(q) ||
       e.value.toLowerCase().includes(q)
     );
-  }, [search]);
+  }, [search, showExpired]);
 
   const filteredWorkspace = filterEntries(workspace);
   const filteredPlan = filterEntries(plan);
+
+  // Stats — total / active / expired / expiring soon (next 24h)
+  const allEntries = [...workspace, ...plan];
+  const now = Date.now();
+  const stats = {
+    total: allEntries.length,
+    expired: allEntries.filter((e) => e.validUntil !== undefined && e.validUntil < now).length,
+    expiringSoon: allEntries.filter((e) => e.validUntil !== undefined && e.validUntil >= now && e.validUntil < now + 24 * 60 * 60 * 1000).length,
+    permanent: allEntries.filter((e) => !e.validUntil).length,
+  };
+  const active = stats.total - stats.expired;
 
   return (
     <div style={{
@@ -426,6 +543,48 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
       boxSizing: 'border-box',
       overflowY: 'auto',
     }}>
+      {/* Stats header — MemPalace-inspired temporal validity overview */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: sizes.spacing.md,
+        marginBottom: sizes.spacing.sm, flexShrink: 0,
+        fontSize: sizes.text.xs, fontFamily: fonts.mono,
+      }}>
+        <span style={{ color: colors.text.dim }}>
+          <span style={{ color: colors.text.primary, fontWeight: 600 }}>{active}</span> active
+        </span>
+        {stats.permanent > 0 && (
+          <span style={{ color: colors.text.dim }}>
+            <span style={{ color: colors.text.secondary }}>{stats.permanent}</span> permanent
+          </span>
+        )}
+        {stats.expiringSoon > 0 && (
+          <span style={{ color: '#cc8833' }} title="Entries expiring within 24 hours">
+            <span style={{ fontWeight: 600 }}>{stats.expiringSoon}</span> expiring soon
+          </span>
+        )}
+        {stats.expired > 0 && (
+          <span style={{ color: '#cc4444' }} title="Entries past their validUntil — excluded from agent reads by default">
+            <span style={{ fontWeight: 600 }}>{stats.expired}</span> expired
+          </span>
+        )}
+        <label
+          style={{
+            marginLeft: 'auto',
+            display: 'flex', alignItems: 'center', gap: 4,
+            cursor: 'pointer', color: colors.text.dim,
+          }}
+          title="When off, expired entries are hidden (matches what agents see by default via eh_read_shared)"
+        >
+          <input
+            type="checkbox"
+            checked={showExpired}
+            onChange={(e) => setShowExpired(e.target.checked)}
+            style={{ cursor: 'pointer' }}
+          />
+          Show expired
+        </label>
+      </div>
+
       {/* Search input */}
       <div style={{ marginBottom: sizes.spacing.md, flexShrink: 0 }}>
         <input

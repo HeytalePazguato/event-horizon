@@ -579,8 +579,8 @@ function App() {
           onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace}
           onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill}
           knowledgeWorkspace={knowledgeWorkspace} knowledgePlan={knowledgePlan} knowledgePlanName={plan?.name}
-          onKnowledgeAdd={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-add', key, value, scope })}
-          onKnowledgeEdit={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope })}
+          onKnowledgeAdd={(key, value, scope, validUntil) => vscodeApi?.postMessage({ type: 'knowledge-add', key, value, scope, validUntil })}
+          onKnowledgeEdit={(key, value, scope, validUntil) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope, validUntil })}
           onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })}
           traceSpans={traceSpans as import('@event-horizon/ui').OperationsViewProps['traceSpans']}
           traceAggregate={traceAggregate}
