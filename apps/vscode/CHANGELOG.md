@@ -4,78 +4,53 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ## [2.0.0] — Unreleased
 
-### Added — Persistence & Infrastructure (Competitive Integration Plan — Phases 1-2)
-- **SQLite event persistence**: all agent events stored verbatim in a local SQLite database (sql.js WASM) at the extension's global storage path. Events survive VS Code reloads and restarts. Configurable via `eventHorizon.persistence.enabled` and `eventHorizon.persistence.retentionDays` (default 30 days)
+### Added
+- **SQLite event persistence**: all agent events stored verbatim in a local SQLite database (sql.js WASM) at the extension's global storage path. Events survive VS Code reloads and restarts. Configurable via `eventHorizon.persistence.enabled` and `eventHorizon.persistence.retentionDays` (default 30 days). Auto-pruning removes events older than the retention period on activation
 - **Event replay on reload**: on webview hydration, last 24 hours of historical events and agent sessions are sent to the UI. Logs tab shows previous session events, agents from recent sessions appear in the agent list
 - **Full-text event search**: FTS5-indexed events searchable by payload content (tool names, file paths, agent names). Falls back to LIKE-based search when FTS5 is unavailable
 - **Agent session tracking**: spawn/terminate events create session records with token usage, cost, and event count aggregates
-- **Auto-pruning**: events older than the retention period are automatically cleaned up on activation
 - **WebSocket endpoint**: bidirectional WebSocket server at `/ws` path with auth token verification, debounced broadcasts (100ms batching), and ping/pong health checks. Configurable via `eventHorizon.websocket.enabled`
 - **EventBus batch debouncing**: new `onBatch(prefix, handler, windowMs)` method accumulates rapid events by type prefix and delivers them as a single array after the window. Existing synchronous listeners unchanged
 - **Hierarchical event metadata**: `AgentEvent` now carries optional `workspace` and `category` fields for structured filtering. `deriveEventCategory()` helper extracts category from event type prefix
-- **Knowledge temporal validity**: persistence layer supports `validFrom`/`validUntil` timestamps on knowledge entries, enabling expiration and point-in-time queries
-
-### Added — Context Intelligence (Phase 3)
-- **Context layer classification**: TokenAnalyzer now classifies token usage per agent into 4 layers inspired by MemPalace's L0-L3 stack — System Prompt (estimated from first cache creation), Conversation History, Tool Results, and Cached Tokens. Tracks usage ratio against configurable context window size (default 200k)
-- **Context fuel gauge on planets**: 270-degree arc around each planet showing context window usage. Color shifts from cyan (<50%) to amber (50-80%) to red (>80%). Critical usage (>90%) triggers pulse animation. Configurable via `eventHorizon.contextGauge.windowSize`
-- **Context Layers panel section**: new first section in the Costs tab showing per-agent stacked horizontal bars with System (blue), Conversation (teal), and Tool Results (amber) breakdown. Shows usage as "124k / 200k (62%)" with color-coded percentage
-- **Knowledge temporal validity**: `validFrom`/`validUntil` fields on shared knowledge entries. Agents can set expiration via `eh_write_shared` (`valid_until` parameter). `eh_read_shared` excludes expired entries by default (`include_expired: true` to see them). Expired entries shown dimmed with strikethrough and red "EXPIRED" badge in Knowledge panel
-
-### Added — Search & Discovery (Phase 4)
-- **Event search engine**: new `EventSearchEngine` (in `apps/vscode/src/eventSearch.ts`) wraps SQLite FTS queries with MemPalace-style 4-stage query sanitization — short queries pass through, long queries extract last question, fall back to last meaningful sentence, then truncate to last 500 chars. Prevents 89× retrieval degradation from system-prompt contamination
-- **`eh_search_events` MCP tool**: agents can now full-text search persisted events. Supports filters by agent ID, type, and time range
-- **Search bar in Logs panel**: press Enter on the search input to trigger persistence-backed DB search (instead of just live-feed filter). Results replace live feed; "Clear search" button returns to live mode. Currently-selected agent and single type filter are passed as search constraints
-- **Cross-agent file correlation**: new `CrossAgentCorrelator` tracks which files multiple agents touched within a 10-minute window. Builds wormhole connections between agent pairs that share files. Strength scales with shared file count (capped at 1.0). Prunes correlations older than 30 minutes. Broadcasts active wormholes to webview every 15s
-- **Wormhole visuals on planets**: purple swirling portals appear at correlated agents' planets, connected by a flowing-particle line. Stronger correlations are more opaque. Portals spin in opposite directions; particles flow along the connection
-- **Execution replay drill-down**: done/failed plan tasks now have a "▶ View Execution" button. Opens a modal showing all events from the agent during that task's execution window — tool calls, file reads/writes, results. Queries persisted events via `db.queryEvents()` filtered by agentId + claim time + complete time
-
-### Added — Quality of Life (Phase 5)
-- **Agent CLI auto-detection**: on extension activation, scans PATH for installed agent CLIs (`claude`, `opencode`, `cursor`) and checks for the GitHub Copilot extension. When any agent is installed but missing EH hooks, shows a notification with a "Configure" button → multi-select QuickPick → runs hook setup. Toggleable via `eventHorizon.autoDetect.enabled` (default on). New `apps/vscode/src/agentDetector.ts` with 10 unit tests
-- **Data export command**: new "Event Horizon: Export Data..." command in the command palette. 3-step UI: format pick (Events JSON/CSV, Agent Sessions JSON) → date range pick (24h / 7d / 30d / all) → save dialog. CSV exports include payload as escaped JSON string. "Open File" button on success notification
-- **6 new VS Code settings** under `eventHorizon.*`:
-  - `persistence.enabled` (default true) — toggle SQLite persistence
-  - `persistence.retentionDays` (default 30) — auto-prune old events
-  - `websocket.enabled` (default true) — toggle WS endpoint at `/ws`
-  - `contextGauge.enabled` (default true) — toggle planet fuel gauge
-  - `contextGauge.windowSize` (default 200000) — context window size for gauge
-  - `autoDetect.enabled` (default true) — toggle agent CLI auto-detection on startup
-
-### Added — Orchestration Skill
-- **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails (auth errors, model failures). Supports `--agent` flag to override worker agent type (e.g. `--agent opencode`). Agent type resolution: user override → task metadata → same as orchestrator
-
-### Added — Knowledge Tab Surfaces L0–L3 Loading Tiers
-- **Collapsible info banner** ("ⓘ How knowledge loads into agents") at the top of the Knowledge tab. Explains the 4-tier MemPalace-inspired loading model with token budgets and EH's mapping (workspace → L0/L1, plan → L2, persisted events → L3)
-- **Tier badges on entry rows**: every knowledge entry now shows a colored `L0`/`L1`/`L2` chip with hover tooltip explaining the tier
-- **Tier picker in Add and Edit forms** (workspace scope only — plan entries are always L2). Defaults to L1; advanced users can promote critical entries to L0
-- **Tier badges on section headers**: Workspace section shows `L0` `L1` badges, Plan section shows `L2`. Visually reinforces the loading model
-- **L3 explainer card** below the two sections — directs users to the Logs tab search bar / `eh_search_events` MCP tool for deep search over persisted event history (no duplication of search UI in the Knowledge tab)
-- **`tier` field on `KnowledgeEntry`**: optional, defaults applied at read time (workspace → L1, plan → L2). Backward compatible — entries without `tier` work exactly as before
-- **`tier` parameter on `eh_write_shared` MCP tool**: agents can now self-tier their knowledge entries. Returned in `eh_read_shared` results so agents know what tier each entry occupies
-
-### Improved — Knowledge Tab Surfaces Temporal Validity
-- **Stats header**: shows count of active / permanent / expiring soon (next 24h) / expired entries with color coding (amber for expiring soon, red for expired)
-- **"Show expired" toggle**: hidden by default (matches what agents see via `eh_read_shared`). Toggle on to inspect the full audit trail including expired entries
-- **"Expires after" dropdown in Add form**: choose from Never / 1h / 6h / 24h / 7d / 30d when creating a knowledge entry — finally usable from the UI (previously could only be set via the MCP tool)
-- **Expiration controls in edit mode**: existing entries can have their expiration changed or extended. "Keep current" option preserves the existing validUntil
-- **+24h "Extend" button on expired entries**: one-click resurrection — bumps validUntil to now+24h
-- All changes are backward compatible — the AddForm/Edit defaults preserve prior behavior (no expiration when unset)
-
-### Improved — Skills + Tools Leverage CIP Features
-- **`eh:research` skill**: now instructs researchers to call `eh_search_events` and `eh_read_shared` BEFORE re-exploring the codebase. Prior agent activity on related files is searchable in the persisted event database — researchers should stand on those shoulders. Also instructs saving non-trivial findings via `eh_write_shared` with `valid_until` for time-bound facts
-- **`eh:debug` skill**: explicit guidance to use `eh_search_events` for: error message recurrence (`type: agent.error`), tool-call history on suspect files (`type: tool.call`), prior task failures (`type: task.fail`), and recent file writers (`type: file.write`). Often surfaces the introducing change in seconds vs hours of git blame. Findings should cite the introducing event (timestamp + agent + tool call)
-- **`eh:optimize-context` skill**: rewritten around MemPalace's tiered loading model (L0 identity / L1 architecture / L2 path-scoped rules / L3 on-demand skills). Goal shifts from "shrink CLAUDE.md" to "tier the content so wake-up cost is small while full detail stays available". Includes anti-summarization warning citing MemPalace's empirical finding (96.6% R@5 raw vs 84.2% with their AAAK lossy compression). Suggests moving dated content to shared knowledge with `valid_until` instead of deleting
-- **`eh_get_team_status` MCP tool**: now includes `contextUsageRatio`, `contextTokensUsed`, and `contextWindowSize` per agent. Lets the orchestrator avoid assigning new tasks to agents already near their context limit (e.g. > 0.8)
-- **`eh_get_shared_summary` MCP tool**: bug fix — now respects temporal validity. Expired knowledge entries are excluded by default. New optional `include_expired` parameter to opt in. Previously returned all entries including stale ones, polluting the summary
-
-### Fixed
-- **Spawned agents couldn't call EH MCP tools**: `--allowedTools` only listed built-in tools (Edit, Write, Read, etc.) but not MCP tools, so spawned workers got "permission denied" errors when calling `eh_get_plan`, `eh_claim_task`, etc. Now includes `mcp__event-horizon__*` and `Skill` tool patterns
-- **Spawned agents had wrong working directory**: when no `cwd` was passed to `eh_spawn_agent`, it fell back to `vscode.workspace.workspaceFolders[0]` which could be empty or wrong if the orchestrator was running in a different folder. Now falls back to the orchestrator's `cwd` from agent state before falling back to workspace folder
+- **Context layer classification**: TokenAnalyzer classifies token usage per agent into 4 layers — System Prompt (estimated from first cache creation), Conversation History, Tool Results, and Cached Tokens. Tracks usage ratio against configurable context window size (default 200k)
+- **Context fuel gauge on planets**: 270-degree arc around each planet showing context window usage. Color shifts from cyan (<50%) to amber (50-80%) to red (>80%). Critical usage (>90%) triggers pulse animation. Configurable via `eventHorizon.contextGauge.enabled` and `eventHorizon.contextGauge.windowSize`
+- **Context Layers panel section** in the Costs tab: per-agent stacked horizontal bars with System (blue), Conversation (teal), and Tool Results (amber) breakdown. Shows usage as "124k / 200k (62%)" with color-coded percentage
+- **Temporal validity on shared knowledge**: `validFrom`/`validUntil` fields. Agents can set expiration via `eh_write_shared` (`valid_until` parameter). `eh_read_shared` excludes expired entries by default (`include_expired: true` to see them)
+- **Knowledge tab temporal-validity UI**: stats header showing active / never-expire / expiring-within-24h / expired counts; "Show expired entries" toggle (default off); "Expires after" dropdown (Never / 1h / 6h / 24h / 7d / 30d) in Add and Edit forms; +24h "Extend" button on expired entries for one-click resurrection; expired entries shown dimmed with strikethrough and red "EXPIRED" badge
+- **Knowledge tab 4-tier loading model**: collapsible info banner explaining how knowledge loads into agents. Tier badges (L0/L1/L2) on every entry row and section header. Tier picker in Add/Edit forms for workspace entries (L0 = critical identity, L1 = essentials). L3 explainer card directs users to Activity → Logs search or `eh_search_events` for deep search over persisted event history. New `tier` field on `KnowledgeEntry` (optional, defaults workspace→L1, plan→L2)
+- **Event search engine with query sanitization**: `EventSearchEngine` wraps SQLite FTS queries with a 4-stage sanitization pipeline — short queries pass through, long queries extract last question, fall back to last meaningful sentence, then truncate to last 500 chars. Prevents 89× retrieval degradation from system-prompt contamination
+- **`eh_search_events` MCP tool**: agents can full-text search persisted events. Supports filters by agent ID, type, and time range
+- **Search bar in Logs panel**: press Enter to trigger persistence-backed DB search. Results replace live feed; "Clear search" button returns to live mode. Currently-selected agent and type filter are passed as search constraints
+- **Cross-agent file correlation**: `CrossAgentCorrelator` tracks which files multiple agents touched within a 10-minute window. Builds wormhole connections between agent pairs that share files. Strength scales with shared file count (capped at 1.0). Prunes correlations older than 30 minutes. Broadcasts active wormholes to webview every 15s
+- **Wormhole visuals on planets**: purple swirling portals at correlated agents' planets, connected by a flowing-particle line. Stronger correlations are more opaque. Portals spin in opposite directions; particles flow along the connection
+- **Execution replay drill-down**: done/failed plan tasks have a "▶ View Execution" button. Opens a modal showing all events during that task's execution window — tool calls, file reads/writes, results
+- **Agent CLI auto-detection**: on extension activation, scans PATH for installed agent CLIs (`claude`, `opencode`, `cursor`) and checks for the GitHub Copilot extension. When any agent is installed but missing EH hooks, shows a notification with a "Configure" button → multi-select QuickPick → runs hook setup. Toggleable via `eventHorizon.autoDetect.enabled`
+- **Data export command** ("Event Horizon: Export Data..."): 3-step UI for exporting Events (JSON/CSV) or Agent Sessions (JSON) filtered by date range (24h / 7d / 30d / all). CSV escapes payload as JSON string
+- **6 new settings** under `eventHorizon.*`: `persistence.enabled`, `persistence.retentionDays`, `websocket.enabled`, `contextGauge.enabled`, `contextGauge.windowSize`, `autoDetect.enabled`
+- **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails. Supports `--agent` flag to override worker agent type. Agent type resolution: user override → task metadata → same as orchestrator
+- **`tier` parameter on `eh_write_shared` MCP tool**: agents can self-tier their knowledge entries (L0/L1/L2). Returned in `eh_read_shared` results so agents know the tier of each entry
 
 ### Improved
-- **`eh:create-plan` skill**: reinforced `eh_claim_orchestrator` as CRITICAL mandatory step — added to both step 10 and Rules section. Addresses 100% skip rate in previous usage
-- **Reviewer role**: now requires full verification pipeline (lint + build + test must all pass) and completeness check (all requested tasks must be done) before approving work
-- **`eh:review` skill**: expanded from 5-step to 4-phase process — completeness check, build verification pipeline, code review, cross-check. Blocker/suggestion/nit severity system
-- **`eh:work-on-plan` skill**: added mandatory `pnpm lint && pnpm build && pnpm test` verification step after completing all tasks, before committing
+- **`eh:research` skill** now instructs researchers to call `eh_search_events` and `eh_read_shared` BEFORE re-exploring the codebase. Also saves non-trivial findings via `eh_write_shared` with `valid_until` for time-bound facts
+- **`eh:debug` skill** has explicit guidance to use `eh_search_events` for error recurrence, tool-call history on suspect files, prior task failures, and recent file writers. Often surfaces the introducing change in seconds vs hours of git blame
+- **`eh:optimize-context` skill** rewritten around the 4-tier loading model. Goal shifts from "shrink CLAUDE.md" to "tier the content so wake-up cost is small while full detail stays available on demand". Suggests moving dated content to shared knowledge with `valid_until` instead of deleting
+- **`eh:create-plan` skill** reinforces `eh_claim_orchestrator` as CRITICAL mandatory step — added to both step 10 and Rules section
+- **`eh:review` skill** expanded from 5-step to 4-phase process — completeness check, build verification pipeline, code review, cross-check. Blocker/suggestion/nit severity system
+- **`eh:work-on-plan` skill** added mandatory `pnpm lint && pnpm build && pnpm test` verification step after completing all tasks
+- **Reviewer role** requires full verification pipeline (lint + build + test must all pass) and completeness check (all requested tasks must be done) before approving work
+- **`eh_get_team_status` MCP tool** includes `contextUsageRatio`, `contextTokensUsed`, and `contextWindowSize` per agent. Orchestrators can avoid assigning new tasks to agents near their context limit
+
+### Fixed
+- **Spawned agents couldn't call EH MCP tools**: `--allowedTools` only listed built-in tools (Edit, Write, Read, etc.) but not MCP tools, so spawned workers got "permission denied" errors. Now includes `mcp__event-horizon__*` and `Skill` tool patterns
+- **Spawned agents had wrong working directory**: when no `cwd` was passed to `eh_spawn_agent`, it fell back to `vscode.workspace.workspaceFolders[0]` which could be empty or wrong. Now falls back to the orchestrator's `cwd` from agent state before the workspace folder
+- **Demo mode crash**: OperationsView was calling `setTimeout → setState` during render body, creating an infinite re-render loop. Moved elapsed-time calculation into a proper `useEffect`
+- **first_contact / ground_control achievements fired on every reload**: race condition — the agents useEffect fired before `init-medals` restored the unlocked list. Added `medalsHydrated` gate; unlocks suppressed until state is restored
+- **Default-view flash**: viewMode defaulted to 'universe' and only got overwritten when `init-settings` arrived, so users who configured 'operations' as default briefly saw universe first. Added `settingsHydrated` flag; both views hidden until user preference applied
+- **Phantom planets/ships when switching from Operations → Universe**: agents that terminated while Universe was hidden got queued into the spiral-out animation; on return, dozens flew to the singularity at once. Now the spiral queue + ship container are drained when becoming hidden
+- **"View Execution" always empty**: was filtering events by agentId, but the plan's `assigneeId` never matches the Claude session UUID in persisted events. Removed the agentId filter; widened time window by 5 min on each side
+- **Costs tab stuck at 0% forever**: agents were included in `cacheHitByAgent` even with zero token data, causing the empty-state check to fail and show all-zero metrics. Now excludes agents with no token activity
+- **`eh_get_shared_summary` MCP tool** respects temporal validity. Expired entries are excluded by default. New optional `include_expired` parameter to opt in
+- **Knowledge tab font sizes** standardized to match LogsPanel/OverviewPanel conventions — md (12) for primary content, sm (11) for metadata and controls
 
 ## [1.3.1] — 2026-04-08
 
