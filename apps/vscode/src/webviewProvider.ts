@@ -345,9 +345,14 @@ function wireUniverseWebview(
       achievementTiers: Record<string, number>;
       achievementCounts: Record<string, number>;
     }>('medals');
-    if (savedMedals?.unlockedAchievements?.length) {
-      void webview.postMessage({ type: 'init-medals', ...savedMedals });
-    }
+    // Always send init-medals (even empty) so the webview knows medals are hydrated and achievement
+    // triggers can fire. Otherwise users with zero medals would never see any toasts.
+    void webview.postMessage({
+      type: 'init-medals',
+      unlockedAchievements: savedMedals?.unlockedAchievements ?? [],
+      achievementTiers: savedMedals?.achievementTiers ?? {},
+      achievementCounts: savedMedals?.achievementCounts ?? {},
+    });
 
     // Read from VS Code native settings (preferred) with globalState fallback for
     // settings not exposed in contributes.configuration (e.g. tourCompleted).
@@ -635,19 +640,26 @@ function wireUniverseWebview(
         }
       })();
     } else if (msg?.type === 'request-task-execution') {
-      // Drill-down: get all events from an agent during a task's execution window
+      // Drill-down: get all events during the task's execution window.
+      // NOTE: we intentionally do NOT filter by agentId. The plan's assigneeId is the EH-assigned
+      // agent identifier (e.g. "claude-code-main") while persisted events carry the Claude Code
+      // session UUID — those IDs don't match. Filtering by time window + searching the task ID in
+      // payloads is the reliable approach.
       void (async () => {
         try {
           const ext = await import('./extension.js');
           const db = ext.getDatabase();
           if (!db) {
-            void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: 'Persistence disabled' });
+            void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: 'Persistence disabled — enable eventHorizon.persistence.enabled to see execution replay.' });
             return;
           }
+          // Widen the time window a bit — notes may have been added well after the actual work
+          const padMs = 5 * 60 * 1000; // 5 minute pad on each side
+          const since = typeof msg.claimTime === 'number' ? msg.claimTime - padMs : Date.now() - 24 * 60 * 60 * 1000;
+          const until = typeof msg.completeTime === 'number' ? msg.completeTime + padMs : Date.now();
           const events = db.queryEvents({
-            agentId: msg.agentId as string,
-            since: msg.claimTime as number,
-            until: msg.completeTime as number,
+            since,
+            until,
             limit: 500,
           });
           void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events });

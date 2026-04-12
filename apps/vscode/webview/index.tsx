@@ -193,6 +193,7 @@ function App() {
   const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
   const screenshotRequestedAt = useCommandCenterStore((s) => s.screenshotRequestedAt);
   const viewMode             = useCommandCenterStore((s) => s.viewMode);
+  const settingsHydrated     = useCommandCenterStore((s) => s.settingsHydrated);
   const fontSize             = useCommandCenterStore((s) => s.fontSize);
 
   // ── Refs ──
@@ -521,8 +522,9 @@ function App() {
   // ── Render ──
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 380, flex: 1, background: 'transparent', zoom: fontSize === 'small' ? 0.87 : fontSize === 'large' ? 1.15 : 1 }}>
-      {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state */}
-      <div style={{ flex: 1, display: viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
+      {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state.
+           Also hidden until settings have hydrated, so user's defaultView preference wins over the initial default. */}
+      <div style={{ flex: 1, display: settingsHydrated && viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
         <div ref={panelSize.ref} data-tour="universe" style={{ flex: 1, minHeight: 0, position: 'relative', background: 'transparent' }}>
           <RandomStarfield />
           <Universe
@@ -570,7 +572,7 @@ function App() {
         <CommandCenter role={selectedAgentRole} knowledgeCount={knowledgeCount} recentKnowledge={recentKnowledge} budgetInfo={budgetInfo} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       </div>
 
-      {viewMode === 'operations' && (
+      {settingsHydrated && viewMode === 'operations' && (
         <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
           plan={planTasksWithRecommendations} plans={plans} selectedPlanId={selectedPlanId}
           roles={roles} roleAssignments={roleAssignments} agentProfiles={agentProfiles}

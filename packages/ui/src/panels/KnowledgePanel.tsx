@@ -286,11 +286,11 @@ const EntryRow: FC<{
       background: colors.bg.secondary,
       border: `1px solid ${colors.border.primary}`,
       borderRadius: sizes.radius.sm,
-      fontSize: sizes.text.sm,
+      fontSize: sizes.text.md,
       opacity: entry.validUntil && entry.validUntil < Date.now() ? 0.4 : 1,
     }}>
       {/* Header: key + actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs, fontSize: sizes.text.md }}>
         <span style={{
           color: entry.validUntil && entry.validUntil < Date.now() ? colors.text.dim : colors.text.primary,
           fontWeight: 600,
@@ -317,11 +317,11 @@ const EntryRow: FC<{
           }}>EXPIRED</span>
         )}
         {entry.validUntil && entry.validUntil >= Date.now() && (
-          <span style={{ fontSize: sizes.text.xs, color: '#cc8833' }}>
+          <span style={{ fontSize: sizes.text.sm, color: '#cc8833' }}>
             expires {relativeTime(entry.validUntil).replace(' ago', '')}
           </span>
         )}
-        <span style={{ color: colors.text.dim, fontSize: sizes.text.xs, marginLeft: 'auto', flexShrink: 0 }}>
+        <span style={{ color: colors.text.dim, fontSize: sizes.text.sm, marginLeft: 'auto', flexShrink: 0 }}>
           {entry.author} &middot; {relativeTime(entry.updatedAt)}
         </span>
         {isExpired && (
@@ -545,7 +545,7 @@ const Section: FC<{
         <span
           onClick={() => setCollapsed(!collapsed)}
           style={{
-            fontSize: sizes.text.sm,
+            fontSize: sizes.text.md,
             color: colors.text.primary,
             fontWeight: 600,
             letterSpacing: '0.04em',
@@ -600,7 +600,7 @@ const Section: FC<{
       {/* Section description (visible when not collapsed) */}
       {description && !collapsed && (
         <div style={{
-          fontSize: sizes.text.xs, color: colors.text.dim,
+          fontSize: sizes.text.sm, color: colors.text.dim,
           marginBottom: sizes.spacing.xs, marginLeft: 18,
           fontStyle: 'italic', lineHeight: 1.4,
         }}>
@@ -703,7 +703,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
             background: colors.bg.secondary,
             border: `1px solid ${colors.border.primary}`,
             borderRadius: sizes.radius.sm,
-            fontSize: sizes.text.xs, color: colors.text.secondary,
+            fontSize: sizes.text.sm, color: colors.text.secondary,
             lineHeight: 1.5,
           }}>
             <div style={{ marginBottom: sizes.spacing.xs }}>
@@ -741,7 +741,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
       <div style={{
         display: 'flex', alignItems: 'center', gap: sizes.spacing.md, flexWrap: 'wrap',
         marginBottom: sizes.spacing.sm, flexShrink: 0,
-        fontSize: sizes.text.xs, fontFamily: fonts.mono,
+        fontSize: sizes.text.sm, fontFamily: fonts.mono,
       }}>
         <span style={{ color: colors.text.dim, fontWeight: 600 }}>Entries:</span>
         <span style={{ color: colors.text.dim }} title="Entries that agents currently see (not expired)">
@@ -830,7 +830,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
         background: colors.bg.secondary,
         border: `1px dashed ${TIER_INFO.L3.color}66`,
         borderRadius: sizes.radius.sm,
-        fontSize: sizes.text.xs, color: colors.text.dim,
+        fontSize: sizes.text.sm, color: colors.text.dim,
         display: 'flex', alignItems: 'center', gap: sizes.spacing.sm,
       }}>
         <span style={{

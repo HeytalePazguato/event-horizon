@@ -843,11 +843,31 @@ export const Universe: FC<UniverseProps> = ({
   }, [width, height, canvasReady]);
 
   // --- pause ticker when hidden (Operations view) --------------------------
+  // When becoming hidden we also flush any queued spiral-out planets and ships.
+  // Otherwise when we become visible again, every agent that terminated while hidden
+  // animates at once ("ghost planets flying to the hole").
   useEffect(() => {
     const app = appRef.current;
     if (!app) return;
-    if (visible) { try { app.ticker.start(); } catch { /* ignore */ } }
-    else { try { app.ticker.stop(); } catch { /* ignore */ } }
+    if (visible) {
+      try { app.ticker.start(); } catch { /* ignore */ }
+    } else {
+      try { app.ticker.stop(); } catch { /* ignore */ }
+      // Drain the spiral queue — destroy everything in flight so we don't see stale animations on return
+      for (const s of spiralRef.current) {
+        try { s.c.destroy({ children: true }); } catch { /* already destroyed */ }
+      }
+      spiralRef.current = [];
+      // Also clear any ships/shooting stars that were in-flight
+      const shipsContainer = shipsContainerRef.current;
+      if (shipsContainer) {
+        while (shipsContainer.children.length > 0) {
+          const c = shipsContainer.children[0];
+          shipsContainer.removeChild(c);
+          try { c.destroy({ children: true }); } catch { /* ignore */ }
+        }
+      }
+    }
   }, [visible, canvasReady]);
 
   // --- re-center -----------------------------------------------------------

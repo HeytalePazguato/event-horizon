@@ -5,7 +5,7 @@
  */
 
 import type { FC } from 'react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 import { useCommandCenterStore } from './store.js';
@@ -129,15 +129,20 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
     [agentMap],
   );
 
-  // Demo elapsed timer
+  // Demo elapsed timer — use interval, not setState during render (that was causing crashes)
   const [demoElapsed, setDemoElapsed] = useState('');
-  if (demoMode && demoStartedAt) {
-    const secs = Math.floor((Date.now() - demoStartedAt) / 1000);
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    const elapsed = `${m}:${s.toString().padStart(2, '0')}`;
-    if (elapsed !== demoElapsed) setTimeout(() => setDemoElapsed(elapsed), 0);
-  }
+  useEffect(() => {
+    if (!demoMode || !demoStartedAt) { setDemoElapsed(''); return; }
+    const tick = () => {
+      const secs = Math.floor((Date.now() - demoStartedAt) / 1000);
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      setDemoElapsed(`${m}:${s.toString().padStart(2, '0')}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [demoMode, demoStartedAt]);
 
   return (
     <div style={{

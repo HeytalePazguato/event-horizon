@@ -8,6 +8,8 @@ import { useCommandCenterStore } from '../store.js';
 
 beforeEach(() => {
   useCommandCenterStore.setState(useCommandCenterStore.getInitialState());
+  // Mark medals hydrated so unlock attempts aren't suppressed by the startup gate
+  useCommandCenterStore.getState().markMedalsHydrated();
 });
 
 // ── unlockAchievement ───────────────────────────────────────────────────────

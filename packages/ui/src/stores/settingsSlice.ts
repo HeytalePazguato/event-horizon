@@ -10,6 +10,9 @@ export interface SettingsSlice {
   viewMode: 'universe' | 'operations';
   setViewMode: (mode: 'universe' | 'operations') => void;
   toggleViewMode: () => void;
+  /** True once init-settings message has been processed — prevents default-view flash on startup. */
+  settingsHydrated: boolean;
+  markSettingsHydrated: () => void;
   visualSettings: VisualSettings;
   settingsOpen: boolean;
   toggleSettings: () => void;
@@ -66,6 +69,8 @@ export function createSettingsSlice(set: SetFn): SettingsSlice {
   return {
     viewMode: 'universe',
     setViewMode: (mode) => set(() => ({ viewMode: mode })),
+    settingsHydrated: false,
+    markSettingsHydrated: () => set(() => ({ settingsHydrated: true })),
     toggleViewMode: () => set((s) => ({ viewMode: s.viewMode === 'universe' ? 'operations' : 'universe' })),
     visualSettings: { ...DEFAULT_VISUAL_SETTINGS },
     settingsOpen: false,

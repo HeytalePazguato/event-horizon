@@ -107,6 +107,8 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
             achievementCounts: data.achievementCounts ?? {},
           });
         }
+        // Mark medals hydrated so achievement triggers can now fire without duplicating already-earned toasts
+        useCommandCenterStore.getState().markMedalsHydrated();
         return;
       }
       if (msg?.type === 'init-singularity') {
@@ -139,6 +141,8 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.fileLockingEnabled !== undefined) store.setFileLockingEnabled(data.fileLockingEnabled);
         if (data.planShowAllColumns !== undefined) store.setPlanShowAllColumns(data.planShowAllColumns);
         if (data.fontSize) store.setFontSize(data.fontSize);
+        // Mark settings hydrated so the initial view can render without flash
+        store.markSettingsHydrated();
         return;
       }
       if (msg?.type === 'plan-update') {

@@ -230,6 +230,8 @@ export class TokenAnalyzer {
       // Conversation = total input - system prompt - tool results (clamped to 0)
       const conversationHistory = Math.max(0, ctx.totalInputSeen - systemPrompt - toolResults);
       const totalUsed = systemPrompt + conversationHistory + toolResults;
+      // Skip agents with no token data — otherwise panel shows 0% / 0k for every agent forever
+      if (totalUsed === 0 && cachedTokens === 0) continue;
       const usageRatio = this.contextWindowSize > 0 ? Math.min(1, totalUsed / this.contextWindowSize) : 0;
 
       result[agentId] = {
@@ -308,7 +310,10 @@ export class TokenAnalyzer {
     const result: Record<string, number> = {};
     for (const [agentId, t] of this.agentTokens) {
       const total = t.cacheRead + t.cacheCreation + t.input;
-      result[agentId] = total > 0 ? t.cacheRead / total : 0;
+      // Skip agents with no actual token activity — otherwise the Costs panel
+      // shows 0% forever for every agent that only fired non-token events.
+      if (total === 0) continue;
+      result[agentId] = t.cacheRead / total;
     }
     return result;
   }
