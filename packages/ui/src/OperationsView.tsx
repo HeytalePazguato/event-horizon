@@ -64,8 +64,8 @@ export interface OperationsViewProps {
   knowledgeWorkspace?: KnowledgeEntry[];
   knowledgePlan?: KnowledgeEntry[];
   knowledgePlanName?: string;
-  onKnowledgeAdd?: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
-  onKnowledgeEdit?: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
+  onKnowledgeAdd?: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: import('./panels/KnowledgePanel.js').KnowledgeTier) => void;
+  onKnowledgeEdit?: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: import('./panels/KnowledgePanel.js').KnowledgeTier) => void;
   onKnowledgeDelete?: (key: string, scope: 'workspace' | 'plan') => void;
   traceSpans?: TraceSpanView[];
   traceAggregate?: Record<string, number>;

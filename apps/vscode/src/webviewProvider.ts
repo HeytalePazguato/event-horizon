@@ -602,10 +602,12 @@ function wireUniverseWebview(
       });
     } else if (msg?.type === 'knowledge-add') {
       const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
-      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil);
+      const tier = (msg.tier === 'L0' || msg.tier === 'L1' || msg.tier === 'L2') ? msg.tier : undefined;
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil, tier);
     } else if (msg?.type === 'knowledge-edit') {
       const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
-      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil);
+      const tier = (msg.tier === 'L0' || msg.tier === 'L1' || msg.tier === 'L2') ? msg.tier : undefined;
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil, tier);
     } else if (msg?.type === 'knowledge-delete') {
       sharedKnowledge.delete(msg.key as string, msg.scope as 'workspace' | 'plan', 'user');
     } else if (msg?.type === 'search-events') {

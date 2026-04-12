@@ -5,10 +5,12 @@
  */
 
 import type { FC } from 'react';
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { colors, fonts, sizes } from '../styles/tokens.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
+
+export type KnowledgeTier = 'L0' | 'L1' | 'L2';
 
 export interface KnowledgeEntry {
   key: string;
@@ -20,14 +22,55 @@ export interface KnowledgeEntry {
   updatedAt: number;
   validFrom?: number;
   validUntil?: number;
+  /** MemPalace-inspired loading tier. Defaults: workspace = L1, plan = L2. L0 = critical identity. */
+  tier?: KnowledgeTier;
+}
+
+// ── Tier metadata (MemPalace-inspired loading tiers) ───────────────────────
+
+interface TierInfo {
+  id: KnowledgeTier | 'L3';
+  label: string;
+  shortName: string;
+  color: string;
+  description: string;
+  tokenBudget: string;
+}
+
+const TIER_INFO: Record<'L0' | 'L1' | 'L2' | 'L3', TierInfo> = {
+  L0: {
+    id: 'L0', label: 'L0 — Identity', shortName: 'L0',
+    color: '#ff6688', tokenBudget: '~50-100 tok',
+    description: 'Critical project identity. Loaded into every agent session. Keep tiny — what is this project, what tech stack, hard rules.',
+  },
+  L1: {
+    id: 'L1', label: 'L1 — Essentials', shortName: 'L1',
+    color: '#88aaff', tokenBudget: '~500-800 tok',
+    description: 'Always-loaded essentials: build/test/lint commands, key directories, core conventions. The bulk of workspace knowledge.',
+  },
+  L2: {
+    id: 'L2', label: 'L2 — On-Demand', shortName: 'L2',
+    color: '#88ffaa', tokenBudget: 'loaded per topic',
+    description: 'Plan-scoped knowledge. Loaded only when an agent reads from this plan. Task findings, debugging notes, decisions.',
+  },
+  L3: {
+    id: 'L3', label: 'L3 — Deep Search', shortName: 'L3',
+    color: '#ffaa44', tokenBudget: 'loaded on query',
+    description: 'Persisted event history. Searched on demand via eh_search_events or the Logs tab search bar. The full audit trail.',
+  },
+};
+
+function getEffectiveTier(entry: KnowledgeEntry): KnowledgeTier {
+  if (entry.tier) return entry.tier;
+  return entry.scope === 'workspace' ? 'L1' : 'L2';
 }
 
 export interface KnowledgePanelProps {
   workspace: KnowledgeEntry[];
   plan: KnowledgeEntry[];
   planName?: string;
-  onAdd: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
-  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
+  onAdd: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void;
+  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void;
   onDelete: (key: string, scope: 'workspace' | 'plan') => void;
 }
 
@@ -66,21 +109,24 @@ const TRUNCATE_LENGTH = 200;
 
 // ── Inline add form ────────────────────────────────────────────────────────
 
-const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void; onCancel: () => void }> = ({ scope, onSave, onCancel }) => {
+const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void; onCancel: () => void }> = ({ scope, onSave, onCancel }) => {
   const [key, setKey] = useState('');
   const [value, setValue] = useState('');
   const [expiration, setExpiration] = useState<string>('Never');
+  // Workspace defaults to L1 (essentials). Plan is always L2 (no choice).
+  const [tier, setTier] = useState<KnowledgeTier>(scope === 'workspace' ? 'L1' : 'L2');
 
   const handleSave = useCallback(() => {
     const k = key.trim();
     const v = value.trim();
     if (!k || !v) return;
-    onSave(k, v, scope, expirationFromPreset(expiration));
+    onSave(k, v, scope, expirationFromPreset(expiration), tier);
     setKey('');
     setValue('');
     setExpiration('Never');
+    setTier(scope === 'workspace' ? 'L1' : 'L2');
     onCancel();
-  }, [key, value, scope, expiration, onSave, onCancel]);
+  }, [key, value, scope, expiration, tier, onSave, onCancel]);
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
@@ -120,6 +166,24 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
         rows={3}
         style={{ ...inputStyle, resize: 'vertical' }}
       />
+      {/* Tier picker — only meaningful for workspace (plan entries are always L2) */}
+      {scope === 'workspace' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
+          <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+            Tier:
+          </label>
+          <select
+            value={tier}
+            onChange={(e) => setTier(e.target.value as KnowledgeTier)}
+            style={{ ...inputStyle, width: 'auto', flex: 1, cursor: 'pointer' }}
+            title="L0 = critical identity (keep tiny). L1 = essentials. Both load into every agent session."
+          >
+            <option value="L0">L0 — Identity (~50-100 tok, critical)</option>
+            <option value="L1">L1 — Essentials (~500-800 tok, default)</option>
+          </select>
+        </div>
+      )}
+
       {/* Expiration — MemPalace temporal validity. Default "Never" preserves prior behavior. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
         <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
@@ -183,7 +247,7 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
 
 const EntryRow: FC<{
   entry: KnowledgeEntry;
-  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
+  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void;
   onDelete: (key: string, scope: 'workspace' | 'plan') => void;
 }> = ({ entry, onEdit, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
@@ -192,10 +256,13 @@ const EntryRow: FC<{
   const [editExpiration, setEditExpiration] = useState<string>(
     entry.validUntil ? 'Keep current' : 'Never'
   );
+  const [editTier, setEditTier] = useState<KnowledgeTier>(getEffectiveTier(entry));
 
   const isTruncated = entry.value.length > TRUNCATE_LENGTH;
   const displayValue = expanded || !isTruncated ? entry.value : entry.value.slice(0, TRUNCATE_LENGTH) + '...';
   const isExpired = entry.validUntil !== undefined && entry.validUntil < Date.now();
+  const effectiveTier = getEffectiveTier(entry);
+  const tierMeta = TIER_INFO[effectiveTier];
 
   const handleSaveEdit = useCallback(() => {
     const v = editValue.trim();
@@ -204,14 +271,14 @@ const EntryRow: FC<{
     let validUntil: number | undefined;
     if (editExpiration === 'Keep current') validUntil = entry.validUntil;
     else validUntil = expirationFromPreset(editExpiration);
-    onEdit(entry.key, v, entry.scope, validUntil);
+    onEdit(entry.key, v, entry.scope, validUntil, editTier);
     setEditing(false);
-  }, [editValue, editExpiration, entry.key, entry.scope, entry.validUntil, onEdit]);
+  }, [editValue, editExpiration, editTier, entry.key, entry.scope, entry.validUntil, onEdit]);
 
-  // Quick-action: Extend an expired entry by 24h (resets its validUntil)
+  // Quick-action: Extend an expired entry by 24h (resets its validUntil, preserves tier)
   const handleExtend = useCallback(() => {
-    onEdit(entry.key, entry.value, entry.scope, Date.now() + 24 * 60 * 60 * 1000);
-  }, [entry.key, entry.value, entry.scope, onEdit]);
+    onEdit(entry.key, entry.value, entry.scope, Date.now() + 24 * 60 * 60 * 1000, entry.tier);
+  }, [entry.key, entry.value, entry.scope, entry.tier, onEdit]);
 
   return (
     <div style={{
@@ -229,6 +296,20 @@ const EntryRow: FC<{
           fontWeight: 600,
           textDecoration: entry.validUntil && entry.validUntil < Date.now() ? 'line-through' : 'none',
         }}>{entry.key}</span>
+        {/* Tier badge — MemPalace loading tier */}
+        <span
+          title={`${tierMeta.label} (${tierMeta.tokenBudget}) — ${tierMeta.description}`}
+          style={{
+            fontSize: sizes.text.xs, fontWeight: 700,
+            color: tierMeta.color,
+            background: `${tierMeta.color}1f`,
+            border: `1px solid ${tierMeta.color}66`,
+            borderRadius: 3, padding: '0 4px',
+            fontFamily: fonts.mono,
+          }}
+        >
+          {tierMeta.shortName}
+        </span>
         {entry.validUntil && entry.validUntil < Date.now() && (
           <span style={{
             fontSize: sizes.text.xs, color: '#cc4444', fontWeight: 600,
@@ -317,6 +398,31 @@ const EntryRow: FC<{
               boxSizing: 'border-box',
             }}
           />
+          {/* Tier picker (workspace only — plan entries are always L2) */}
+          {entry.scope === 'workspace' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
+              <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+                Tier:
+              </label>
+              <select
+                value={editTier}
+                onChange={(e) => setEditTier(e.target.value as KnowledgeTier)}
+                style={{
+                  width: 'auto', flex: 1,
+                  padding: '3px 6px',
+                  fontSize: sizes.text.sm, fontFamily: fonts.mono,
+                  background: colors.bg.primary,
+                  border: `1px solid ${colors.border.accent}`,
+                  borderRadius: sizes.radius.sm,
+                  color: colors.text.primary, outline: 'none', cursor: 'pointer',
+                }}
+              >
+                <option value="L0">L0 — Identity (~50-100 tok, critical)</option>
+                <option value="L1">L1 — Essentials (~500-800 tok, default)</option>
+              </select>
+            </div>
+          )}
+
           {/* Expiration — preserved by default (Keep current), can be reset to never or a preset */}
           <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
             <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
@@ -404,12 +510,13 @@ const EntryRow: FC<{
 const Section: FC<{
   title: string;
   description?: string;
+  tierBadges?: KnowledgeTier[];
   scope: 'workspace' | 'plan';
   entries: KnowledgeEntry[];
-  onAdd: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
-  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
+  onAdd: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void;
+  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void;
   onDelete: (key: string, scope: 'workspace' | 'plan') => void;
-}> = ({ title, description, scope, entries, onAdd, onEdit, onDelete }) => {
+}> = ({ title, description, tierBadges, scope, entries, onAdd, onEdit, onDelete }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -446,6 +553,24 @@ const Section: FC<{
         >
           {title}
         </span>
+        {tierBadges?.map((t) => {
+          const tm = TIER_INFO[t];
+          return (
+            <span
+              key={t}
+              title={`${tm.label} (${tm.tokenBudget}) — ${tm.description}`}
+              style={{
+                fontSize: sizes.text.xs, fontWeight: 700,
+                color: tm.color, background: `${tm.color}1f`,
+                border: `1px solid ${tm.color}66`,
+                borderRadius: 3, padding: '0 4px',
+                fontFamily: fonts.mono,
+              }}
+            >
+              {tm.shortName}
+            </span>
+          );
+        })}
         <span style={{
           fontSize: sizes.text.xs,
           color: colors.text.dim,
@@ -510,6 +635,7 @@ const Section: FC<{
 export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planName, onAdd, onEdit, onDelete }) => {
   const [search, setSearch] = useState('');
   const [showExpired, setShowExpired] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
 
   const filterEntries = useCallback((entries: KnowledgeEntry[]): KnowledgeEntry[] => {
     const now = Date.now();
@@ -555,6 +681,62 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
       boxSizing: 'border-box',
       overflowY: 'auto',
     }}>
+      {/* Info banner — explains the 4-tier knowledge loading model (collapsible, default closed) */}
+      <div style={{ marginBottom: sizes.spacing.sm, flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={() => setShowInfo((v) => !v)}
+          style={{
+            background: 'transparent', border: 'none',
+            color: colors.text.dim, cursor: 'pointer',
+            padding: 0, fontFamily: fonts.mono, fontSize: sizes.text.xs,
+            display: 'flex', alignItems: 'center', gap: 4,
+          }}
+          title="Show explanation of the knowledge loading tiers"
+        >
+          <span style={{ fontSize: 7, transform: showInfo ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block' }}>{'\u25B6'}</span>
+          <span>ⓘ How knowledge loads into agents (L0–L3)</span>
+        </button>
+        {showInfo && (
+          <div style={{
+            marginTop: sizes.spacing.xs, padding: sizes.spacing.sm,
+            background: colors.bg.secondary,
+            border: `1px solid ${colors.border.primary}`,
+            borderRadius: sizes.radius.sm,
+            fontSize: sizes.text.xs, color: colors.text.secondary,
+            lineHeight: 1.5,
+          }}>
+            <div style={{ marginBottom: sizes.spacing.xs }}>
+              Event Horizon uses a 4-tier loading model inspired by the MemPalace memory system. Each tier costs different tokens depending on when it loads:
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '4px 10px', alignItems: 'baseline' }}>
+              {(['L0', 'L1', 'L2', 'L3'] as const).map((id) => {
+                const t = TIER_INFO[id];
+                return (
+                  <React.Fragment key={id}>
+                    <span style={{
+                      fontSize: sizes.text.xs, fontWeight: 700,
+                      color: t.color, background: `${t.color}1f`,
+                      border: `1px solid ${t.color}66`,
+                      borderRadius: 3, padding: '0 4px',
+                      fontFamily: fonts.mono, textAlign: 'center',
+                    }}>{t.shortName}</span>
+                    <span style={{ color: colors.text.dim, whiteSpace: 'nowrap' }}>{t.tokenBudget}</span>
+                    <span>{t.description}</span>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: sizes.spacing.sm, color: colors.text.dim }}>
+              <strong style={{ color: colors.text.secondary }}>Mapping:</strong> Workspace entries default to L1 (mark critical ones as L0). Plan entries are L2. L3 is the persisted event history — search it via the Logs tab or <code>eh_search_events</code> MCP tool.
+            </div>
+            <div style={{ marginTop: sizes.spacing.xs, color: colors.text.dim }}>
+              <strong style={{ color: colors.text.secondary }}>Goal:</strong> keep L0+L1 small (under ~1000 tokens combined) so agent wake-up cost is low. Use L2/L3 for everything else.
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Stats header — knowledge entry counts grouped by temporal validity */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: sizes.spacing.md, flexWrap: 'wrap',
@@ -622,8 +804,9 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
         />
       </div>
       <Section
-        title="Workspace (always-loaded)"
-        description="Persistent facts loaded into every agent session — tech stack, project conventions, key paths. Keep this small (~10-30 entries) since every spawned agent pays the token cost upfront. Use 'never expire' for stable facts; set expiration for time-bound rules."
+        title="Workspace — always loaded"
+        tierBadges={['L0', 'L1']}
+        description="Persistent facts loaded into every agent session — tech stack, project conventions, key paths. Keep this small (~10-30 entries) since every spawned agent pays the token cost upfront. Mark critical entries as L0; default L1 for essentials."
         scope="workspace"
         entries={filteredWorkspace}
         onAdd={onAdd}
@@ -631,7 +814,8 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
         onDelete={onDelete}
       />
       <Section
-        title={`Plan: ${planName ?? 'none'} (on-demand)`}
+        title={`Plan: ${planName ?? 'none'} — on demand`}
+        tierBadges={['L2']}
         description="Scoped to the active plan — task findings, debugging notes, decisions discovered during execution. Loaded only when an agent reads from this plan. Set expirations for facts that won't matter once the plan completes."
         scope="plan"
         entries={filteredPlan}
@@ -639,6 +823,27 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
         onEdit={onEdit}
         onDelete={onDelete}
       />
+      {/* L3 explainer card — directs users to event search instead of duplicating it here */}
+      <div style={{
+        marginTop: sizes.spacing.md,
+        padding: sizes.spacing.sm,
+        background: colors.bg.secondary,
+        border: `1px dashed ${TIER_INFO.L3.color}66`,
+        borderRadius: sizes.radius.sm,
+        fontSize: sizes.text.xs, color: colors.text.dim,
+        display: 'flex', alignItems: 'center', gap: sizes.spacing.sm,
+      }}>
+        <span style={{
+          fontSize: sizes.text.xs, fontWeight: 700,
+          color: TIER_INFO.L3.color, background: `${TIER_INFO.L3.color}1f`,
+          border: `1px solid ${TIER_INFO.L3.color}66`,
+          borderRadius: 3, padding: '0 4px',
+          fontFamily: fonts.mono, flexShrink: 0,
+        }}>L3</span>
+        <span>
+          <strong style={{ color: colors.text.secondary }}>Deep Search</strong> — full persisted event history is not stored in the Knowledge tab. Use the <strong style={{ color: colors.text.secondary }}>Logs tab search bar</strong> (Enter to search the DB) or the <code>eh_search_events</code> MCP tool to query historical agent activity.
+        </span>
+      </div>
     </div>
   );
 };

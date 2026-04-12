@@ -43,6 +43,15 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Added — Orchestration Skill
 - **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails (auth errors, model failures). Supports `--agent` flag to override worker agent type (e.g. `--agent opencode`). Agent type resolution: user override → task metadata → same as orchestrator
 
+### Added — Knowledge Tab Surfaces L0–L3 Loading Tiers
+- **Collapsible info banner** ("ⓘ How knowledge loads into agents") at the top of the Knowledge tab. Explains the 4-tier MemPalace-inspired loading model with token budgets and EH's mapping (workspace → L0/L1, plan → L2, persisted events → L3)
+- **Tier badges on entry rows**: every knowledge entry now shows a colored `L0`/`L1`/`L2` chip with hover tooltip explaining the tier
+- **Tier picker in Add and Edit forms** (workspace scope only — plan entries are always L2). Defaults to L1; advanced users can promote critical entries to L0
+- **Tier badges on section headers**: Workspace section shows `L0` `L1` badges, Plan section shows `L2`. Visually reinforces the loading model
+- **L3 explainer card** below the two sections — directs users to the Logs tab search bar / `eh_search_events` MCP tool for deep search over persisted event history (no duplication of search UI in the Knowledge tab)
+- **`tier` field on `KnowledgeEntry`**: optional, defaults applied at read time (workspace → L1, plan → L2). Backward compatible — entries without `tier` work exactly as before
+- **`tier` parameter on `eh_write_shared` MCP tool**: agents can now self-tier their knowledge entries. Returned in `eh_read_shared` results so agents know what tier each entry occupies
+
 ### Improved — Knowledge Tab Surfaces Temporal Validity
 - **Stats header**: shows count of active / permanent / expiring soon (next 24h) / expired entries with color coding (amber for expiring soon, red for expired)
 - **"Show expired" toggle**: hidden by default (matches what agents see via `eh_read_shared`). Toggle on to inspect the full audit trail including expired entries

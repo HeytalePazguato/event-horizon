@@ -347,6 +347,7 @@ export const MCP_TOOLS: McpToolDef[] = [
         scope: { type: 'string', enum: ['workspace', 'plan'], description: 'Scope: workspace (persistent) or plan (scoped to active plan). Defaults to plan.' },
         plan_id: { type: 'string', description: 'Plan ID for plan-scoped entries (optional, defaults to active plan)' },
         valid_until: { type: 'string', description: 'Expiration timestamp (ISO 8601 string or epoch ms). Entry will be excluded from reads after this time. Omit for no expiration.' },
+        tier: { type: 'string', enum: ['L0', 'L1', 'L2'], description: 'MemPalace loading tier. L0 = critical identity (~50-100 tok), L1 = essentials (workspace default, ~500-800 tok), L2 = on-demand (plan default). Use L0 sparingly — every L0 entry costs tokens in every agent session.' },
       },
       required: ['agent_id', 'key', 'value'],
     },
@@ -1334,8 +1335,9 @@ export class McpServer {
           validUntil = Number.isFinite(parsed) ? parsed : new Date(raw).getTime();
           if (!Number.isFinite(validUntil)) validUntil = undefined;
         }
-        const entry = sharedKnowledge.write(key, value, scope, agentName, agentId, planId, validUntil);
-        return { written: true, key: entry.key, scope: entry.scope, author: entry.author, validUntil: entry.validUntil };
+        const tier = (args.tier === 'L0' || args.tier === 'L1' || args.tier === 'L2') ? args.tier : undefined;
+        const entry = sharedKnowledge.write(key, value, scope, agentName, agentId, planId, validUntil, tier);
+        return { written: true, key: entry.key, scope: entry.scope, author: entry.author, validUntil: entry.validUntil, tier: entry.tier };
       }
 
       case 'eh_read_shared': {
@@ -1353,6 +1355,7 @@ export class McpServer {
             updatedAt: e.updatedAt,
             validUntil: e.validUntil,
             expired: e.validUntil ? e.validUntil < Date.now() : false,
+            tier: e.tier ?? (e.scope === 'workspace' ? 'L1' : 'L2'),
           })),
           count: entries.length,
         };

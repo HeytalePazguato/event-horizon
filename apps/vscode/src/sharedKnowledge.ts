@@ -10,6 +10,8 @@
 
 export type KnowledgeScope = 'workspace' | 'plan';
 
+export type KnowledgeTier = 'L0' | 'L1' | 'L2';
+
 export interface KnowledgeEntry {
   key: string;
   value: string;
@@ -22,6 +24,8 @@ export interface KnowledgeEntry {
   validFrom?: number;
   /** Timestamp when the entry expires. Undefined = never expires. */
   validUntil?: number;
+  /** MemPalace-inspired loading tier. Defaults: workspace = L1, plan = L2. L0 = critical identity. */
+  tier?: KnowledgeTier;
 }
 
 const MAX_WORKSPACE_ENTRIES = 200;
@@ -52,6 +56,7 @@ export class SharedKnowledgeStore {
     authorId: string,
     planId?: string,
     validUntil?: number,
+    tier?: KnowledgeTier,
   ): KnowledgeEntry {
     const now = Date.now();
 
@@ -67,6 +72,7 @@ export class SharedKnowledgeStore {
         updatedAt: now,
         validFrom: existing?.validFrom ?? now,
         validUntil,
+        tier: tier ?? existing?.tier,
       };
       this.workspace.set(key, entry);
       this.enforceLimit(this.workspace, MAX_WORKSPACE_ENTRIES);
@@ -91,6 +97,7 @@ export class SharedKnowledgeStore {
       updatedAt: now,
       validFrom: existing?.validFrom ?? now,
       validUntil,
+      tier: tier ?? existing?.tier,
     };
     planMap.set(key, entry);
     this.enforceLimit(planMap, MAX_PLAN_ENTRIES);
