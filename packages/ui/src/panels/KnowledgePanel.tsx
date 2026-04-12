@@ -169,7 +169,7 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
       {/* Tier picker — only meaningful for workspace (plan entries are always L2) */}
       {scope === 'workspace' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
-          <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+          <label style={{ fontSize: sizes.text.sm, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
             Tier:
           </label>
           <select
@@ -186,7 +186,7 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
 
       {/* Expiration — MemPalace temporal validity. Default "Never" preserves prior behavior. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
-        <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+        <label style={{ fontSize: sizes.text.sm, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
           Expires after:
         </label>
         <select
@@ -211,7 +211,7 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
           onClick={onCancel}
           style={{
             padding: '2px 8px',
-            fontSize: sizes.text.xs,
+            fontSize: sizes.text.sm,
             fontFamily: fonts.mono,
             background: 'transparent',
             border: `1px solid ${colors.border.primary}`,
@@ -227,7 +227,7 @@ const AddForm: FC<{ scope: 'workspace' | 'plan'; onSave: (key: string, value: st
           onClick={handleSave}
           style={{
             padding: '2px 8px',
-            fontSize: sizes.text.xs,
+            fontSize: sizes.text.sm,
             fontFamily: fonts.mono,
             background: 'rgba(30,70,45,0.3)',
             border: `1px solid ${colors.border.active}`,
@@ -335,7 +335,7 @@ const EntryRow: FC<{
               color: '#cc8833',
               cursor: 'pointer',
               padding: '0 6px',
-              fontSize: sizes.text.xs,
+              fontSize: sizes.text.sm,
               fontFamily: fonts.mono,
               borderRadius: 3,
             }}
@@ -401,7 +401,7 @@ const EntryRow: FC<{
           {/* Tier picker (workspace only — plan entries are always L2) */}
           {entry.scope === 'workspace' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
-              <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+              <label style={{ fontSize: sizes.text.sm, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
                 Tier:
               </label>
               <select
@@ -425,7 +425,7 @@ const EntryRow: FC<{
 
           {/* Expiration — preserved by default (Keep current), can be reset to never or a preset */}
           <div style={{ display: 'flex', alignItems: 'center', gap: sizes.spacing.xs }}>
-            <label style={{ fontSize: sizes.text.xs, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
+            <label style={{ fontSize: sizes.text.sm, color: colors.text.dim, fontFamily: fonts.mono, flexShrink: 0 }}>
               Expires after:
             </label>
             <select
@@ -456,7 +456,7 @@ const EntryRow: FC<{
               onClick={() => setEditing(false)}
               style={{
                 padding: '2px 8px',
-                fontSize: sizes.text.xs,
+                fontSize: sizes.text.sm,
                 fontFamily: fonts.mono,
                 background: 'transparent',
                 border: `1px solid ${colors.border.primary}`,
@@ -472,7 +472,7 @@ const EntryRow: FC<{
               onClick={handleSaveEdit}
               style={{
                 padding: '2px 8px',
-                fontSize: sizes.text.xs,
+                fontSize: sizes.text.sm,
                 fontFamily: fonts.mono,
                 background: 'rgba(30,70,45,0.3)',
                 border: `1px solid ${colors.border.active}`,
@@ -572,7 +572,7 @@ const Section: FC<{
           );
         })}
         <span style={{
-          fontSize: sizes.text.xs,
+          fontSize: sizes.text.sm,
           color: colors.text.dim,
           marginLeft: 4,
         }}>
@@ -584,7 +584,7 @@ const Section: FC<{
           style={{
             marginLeft: 'auto',
             padding: '1px 6px',
-            fontSize: sizes.text.xs,
+            fontSize: sizes.text.sm,
             fontFamily: fonts.mono,
             background: 'transparent',
             border: `1px solid ${colors.border.accent}`,
@@ -620,7 +620,7 @@ const Section: FC<{
             <EntryRow key={entry.key} entry={entry} onEdit={onEdit} onDelete={onDelete} />
           ))}
           {entries.length === 0 && !showAddForm && (
-            <div style={{ fontSize: sizes.text.xs, color: colors.text.dim, padding: sizes.spacing.xs }}>
+            <div style={{ fontSize: sizes.text.sm, color: colors.text.dim, padding: sizes.spacing.xs }}>
               No entries yet.
             </div>
           )}
@@ -689,12 +689,12 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
           style={{
             background: 'transparent', border: 'none',
             color: colors.text.dim, cursor: 'pointer',
-            padding: 0, fontFamily: fonts.mono, fontSize: sizes.text.xs,
+            padding: 0, fontFamily: fonts.mono, fontSize: sizes.text.md,
             display: 'flex', alignItems: 'center', gap: 4,
           }}
           title="Show explanation of the knowledge loading tiers"
         >
-          <span style={{ fontSize: 7, transform: showInfo ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block' }}>{'\u25B6'}</span>
+          <span style={{ fontSize: 9, transform: showInfo ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block' }}>{'\u25B6'}</span>
           <span>ⓘ How knowledge loads into agents (L0–L3)</span>
         </button>
         {showInfo && (
@@ -703,7 +703,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
             background: colors.bg.secondary,
             border: `1px solid ${colors.border.primary}`,
             borderRadius: sizes.radius.sm,
-            fontSize: sizes.text.sm, color: colors.text.secondary,
+            fontSize: sizes.text.md, color: colors.text.secondary,
             lineHeight: 1.5,
           }}>
             <div style={{ marginBottom: sizes.spacing.xs }}>
