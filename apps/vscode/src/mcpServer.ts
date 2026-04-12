@@ -1384,7 +1384,12 @@ export class McpServer {
         const agentType = args.agent_type as string;
         const role = args.role as string | undefined;
         const prompt = args.prompt as string;
-        const cwd = args.cwd as string | undefined;
+        // Fallback chain for cwd: explicit arg → orchestrator's cwd from agent state → spawn registry's default (workspace folder)
+        let cwd = args.cwd as string | undefined;
+        if (!cwd) {
+          const orchestrator = this.deps.agentStateManager.getAgent(agentId);
+          if (orchestrator?.cwd) cwd = orchestrator.cwd;
+        }
         const model = args.model as string | undefined;
         const planId = args.plan_id as string | undefined;
         const taskId = args.task_id as string | undefined;

@@ -268,7 +268,9 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     // Build command — --verbose is required when using -p with --output-format stream-json
     const parts = ['claude', '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json'];
     // Pre-authorize tools so spawned agents can actually edit files without permission prompts
-    parts.push('--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit'));
+    // Pre-authorize all built-in tools + Event Horizon MCP tools so spawned agents
+    // can call eh_get_plan, eh_claim_task, eh_update_task, etc. without permission prompts.
+    parts.push('--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*'));
     if (opts.model) parts.push('--model', opts.model);
     if (opts.role) {
       parts.push('--append-system-prompt', shellQuote(`You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon.`));

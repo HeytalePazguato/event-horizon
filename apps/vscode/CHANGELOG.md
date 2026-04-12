@@ -24,6 +24,10 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Added — Orchestration Skill
 - **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails (auth errors, model failures). Supports `--agent` flag to override worker agent type (e.g. `--agent opencode`). Agent type resolution: user override → task metadata → same as orchestrator
 
+### Fixed
+- **Spawned agents couldn't call EH MCP tools**: `--allowedTools` only listed built-in tools (Edit, Write, Read, etc.) but not MCP tools, so spawned workers got "permission denied" errors when calling `eh_get_plan`, `eh_claim_task`, etc. Now includes `mcp__event-horizon__*` and `Skill` tool patterns
+- **Spawned agents had wrong working directory**: when no `cwd` was passed to `eh_spawn_agent`, it fell back to `vscode.workspace.workspaceFolders[0]` which could be empty or wrong if the orchestrator was running in a different folder. Now falls back to the orchestrator's `cwd` from agent state before falling back to workspace folder
+
 ### Improved
 - **`eh:create-plan` skill**: reinforced `eh_claim_orchestrator` as CRITICAL mandatory step — added to both step 10 and Rules section. Addresses 100% skip rate in previous usage
 - **Reviewer role**: now requires full verification pipeline (lint + build + test must all pass) and completeness check (all requested tasks must be done) before approving work
