@@ -56,7 +56,7 @@ const TIER_INFO: Record<'L0' | 'L1' | 'L2' | 'L3', TierInfo> = {
   L3: {
     id: 'L3', label: 'L3 — Deep Search', shortName: 'L3',
     color: '#ffaa44', tokenBudget: 'loaded on query',
-    description: 'Persisted event history. Searched on demand via eh_search_events or the Logs tab search bar. The full audit trail.',
+    description: 'Persisted event history. Searched on demand via the eh_search_events MCP tool or the Activity → Logs search bar. The full audit trail.',
   },
 };
 
@@ -707,7 +707,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
             lineHeight: 1.5,
           }}>
             <div style={{ marginBottom: sizes.spacing.xs }}>
-              Event Horizon uses a 4-tier loading model inspired by the MemPalace memory system. Each tier costs different tokens depending on when it loads:
+              Event Horizon uses a 4-tier loading model for knowledge. Each tier costs different tokens depending on when it loads into an agent session:
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '4px 10px', alignItems: 'baseline' }}>
               {(['L0', 'L1', 'L2', 'L3'] as const).map((id) => {
@@ -728,7 +728,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
               })}
             </div>
             <div style={{ marginTop: sizes.spacing.sm, color: colors.text.dim }}>
-              <strong style={{ color: colors.text.secondary }}>Mapping:</strong> Workspace entries default to L1 (mark critical ones as L0). Plan entries are L2. L3 is the persisted event history — search it via the Logs tab or <code>eh_search_events</code> MCP tool.
+              <strong style={{ color: colors.text.secondary }}>Mapping:</strong> Workspace entries default to L1 (mark critical ones as L0). Plan entries are L2. L3 is the persisted event history — search it via <strong>Activity → Logs</strong> or the <code>eh_search_events</code> MCP tool.
             </div>
             <div style={{ marginTop: sizes.spacing.xs, color: colors.text.dim }}>
               <strong style={{ color: colors.text.secondary }}>Goal:</strong> keep L0+L1 small (under ~1000 tokens combined) so agent wake-up cost is low. Use L2/L3 for everything else.
@@ -841,7 +841,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
           fontFamily: fonts.mono, flexShrink: 0,
         }}>L3</span>
         <span>
-          <strong style={{ color: colors.text.secondary }}>Deep Search</strong> — full persisted event history is not stored in the Knowledge tab. Use the <strong style={{ color: colors.text.secondary }}>Logs tab search bar</strong> (Enter to search the DB) or the <code>eh_search_events</code> MCP tool to query historical agent activity.
+          <strong style={{ color: colors.text.secondary }}>Deep Search</strong> — full persisted event history is not stored in the Knowledge tab. Use <strong style={{ color: colors.text.secondary }}>Activity → Logs</strong> (press Enter in the search bar to query the DB) or the <code>eh_search_events</code> MCP tool to query historical agent activity.
         </span>
       </div>
     </div>
