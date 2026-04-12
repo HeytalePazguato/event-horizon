@@ -403,12 +403,13 @@ const EntryRow: FC<{
 
 const Section: FC<{
   title: string;
+  description?: string;
   scope: 'workspace' | 'plan';
   entries: KnowledgeEntry[];
-  onAdd: (key: string, value: string, scope: 'workspace' | 'plan') => void;
-  onEdit: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onAdd: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
+  onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number) => void;
   onDelete: (key: string, scope: 'workspace' | 'plan') => void;
-}> = ({ title, scope, entries, onAdd, onEdit, onDelete }) => {
+}> = ({ title, description, scope, entries, onAdd, onEdit, onDelete }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -470,6 +471,17 @@ const Section: FC<{
           + Add
         </button>
       </div>
+
+      {/* Section description (visible when not collapsed) */}
+      {description && !collapsed && (
+        <div style={{
+          fontSize: sizes.text.xs, color: colors.text.dim,
+          marginBottom: sizes.spacing.xs, marginLeft: 18,
+          fontStyle: 'italic', lineHeight: 1.4,
+        }}>
+          {description}
+        </div>
+      )}
 
       {/* Add form */}
       {showAddForm && (
@@ -543,27 +555,28 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
       boxSizing: 'border-box',
       overflowY: 'auto',
     }}>
-      {/* Stats header — MemPalace-inspired temporal validity overview */}
+      {/* Stats header — knowledge entry counts grouped by temporal validity */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: sizes.spacing.md,
+        display: 'flex', alignItems: 'center', gap: sizes.spacing.md, flexWrap: 'wrap',
         marginBottom: sizes.spacing.sm, flexShrink: 0,
         fontSize: sizes.text.xs, fontFamily: fonts.mono,
       }}>
-        <span style={{ color: colors.text.dim }}>
+        <span style={{ color: colors.text.dim, fontWeight: 600 }}>Entries:</span>
+        <span style={{ color: colors.text.dim }} title="Entries that agents currently see (not expired)">
           <span style={{ color: colors.text.primary, fontWeight: 600 }}>{active}</span> active
         </span>
         {stats.permanent > 0 && (
-          <span style={{ color: colors.text.dim }}>
-            <span style={{ color: colors.text.secondary }}>{stats.permanent}</span> permanent
+          <span style={{ color: colors.text.dim }} title="Entries with no expiration set — never expire">
+            <span style={{ color: colors.text.secondary }}>{stats.permanent}</span> never expire
           </span>
         )}
         {stats.expiringSoon > 0 && (
-          <span style={{ color: '#cc8833' }} title="Entries expiring within 24 hours">
-            <span style={{ fontWeight: 600 }}>{stats.expiringSoon}</span> expiring soon
+          <span style={{ color: '#cc8833' }} title="Entries that will expire within the next 24 hours">
+            <span style={{ fontWeight: 600 }}>{stats.expiringSoon}</span> expiring within 24h
           </span>
         )}
         {stats.expired > 0 && (
-          <span style={{ color: '#cc4444' }} title="Entries past their validUntil — excluded from agent reads by default">
+          <span style={{ color: '#cc4444' }} title="Entries past their validUntil timestamp — excluded from agent reads by default">
             <span style={{ fontWeight: 600 }}>{stats.expired}</span> expired
           </span>
         )}
@@ -573,7 +586,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
             display: 'flex', alignItems: 'center', gap: 4,
             cursor: 'pointer', color: colors.text.dim,
           }}
-          title="When off, expired entries are hidden (matches what agents see by default via eh_read_shared)"
+          title="When off, expired entries are hidden in this view (matches what agents see by default via eh_read_shared). Toggle on to inspect the full audit trail including stale entries."
         >
           <input
             type="checkbox"
@@ -581,7 +594,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
             onChange={(e) => setShowExpired(e.target.checked)}
             style={{ cursor: 'pointer' }}
           />
-          Show expired
+          Show expired entries
         </label>
       </div>
 
@@ -609,7 +622,8 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
         />
       </div>
       <Section
-        title="Workspace (persistent)"
+        title="Workspace (always-loaded)"
+        description="Persistent facts loaded into every agent session — tech stack, project conventions, key paths. Keep this small (~10-30 entries) since every spawned agent pays the token cost upfront. Use 'never expire' for stable facts; set expiration for time-bound rules."
         scope="workspace"
         entries={filteredWorkspace}
         onAdd={onAdd}
@@ -617,7 +631,8 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
         onDelete={onDelete}
       />
       <Section
-        title={`Plan: ${planName ?? 'none'} (active)`}
+        title={`Plan: ${planName ?? 'none'} (on-demand)`}
+        description="Scoped to the active plan — task findings, debugging notes, decisions discovered during execution. Loaded only when an agent reads from this plan. Set expirations for facts that won't matter once the plan completes."
         scope="plan"
         entries={filteredPlan}
         onAdd={onAdd}
