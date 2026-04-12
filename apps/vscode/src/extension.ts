@@ -403,16 +403,21 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         prevPlanStatuses.set(changedPlanId, board.status);
 
-        // Broadcast orchestrator agent IDs
-        const orchIds: Record<string, boolean> = {};
-        for (const p of allPlans) {
-          if (p.orchestratorAgentId && p.status === 'active') {
-            orchIds[p.orchestratorAgentId] = true;
-          }
-        }
-        webviewRef.current.postMessage({ type: 'orchestrator-update', orchestratorAgentIds: orchIds });
       }
     }
+
+    // Broadcast orchestrator map on ANY plan change (not just completion)
+    const orchIds: Record<string, boolean> = {};
+    for (const p of allPlans) {
+      if (p.orchestratorAgentId && p.status === 'active') {
+        orchIds[p.orchestratorAgentId] = true;
+      }
+    }
+    webviewRef.current.postMessage({
+      type: 'orchestrator-update',
+      orchestratorAgentIds: orchIds,
+      orchestratorMap: planBoardManager.getOrchestratorMap(),
+    });
   });
 
   // Record completed tasks for agent profiling
@@ -475,6 +480,20 @@ export function activate(context: vscode.ExtensionContext): void {
         roles: roleManager.getAllRoles(),
         assignments: roleManager.getAllAssignments(),
         profiles: agentProfiler.getAllProfiles(),
+        agentRoleMap: spawnRegistry.getAgentRoleMap(),
+      });
+    }
+  });
+
+  // Rebroadcast role map whenever the spawn registry changes (spawn/stop)
+  spawnRegistry.onChange(() => {
+    if (webviewRef.current) {
+      webviewRef.current.postMessage({
+        type: 'roles-update',
+        roles: roleManager.getAllRoles(),
+        assignments: roleManager.getAllAssignments(),
+        profiles: agentProfiler.getAllProfiles(),
+        agentRoleMap: spawnRegistry.getAgentRoleMap(),
       });
     }
   });

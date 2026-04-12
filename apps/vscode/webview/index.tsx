@@ -159,6 +159,8 @@ function App() {
   const [contextLayers, setContextLayers] = useState<Record<string, unknown> | null>(null);
   const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
   const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
+  const [orchestratorMap, setOrchestratorMap] = useState<Record<string, string>>({});
+  const [agentRoleMap, setAgentRoleMap] = useState<Record<string, string>>({});
   const [persistedSearchResults, setPersistedSearchResults] = useState<import('@event-horizon/ui').PersistedSearchResult[] | null>(null);
   const [taskExecutionEvents, setTaskExecutionEvents] = useState<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>(null);
   const [wormholes, setWormholes] = useState<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>([]);
@@ -221,7 +223,7 @@ function App() {
     setHeartbeatStatuses,
     setTraceSpans, setTraceAggregate,
     setMcpServers, setCompactingAgentIds,
-    setSpawnBeams, setOrchestratorAgentIds,
+    setSpawnBeams, setOrchestratorAgentIds, setOrchestratorMap, setAgentRoleMap,
     setCostInsights, setCostRecommendations,
     setContextLayers,
     setPersistedSearchResults,
@@ -575,6 +577,7 @@ function App() {
       {settingsHydrated && viewMode === 'operations' && (
         <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
           plan={planTasksWithRecommendations} plans={plans} selectedPlanId={selectedPlanId}
+          orchestratorMap={orchestratorMap} agentRoleMap={agentRoleMap}
           roles={roles} roleAssignments={roleAssignments} agentProfiles={agentProfiles}
           onAssignRole={handleAssignRole} onCreateRole={handleCreateRole} onEditRole={handleEditRole} onDeleteRole={handleDeleteRole}
           onSelectPlan={(id) => { setSelectedPlanId(id); vscodeApi?.postMessage({ type: 'request-plan', planId: id }); }}

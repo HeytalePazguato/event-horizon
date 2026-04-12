@@ -107,6 +107,7 @@ export class SpawnRegistry {
   private backends = new Map<string, SpawnBackend>();
   private spawnedAgents = new Map<string, SpawnedAgentInfo>();
   private disposables: vscode.Disposable[] = [];
+  private changeListeners: Array<() => void> = [];
 
   constructor() {
     // Track terminal close events
@@ -115,11 +116,31 @@ export class SpawnRegistry {
         for (const [agentId, info] of this.spawnedAgents) {
           if (info.terminal === terminal) {
             this.spawnedAgents.delete(agentId);
+            this.notifyChange();
             break;
           }
         }
       }),
     );
+  }
+
+  onChange(listener: () => void): void {
+    this.changeListeners.push(listener);
+  }
+
+  private notifyChange(): void {
+    for (const fn of this.changeListeners) {
+      try { fn(); } catch { /* ignore listener errors */ }
+    }
+  }
+
+  /** Map of agentId → role for every currently spawned agent. */
+  getAgentRoleMap(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const [agentId, info] of this.spawnedAgents) {
+      if (info.role) result[agentId] = info.role;
+    }
+    return result;
   }
 
   register(backend: SpawnBackend): void {
@@ -190,6 +211,7 @@ export class SpawnRegistry {
       info.terminal.dispose();
     }
     this.spawnedAgents.delete(agentId);
+    this.notifyChange();
     return { stopped: true, message: `Agent ${agentId} stopped` };
   }
 
@@ -213,6 +235,7 @@ export class SpawnRegistry {
 
   trackAgent(agentId: string, info: SpawnedAgentInfo): void {
     this.spawnedAgents.set(agentId, info);
+    this.notifyChange();
   }
 
   /** Find terminal for a spawned agent. */

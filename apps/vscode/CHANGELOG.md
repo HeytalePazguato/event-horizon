@@ -29,6 +29,7 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **6 new settings** under `eventHorizon.*`: `persistence.enabled`, `persistence.retentionDays`, `websocket.enabled`, `contextGauge.enabled`, `contextGauge.windowSize`, `autoDetect.enabled`
 - **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails. Supports `--agent` flag to override worker agent type. Agent type resolution: user override → task metadata → same as orchestrator
 - **`tier` parameter on `eh_write_shared` MCP tool**: agents can self-tier their knowledge entries (L0/L1/L2). Returned in `eh_read_shared` results so agents know the tier of each entry
+- **Orchestrator and role badges in Agents sidebar**: orchestrator agents show a gold `★ ORCH` badge; agents with an assigned role show a colored role badge (implementer / reviewer / tester / researcher / planner / debugger). Both badges have tooltips. Maps hydrate on webview load and rebroadcast on plan changes and agent spawn/stop
 
 ### Improved
 - **`eh:research` skill** now instructs researchers to call `eh_search_events` and `eh_read_shared` BEFORE re-exploring the codebase. Also saves non-trivial findings via `eh_write_shared` with `valid_until` for time-bound facts

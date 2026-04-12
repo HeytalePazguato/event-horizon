@@ -54,6 +54,8 @@ export interface WebviewMessageDeps {
   setCompactingAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setSpawnBeams?: React.Dispatch<React.SetStateAction<Array<{ fromAgentId: string; toAgentId: string; color: number; startTime: number }>>>;
   setOrchestratorAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setOrchestratorMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setAgentRoleMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setCostInsights?: React.Dispatch<React.SetStateAction<unknown>>;
   setCostRecommendations?: React.Dispatch<React.SetStateAction<string[]>>;
   setContextLayers?: React.Dispatch<React.SetStateAction<Record<string, unknown> | null>>;
@@ -166,9 +168,15 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         return;
       }
       if (msg?.type === 'orchestrator-update') {
-        const data = msg as unknown as { orchestratorAgentIds: Record<string, boolean> };
+        const data = msg as unknown as {
+          orchestratorAgentIds?: Record<string, boolean>;
+          orchestratorMap?: Record<string, string>;
+        };
         if (data.orchestratorAgentIds && depsRef.current.setOrchestratorAgentIds) {
           depsRef.current.setOrchestratorAgentIds(data.orchestratorAgentIds);
+        }
+        if (data.orchestratorMap && depsRef.current.setOrchestratorMap) {
+          depsRef.current.setOrchestratorMap(data.orchestratorMap);
         }
         return;
       }
@@ -184,6 +192,9 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.roles) depsRef.current.setRoles(data.roles);
         if (data.assignments) depsRef.current.setRoleAssignments(data.assignments);
         if (data.profiles) depsRef.current.setAgentProfiles(data.profiles);
+        if (data.agentRoleMap && depsRef.current.setAgentRoleMap) {
+          depsRef.current.setAgentRoleMap(data.agentRoleMap);
+        }
         return;
       }
       if (msg?.type === 'heartbeat-update') {

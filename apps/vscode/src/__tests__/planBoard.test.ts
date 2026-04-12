@@ -571,3 +571,44 @@ describe('Plan MCP tools', () => {
     });
   });
 });
+
+// ── Orchestrator map helpers ────────────────────────────────────────────────
+
+describe('PlanBoardManager — orchestrator helpers', () => {
+  let manager: PlanBoardManager;
+
+  beforeEach(() => {
+    manager = new PlanBoardManager();
+  });
+
+  it('getOrchestratorMap returns empty object when no plans loaded', () => {
+    expect(manager.getOrchestratorMap()).toEqual({});
+  });
+
+  it('getOrchestratorMap excludes plans without an orchestrator', () => {
+    manager.loadPlan('# A\n- [ ] 1.1 task', 'a.md');
+    expect(manager.getOrchestratorMap()).toEqual({});
+  });
+
+  it('getOrchestratorMap maps planId → orchestratorAgentId across multiple plans', () => {
+    manager.loadPlan('# A\n- [ ] 1.1 task', 'a.md', 'agent-a');
+    manager.loadPlan('# B\n- [ ] 1.1 task', 'b.md', 'agent-b');
+    manager.loadPlan('# C\n- [ ] 1.1 task', 'c.md');
+    const map = manager.getOrchestratorMap();
+    expect(map).toEqual({ a: 'agent-a', b: 'agent-b' });
+  });
+
+  it('getAllOrchestratorAgentIds returns empty set when no plans loaded', () => {
+    expect(manager.getAllOrchestratorAgentIds().size).toBe(0);
+  });
+
+  it('getAllOrchestratorAgentIds returns unique set of agents across plans', () => {
+    manager.loadPlan('# A\n- [ ] 1.1 task', 'a.md', 'agent-a');
+    manager.loadPlan('# B\n- [ ] 1.1 task', 'b.md', 'agent-a');
+    manager.loadPlan('# C\n- [ ] 1.1 task', 'c.md', 'agent-b');
+    const ids = manager.getAllOrchestratorAgentIds();
+    expect(ids.size).toBe(2);
+    expect(ids.has('agent-a')).toBe(true);
+    expect(ids.has('agent-b')).toBe(true);
+  });
+});

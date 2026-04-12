@@ -12,7 +12,7 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler, sharedKnowledge } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry } from './eventServer.js';
 import { getDatabase } from './extension.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
@@ -383,6 +383,26 @@ function wireUniverseWebview(
       );
     }
 
+    // Hydrate orchestrator + role maps so the Agents sidebar can render badges
+    const orchIds: Record<string, boolean> = {};
+    for (const p of planBoardManager.getAllPlans()) {
+      if (p.orchestratorAgentId && p.status === 'active') {
+        orchIds[p.orchestratorAgentId] = true;
+      }
+    }
+    void webview.postMessage({
+      type: 'orchestrator-update',
+      orchestratorAgentIds: orchIds,
+      orchestratorMap: planBoardManager.getOrchestratorMap(),
+    });
+    void webview.postMessage({
+      type: 'roles-update',
+      roles: roleManager.getAllRoles(),
+      assignments: roleManager.getAllAssignments(),
+      profiles: agentProfiler.getAllProfiles(),
+      agentRoleMap: spawnRegistry.getAgentRoleMap(),
+    });
+
     // Hydrate all plans from persisted state
     const allPlans = planBoardManager.getAllPlans();
     if (allPlans.length > 0) {
@@ -579,6 +599,7 @@ function wireUniverseWebview(
         roles: roleManager.getAllRoles(),
         assignments: roleManager.getAllAssignments(),
         profiles: agentProfiler.getAllProfiles(),
+        agentRoleMap: spawnRegistry.getAgentRoleMap(),
       });
     } else if (msg?.type === 'assign-role') {
       const { roleId, agentType } = msg as { roleId: string; agentType: string };

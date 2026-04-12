@@ -382,6 +382,28 @@ export class PlanBoardManager {
     return Array.from(this.boards.values());
   }
 
+  /** Map of planId → orchestratorAgentId, excluding plans without an orchestrator. */
+  getOrchestratorMap(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const [id, board] of this.boards) {
+      if (board.orchestratorAgentId) {
+        result[id] = board.orchestratorAgentId;
+      }
+    }
+    return result;
+  }
+
+  /** Unique set of agent IDs currently acting as orchestrator on any plan. */
+  getAllOrchestratorAgentIds(): Set<string> {
+    const result = new Set<string>();
+    for (const board of this.boards.values()) {
+      if (board.orchestratorAgentId) {
+        result.add(board.orchestratorAgentId);
+      }
+    }
+    return result;
+  }
+
   /** Resolve a plan — by explicit ID, or fallback to active plan. */
   private resolvePlan(planId?: string): PlanBoard | null {
     return this.getPlan(planId);
