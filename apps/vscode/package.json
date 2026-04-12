@@ -369,6 +369,14 @@
           "default": true,
           "description": "On extension activation, scan PATH for installed AI agent CLIs (claude, opencode, cursor) and offer one-click hook setup if any are found without configured hooks.",
           "order": 35
+        },
+        "eventHorizon.watchdog.timeoutMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 120,
+          "description": "Auto-fail spawned workers that have not emitted any event for this many minutes (likely stuck on a permission prompt or hung). Orchestrators are notified via the message queue. Set to 0 to disable. Interactive-mode workers are always excluded.",
+          "order": 36
         }
       }
     },

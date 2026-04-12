@@ -11,6 +11,7 @@ import { openUniversePanel } from './webviewProvider';
 import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, wsBroadcast, setEventSearchEngine } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
+import { Watchdog } from './watchdog';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -1066,6 +1067,30 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
+  // ── Worker silence watchdog ──
+  const watchdogTimeoutMin = vscode.workspace.getConfiguration('eventHorizon').get<number>('watchdog.timeoutMinutes', 10);
+  const watchdog = new Watchdog({
+    spawnRegistry,
+    planBoardManager,
+    timeoutMs: watchdogTimeoutMin * 60_000,
+    emitTaskFail: (agentId, taskId, reason) => {
+      const agent = agentStateManager.getAgent(agentId);
+      const event: AgentEvent = {
+        id: `watchdog-${agentId}-${Date.now()}`,
+        timestamp: Date.now(),
+        agentId,
+        agentName: agent?.name ?? agentId,
+        agentType: (agent?.type ?? 'unknown') as AgentEvent['agentType'],
+        type: 'task.fail',
+        payload: { taskId, reason, source: 'watchdog' },
+      };
+      eventBus.emit(event);
+    },
+  });
+  // Record activity on every event so the watchdog knows the worker is alive
+  const unsubscribeWatchdog = eventBus.on((event) => watchdog.onActivity(event.agentId));
+  watchdog.start();
+
   // Forward cost insights to webview every 30 seconds
   // Read context window size from settings
   const contextWindowSetting = vscode.workspace.getConfiguration('eventHorizon').get<number>('contextGauge.windowSize', 200000);
@@ -1117,6 +1142,11 @@ export function activate(context: vscode.ExtensionContext): void {
         budgetManager.setWarningThreshold(
           vscode.workspace.getConfiguration('eventHorizon').get<number>('budgetWarningThreshold', 0.8),
         );
+      }
+      if (e.affectsConfiguration('eventHorizon.watchdog.timeoutMinutes')) {
+        const minutes = vscode.workspace.getConfiguration('eventHorizon').get<number>('watchdog.timeoutMinutes', 10);
+        watchdog.setTimeoutMs(minutes * 60_000);
+        if (minutes > 0) watchdog.start();
       }
     }),
   );
@@ -1547,6 +1577,8 @@ export function activate(context: vscode.ExtensionContext): void {
       if (cooperationTimer) clearTimeout(cooperationTimer);
       if (statusBarBlinkTimer) clearInterval(statusBarBlinkTimer);
       unsubscribeEventBus();
+      unsubscribeWatchdog();
+      watchdog.stop();
       stopEventServer();
       // Clean up all transcript watchers
       for (const w of transcriptWatchers.values()) w.destroy();

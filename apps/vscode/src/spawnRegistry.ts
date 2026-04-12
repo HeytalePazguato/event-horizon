@@ -56,6 +56,8 @@ export interface SpawnedAgentInfo {
   /** Underlying child process (when spawned via spawnWithTerminal). Used for real SIGTERM/SIGKILL. */
   process?: cp.ChildProcess;
   pid?: number;
+  /** True when spawned in interactive REPL mode — excluded from the silence watchdog. */
+  interactive?: boolean;
 }
 
 // ── Utility: shell-safe prompt handling ──────────────────────────────────────
@@ -471,6 +473,7 @@ export class ClaudeCodeSpawner implements SpawnBackend {
         role: opts.role ?? 'worker',
         taskId: opts.taskId ?? '',
         spawnedAt: Date.now(),
+        interactive: true,
       });
       return {
         agentId,
