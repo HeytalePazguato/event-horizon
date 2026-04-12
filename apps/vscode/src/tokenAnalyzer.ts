@@ -100,8 +100,18 @@ export class TokenAnalyzer {
     // Track token usage from any event with token data
     if (payload) {
       const tokens = this.getOrCreateAgentTokens(agentId);
-      if (typeof payload.inputTokens === 'number') tokens.input = payload.inputTokens as number;
-      if (typeof payload.outputTokens === 'number') tokens.output = payload.outputTokens as number;
+      // Prefer cumulative fields when present (attached on task.complete / agent.idle).
+      // Otherwise accumulate the per-turn delta from the transcript watcher.
+      if (typeof payload.inputTokens === 'number') {
+        tokens.input = payload.inputTokens as number;
+      } else if (typeof payload.inputTokensDelta === 'number') {
+        tokens.input += payload.inputTokensDelta as number;
+      }
+      if (typeof payload.outputTokens === 'number') {
+        tokens.output = payload.outputTokens as number;
+      } else if (typeof payload.outputTokensDelta === 'number') {
+        tokens.output += payload.outputTokensDelta as number;
+      }
       if (typeof payload.cacheReadTokensDelta === 'number') tokens.cacheRead += payload.cacheReadTokensDelta as number;
       if (typeof payload.cacheCreationTokensDelta === 'number') tokens.cacheCreation += payload.cacheCreationTokensDelta as number;
       if (typeof payload.costUsd === 'number') tokens.costUsd = payload.costUsd as number;
@@ -113,9 +123,11 @@ export class TokenAnalyzer {
         ctx.systemPromptEstimate = payload.cacheCreationTokensDelta as number;
         ctx.hasSeenFirstCacheCreation = true;
       }
-      // Track cumulative input tokens
+      // Track cumulative input tokens (prefer absolute; fall back to accumulating delta)
       if (typeof payload.inputTokens === 'number') {
         ctx.totalInputSeen = payload.inputTokens as number;
+      } else if (typeof payload.inputTokensDelta === 'number') {
+        ctx.totalInputSeen += payload.inputTokensDelta as number;
       }
     }
 

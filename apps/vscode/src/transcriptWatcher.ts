@@ -330,22 +330,19 @@ export class TranscriptWatcher {
         const parsed = parseEntry(entry);
         if (!parsed) continue;
 
-        // Accumulate token usage
+        // Accumulate token usage — keep the deltas in payload so downstream
+        // consumers (TokenAnalyzer) can accumulate cache-hit metrics per turn.
         if (parsed.payload.inputTokensDelta) {
           this.cumulativeInputTokens += parsed.payload.inputTokensDelta as number;
-          delete parsed.payload.inputTokensDelta;
         }
         if (parsed.payload.outputTokensDelta) {
           this.cumulativeOutputTokens += parsed.payload.outputTokensDelta as number;
-          delete parsed.payload.outputTokensDelta;
         }
         if (parsed.payload.cacheReadTokensDelta) {
           this.cumulativeCacheReadTokens += parsed.payload.cacheReadTokensDelta as number;
-          delete parsed.payload.cacheReadTokensDelta;
         }
         if (parsed.payload.cacheCreationTokensDelta) {
           this.cumulativeCacheCreationTokens += parsed.payload.cacheCreationTokensDelta as number;
-          delete parsed.payload.cacheCreationTokensDelta;
         }
 
         // Track waiting and skill tool_use IDs from assistant tool_use entries

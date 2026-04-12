@@ -659,8 +659,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
-    // Skip if hooks already emitted this type for this agent recently
-    // (transcript events carry fromTranscript=true in payload)
+    // Feed transcript events to TokenAnalyzer — they carry the real per-turn
+    // token deltas, so without this the Costs tab stays empty forever for
+    // Claude Code sessions (hooks alone only report tokens on Stop).
+    tokenAnalyzer.onEvent(event);
+    // Persist transcript events too so replay / search work across reloads
+    if (ehDatabase) {
+      try {
+        const workspace = (event.payload?.cwd as string) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        ehDatabase.insertEvent(event, workspace, deriveEventCategory(event.type));
+      } catch { /* persistence failure should never block event processing */ }
+    }
     metricsEngine.process(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
