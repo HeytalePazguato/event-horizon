@@ -159,6 +159,9 @@ function App() {
   const [contextLayers, setContextLayers] = useState<Record<string, unknown> | null>(null);
   const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
   const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
+  const [persistedSearchResults, setPersistedSearchResults] = useState<import('@event-horizon/ui').PersistedSearchResult[] | null>(null);
+  const [taskExecutionEvents, setTaskExecutionEvents] = useState<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>(null);
+  const [wormholes, setWormholes] = useState<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>([]);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -220,6 +223,9 @@ function App() {
     setSpawnBeams, setOrchestratorAgentIds,
     setCostInsights, setCostRecommendations,
     setContextLayers,
+    setPersistedSearchResults,
+    setTaskExecutionEvents,
+    setWormholes,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -557,6 +563,7 @@ function App() {
             contextUsage={contextLayers ? Object.fromEntries(
               Object.entries(contextLayers).map(([id, layer]) => [id, (layer as { usageRatio?: number }).usageRatio ?? 0])
             ) : undefined}
+            wormholes={wormholes}
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
@@ -580,6 +587,12 @@ function App() {
           costInsights={costInsights as CostInsightsData | null}
           costRecommendations={costRecommendations}
           contextLayers={contextLayers as Record<string, import('@event-horizon/ui').ContextLayerBreakdown> | null}
+          onPersistedSearch={(query, opts) => vscodeApi?.postMessage({ type: 'search-events', query, ...(opts ?? {}) })}
+          persistedSearchResults={persistedSearchResults}
+          onClearPersistedSearch={() => setPersistedSearchResults(null)}
+          onViewExecution={(taskId, agentId, claimTime, completeTime) => vscodeApi?.postMessage({ type: 'request-task-execution', taskId, agentId, claimTime, completeTime })}
+          taskExecution={taskExecutionEvents as { taskId: string; events: import('@event-horizon/ui').TaskExecutionEvent[] } | null}
+          onCloseExecution={() => setTaskExecutionEvents(null)}
           onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
       )}
 

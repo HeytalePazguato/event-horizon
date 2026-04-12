@@ -21,6 +21,14 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Context Layers panel section**: new first section in the Costs tab showing per-agent stacked horizontal bars with System (blue), Conversation (teal), and Tool Results (amber) breakdown. Shows usage as "124k / 200k (62%)" with color-coded percentage
 - **Knowledge temporal validity**: `validFrom`/`validUntil` fields on shared knowledge entries. Agents can set expiration via `eh_write_shared` (`valid_until` parameter). `eh_read_shared` excludes expired entries by default (`include_expired: true` to see them). Expired entries shown dimmed with strikethrough and red "EXPIRED" badge in Knowledge panel
 
+### Added — Search & Discovery (Phase 4)
+- **Event search engine**: new `EventSearchEngine` (in `apps/vscode/src/eventSearch.ts`) wraps SQLite FTS queries with MemPalace-style 4-stage query sanitization — short queries pass through, long queries extract last question, fall back to last meaningful sentence, then truncate to last 500 chars. Prevents 89× retrieval degradation from system-prompt contamination
+- **`eh_search_events` MCP tool**: agents can now full-text search persisted events. Supports filters by agent ID, type, and time range
+- **Search bar in Logs panel**: press Enter on the search input to trigger persistence-backed DB search (instead of just live-feed filter). Results replace live feed; "Clear search" button returns to live mode. Currently-selected agent and single type filter are passed as search constraints
+- **Cross-agent file correlation**: new `CrossAgentCorrelator` tracks which files multiple agents touched within a 10-minute window. Builds wormhole connections between agent pairs that share files. Strength scales with shared file count (capped at 1.0). Prunes correlations older than 30 minutes. Broadcasts active wormholes to webview every 15s
+- **Wormhole visuals on planets**: purple swirling portals appear at correlated agents' planets, connected by a flowing-particle line. Stronger correlations are more opaque. Portals spin in opposite directions; particles flow along the connection
+- **Execution replay drill-down**: done/failed plan tasks now have a "▶ View Execution" button. Opens a modal showing all events from the agent during that task's execution window — tool calls, file reads/writes, results. Queries persisted events via `db.queryEvents()` filtered by agentId + claim time + complete time
+
 ### Added — Orchestration Skill
 - **`eh:orchestrate` skill**: new bundled skill for managing plans as an orchestrator — spawns worker agents, assigns tasks by role, monitors progress, handles failures with model escalation. Falls back to self-implementation when spawning fails (auth errors, model failures). Supports `--agent` flag to override worker agent type (e.g. `--agent opencode`). Agent type resolution: user override → task metadata → same as orchestrator
 

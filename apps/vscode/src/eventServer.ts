@@ -152,6 +152,11 @@ export function _getMcpServer(): McpServer | null { return mcpServer; }
 /** @internal — exposed for testing only. */
 export function _setMcpServer(s: McpServer | null): void { mcpServer = s; }
 
+/** Wire the event search engine into the MCP server after the persistence DB is ready. */
+export function setEventSearchEngine(eventSearch: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] }): void {
+  if (mcpServer) mcpServer.setEventSearch(eventSearch);
+}
+
 // Backward-compat exports used by extension.ts
 export function setFileLockingEnabled(enabled: boolean): void { lockManager.setEnabled(enabled); }
 export function isFileLockingEnabled(): boolean { return lockManager.isEnabled(); }

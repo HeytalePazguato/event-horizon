@@ -606,6 +606,51 @@ function wireUniverseWebview(
       sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
     } else if (msg?.type === 'knowledge-delete') {
       sharedKnowledge.delete(msg.key as string, msg.scope as 'workspace' | 'plan', 'user');
+    } else if (msg?.type === 'search-events') {
+      // Persistence-backed event search with MemPalace-style sanitization
+      void (async () => {
+        try {
+          const ext = await import('./extension.js');
+          const db = ext.getDatabase();
+          if (!db) {
+            void webview.postMessage({ type: 'search-results', query: msg.query as string, events: [], error: 'Persistence disabled' });
+            return;
+          }
+          const { EventSearchEngine } = await import('./eventSearch.js');
+          const engine = new EventSearchEngine(db);
+          const opts: { agentId?: string; type?: string; since?: number; limit?: number } = {
+            limit: typeof msg.limit === 'number' ? msg.limit : 100,
+          };
+          if (msg.agentId) opts.agentId = msg.agentId as string;
+          if (msg.type_filter) opts.type = msg.type_filter as string;
+          if (typeof msg.since === 'number') opts.since = msg.since;
+          const events = engine.search(msg.query as string, opts);
+          void webview.postMessage({ type: 'search-results', query: msg.query as string, events });
+        } catch (err) {
+          void webview.postMessage({ type: 'search-results', query: msg.query as string, events: [], error: String(err) });
+        }
+      })();
+    } else if (msg?.type === 'request-task-execution') {
+      // Drill-down: get all events from an agent during a task's execution window
+      void (async () => {
+        try {
+          const ext = await import('./extension.js');
+          const db = ext.getDatabase();
+          if (!db) {
+            void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: 'Persistence disabled' });
+            return;
+          }
+          const events = db.queryEvents({
+            agentId: msg.agentId as string,
+            since: msg.claimTime as number,
+            until: msg.completeTime as number,
+            limit: 500,
+          });
+          void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events });
+        } catch (err) {
+          void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: String(err) });
+        }
+      })();
     }
   });
 }

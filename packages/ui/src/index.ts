@@ -15,7 +15,7 @@ export { AgentIdentity, MetricsPanel, AgentControls, CreateSkillWizard, Marketpl
 export type { CreateSkillRequest, MarketplacePanelProps } from './panels/index.js';
 export { GuidedTour, restartTour } from './GuidedTour.js';
 export { OperationsView } from './OperationsView.js';
-export type { PlanView, PlanTaskView, PlanTaskStatus, PlanSummary } from './panels/PlanPanel.js';
+export type { PlanView, PlanTaskView, PlanTaskStatus, PlanSummary, TaskExecutionEvent } from './panels/PlanPanel.js';
 export { taskStatusColor } from './panels/PlanPanel.js';
 export { KnowledgePanel } from './panels/KnowledgePanel.js';
 export type { KnowledgeEntry, KnowledgePanelProps } from './panels/KnowledgePanel.js';
@@ -26,3 +26,4 @@ export type { TraceSpanView, TracesPanelProps } from './panels/TracesPanel.js';
 export type { OperationsViewProps } from './OperationsView.js';
 export { CostInsightsPanel } from './panels/CostInsightsPanel.js';
 export type { CostInsightsData, CostInsightsPanelProps, ContextLayerBreakdown } from './panels/CostInsightsPanel.js';
+export type { LogsPanelProps, PersistedSearchResult } from './panels/LogsPanel.js';

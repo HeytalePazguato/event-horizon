@@ -91,13 +91,28 @@ const COLUMNS: { status: PlanTaskStatus; label: string }[] = [
   { status: 'failed',      label: 'Failed' },
 ];
 
+export interface TaskExecutionEvent {
+  id: string;
+  type: string;
+  agentId: string;
+  agentName?: string;
+  timestamp: number;
+  payload?: Record<string, unknown>;
+}
+
 export interface PlanPanelProps {
   plan: PlanView;
+  /** Trigger an execution drill-down (Phase 4.5). Posts message to extension which queries the DB. */
+  onViewExecution?: (taskId: string, agentId: string, claimTime: number, completeTime: number) => void;
+  /** Events returned for the most recent drill-down request. */
+  taskExecution?: { taskId: string; events: TaskExecutionEvent[] } | null;
+  /** Close the execution modal. */
+  onCloseExecution?: () => void;
 }
 
 type PlanViewMode = 'kanban' | 'dependencies';
 
-export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
+export const PlanPanel: FC<PlanPanelProps> = ({ plan, onViewExecution, taskExecution, onCloseExecution }) => {
   const [viewMode, setViewMode] = useState<PlanViewMode>('kanban');
 
   if (!plan.loaded || !plan.tasks) {
@@ -282,7 +297,7 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
           {visibleColumns.map((col) => (
             <div key={`c-${col.status}`} style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
               {col.tasks.map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard key={task.id} task={task} onViewExecution={onViewExecution} />
               ))}
             </div>
           ))}
@@ -293,9 +308,116 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan }) => {
           <DependencyPanel plan={plan} />
         </div>
       )}
+
+      {/* Execution Replay Modal (Phase 4.5) */}
+      {taskExecution && (
+        <ExecutionReplayModal
+          taskId={taskExecution.taskId}
+          events={taskExecution.events}
+          onClose={() => onCloseExecution?.()}
+        />
+      )}
     </div>
   );
 };
+
+// ── Execution Replay Modal ─────────────────────────────────────────────────
+
+const ExecutionReplayModal: FC<{ taskId: string; events: TaskExecutionEvent[]; onClose: () => void }> = ({ taskId, events, onClose }) => {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.7)', zIndex: 9999,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 40,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: colors.bg.primary,
+          border: `1px solid ${colors.border.active}`,
+          borderRadius: sizes.radius.md,
+          width: '80%', maxWidth: 900, maxHeight: '85vh',
+          display: 'flex', flexDirection: 'column',
+          fontFamily: fonts.mono,
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: sizes.spacing.md,
+          borderBottom: `1px solid ${colors.border.primary}`,
+          display: 'flex', alignItems: 'center', gap: sizes.spacing.md,
+        }}>
+          <span style={{ color: colors.text.primary, fontSize: sizes.text.md, fontWeight: 600 }}>
+            Execution Replay — Task {taskId}
+          </span>
+          <span style={{ color: colors.text.dim, fontSize: sizes.text.sm, marginLeft: 'auto' }}>
+            {events.length} events
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: 'transparent', border: `1px solid ${colors.border.primary}`,
+              color: colors.text.dim, padding: '2px 8px', cursor: 'pointer',
+              borderRadius: sizes.radius.sm, fontFamily: fonts.mono, fontSize: sizes.text.sm,
+            }}
+          >
+            ✕ Close
+          </button>
+        </div>
+        {/* Event list */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: sizes.spacing.md }}>
+          {events.length === 0 ? (
+            <div style={{ color: colors.text.dim, textAlign: 'center', padding: sizes.spacing.xl }}>
+              No events recorded for this task&apos;s execution window.
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${colors.border.primary}`, position: 'sticky', top: 0, background: colors.bg.primary }}>
+                  <th style={{ textAlign: 'left', padding: '4px 6px', color: colors.text.dim, fontSize: sizes.text.xs }}>Time</th>
+                  <th style={{ textAlign: 'left', padding: '4px 6px', color: colors.text.dim, fontSize: sizes.text.xs }}>Type</th>
+                  <th style={{ textAlign: 'left', padding: '4px 6px', color: colors.text.dim, fontSize: sizes.text.xs }}>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((evt) => {
+                  const detail = formatEventDetail(evt);
+                  return (
+                    <tr key={evt.id} style={{ borderBottom: `1px solid ${colors.border.primary}30` }}>
+                      <td style={{ padding: '3px 6px', fontSize: sizes.text.xs, color: colors.text.dim, whiteSpace: 'nowrap' }}>
+                        {new Date(evt.timestamp).toLocaleTimeString()}
+                      </td>
+                      <td style={{ padding: '3px 6px', fontSize: sizes.text.xs, color: '#88c0ff' }}>
+                        {evt.type}
+                      </td>
+                      <td style={{ padding: '3px 6px', fontSize: sizes.text.xs, color: colors.text.secondary }}>
+                        {detail}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function formatEventDetail(evt: TaskExecutionEvent): string {
+  const p = evt.payload ?? {};
+  if (evt.type === 'tool.call') return `${(p.toolName as string) ?? (p.tool as string) ?? 'unknown'} ${p.filePath ? '— ' + (p.filePath as string) : ''}`;
+  if (evt.type === 'tool.result') return (p.toolName as string) ?? '';
+  if (evt.type === 'file.read' || evt.type === 'file.write') return (p.filePath as string) ?? (p.file as string) ?? '';
+  if (evt.type === 'task.complete' || evt.type === 'task.fail') return (p.note as string) ?? evt.type;
+  return JSON.stringify(p).slice(0, 80);
+}
 
 // ── Role tag colors ────────────────────────────────────────────────────────
 
@@ -325,9 +447,10 @@ function verificationIcon(status: VerificationStatus | null | undefined): { symb
 
 // ── Task Card ───────────────────────────────────────────────────────────────
 
-const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
+const TaskCard: FC<{ task: PlanTaskView; onViewExecution?: PlanPanelProps['onViewExecution'] }> = ({ task, onViewExecution }) => {
   const statusCol = taskStatusColor(task.status);
   const [showAcceptance, setShowAcceptance] = useState(false);
+  const canDrillDown = (task.status === 'done' || task.status === 'failed') && !!onViewExecution && !!task.assigneeId;
 
   return (
     <div style={{
@@ -528,6 +651,34 @@ const TaskCard: FC<{ task: PlanTaskView }> = ({ task }) => {
             </div>
           ))}
         </div>
+      )}
+
+      {/* View Execution drill-down (Phase 4.5) — only for done/failed tasks */}
+      {canDrillDown && (
+        <button
+          type="button"
+          onClick={() => {
+            // Use claim time = first note ts (earliest activity), complete time = last note ts (latest)
+            const tss = task.notes.map((n) => n.ts).filter((n) => typeof n === 'number');
+            const claimTime = tss.length > 0 ? Math.min(...tss) - 60_000 : Date.now() - 24 * 60 * 60 * 1000;
+            const completeTime = tss.length > 0 ? Math.max(...tss) + 60_000 : Date.now();
+            onViewExecution!(task.id, task.assigneeId!, claimTime, completeTime);
+          }}
+          style={{
+            marginTop: sizes.spacing.xs,
+            padding: '2px 6px',
+            background: 'transparent',
+            border: `1px solid ${colors.border.primary}`,
+            borderRadius: sizes.radius.sm,
+            color: colors.text.secondary,
+            fontSize: sizes.text.xs,
+            fontFamily: fonts.mono,
+            cursor: 'pointer',
+          }}
+          title="Show all events from this task's execution window"
+        >
+          ▶ View Execution
+        </button>
       )}
     </div>
   );

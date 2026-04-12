@@ -8,7 +8,8 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, wsBroadcast } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, wsBroadcast, setEventSearchEngine } from './eventServer';
+import { EventSearchEngine } from './eventSearch';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -22,10 +23,12 @@ import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
 import { ensureBundledSkills } from './bundledSkills';
 import { EventHorizonDB } from './persistence';
 import { deriveEventCategory } from '@event-horizon/core';
+import { CrossAgentCorrelator } from './crossAgentCorrelator';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
 let ehDatabase: EventHorizonDB | null = null;
+const crossAgentCorrelator = new CrossAgentCorrelator();
 
 /** Access the persistence database (if enabled). Used by webviewProvider for event replay. */
 export function getDatabase(): EventHorizonDB | null {
@@ -191,6 +194,10 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         }, 60_000);
         context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
+
+        // Wire event search engine into MCP server now that DB is ready
+        const eventSearchEngine = new EventSearchEngine(ehDatabase);
+        setEventSearchEngine(eventSearchEngine);
 
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {
@@ -892,6 +899,11 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     }
 
+    // Feed file events to cross-agent correlator for wormhole detection
+    if (event.type === 'file.read' || event.type === 'file.write') {
+      crossAgentCorrelator.onEvent(event);
+    }
+
     // Record heartbeat on any event (agent is clearly alive if sending events)
     heartbeatManager.beat(event.agentId);
 
@@ -1050,6 +1062,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }, 30_000);
   context.subscriptions.push({ dispose: () => clearInterval(costInsightsInterval) });
+
+  // Broadcast wormhole connections every 15 seconds (cross-agent correlation)
+  const wormholeInterval = setInterval(() => {
+    crossAgentCorrelator.prune();
+    const activeWormholes = crossAgentCorrelator.getActiveWormholes();
+    webviewRef.current?.postMessage({ type: 'wormhole-update', data: { wormholes: activeWormholes } });
+  }, 15_000);
+  context.subscriptions.push({ dispose: () => clearInterval(wormholeInterval) });
 
   const ehConfig = vscode.workspace.getConfiguration('eventHorizon');
   const configuredPort = ehConfig.get<number>('port', 28765);

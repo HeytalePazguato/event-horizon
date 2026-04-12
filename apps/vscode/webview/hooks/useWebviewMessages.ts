@@ -57,6 +57,9 @@ export interface WebviewMessageDeps {
   setCostInsights?: React.Dispatch<React.SetStateAction<unknown>>;
   setCostRecommendations?: React.Dispatch<React.SetStateAction<string[]>>;
   setContextLayers?: React.Dispatch<React.SetStateAction<Record<string, unknown> | null>>;
+  setPersistedSearchResults?: React.Dispatch<React.SetStateAction<import('@event-horizon/ui').PersistedSearchResult[] | null>>;
+  setTaskExecutionEvents?: React.Dispatch<React.SetStateAction<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>>;
+  setWormholes?: React.Dispatch<React.SetStateAction<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -215,6 +218,31 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         }
         if (data.contextLayers && depsRef.current.setContextLayers) {
           depsRef.current.setContextLayers(data.contextLayers);
+        }
+        return;
+      }
+      if (msg?.type === 'search-results') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (depsRef.current.setPersistedSearchResults) {
+          depsRef.current.setPersistedSearchResults(data.events ?? []);
+        }
+        return;
+      }
+      if (msg?.type === 'task-execution-events') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (depsRef.current.setTaskExecutionEvents) {
+          depsRef.current.setTaskExecutionEvents({ taskId: data.taskId, events: data.events ?? [] });
+        }
+        return;
+      }
+      if (msg?.type === 'wormhole-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        const ws = (data.data?.wormholes ?? data.wormholes ?? []) as Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>;
+        if (depsRef.current.setWormholes) {
+          depsRef.current.setWormholes(ws);
         }
         return;
       }

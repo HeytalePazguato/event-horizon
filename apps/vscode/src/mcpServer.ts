@@ -600,6 +600,22 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id'],
     },
   },
+  {
+    name: 'eh_search_events',
+    description: 'Full-text search over persisted events. Applies MemPalace-style query sanitization to handle long or malformed input. Returns matching events with payload.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        query: { type: 'string', description: 'Search query (will be sanitized — long/malformed queries are auto-truncated)' },
+        agent_id_filter: { type: 'string', description: 'Filter results to a specific agent ID (optional)' },
+        type: { type: 'string', description: 'Filter by event type (e.g. "tool.call", "agent.spawn")' },
+        since: { type: 'number', description: 'Filter to events after this timestamp (epoch ms)' },
+        limit: { type: 'number', description: 'Max results to return (default 50)' },
+      },
+      required: ['agent_id', 'query'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -660,6 +676,7 @@ export interface McpServerDeps {
   workspaceRoot?: string;
   modelTierManager?: ModelTierManager;
   tokenAnalyzer?: TokenAnalyzer;
+  eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
 }
 
 export class McpServer {
@@ -667,6 +684,11 @@ export class McpServer {
 
   constructor(deps: McpServerDeps) {
     this.deps = deps;
+  }
+
+  /** Wire the event search engine after the DB is initialized (called from extension.ts). */
+  setEventSearch(eventSearch: McpServerDeps['eventSearch']): void {
+    this.deps.eventSearch = eventSearch;
   }
 
   /** Handle a JSON-RPC request and return a response. */
@@ -1762,6 +1784,19 @@ export class McpServer {
         }
         const recommendations = tokenAnalyzer.getRecommendations();
         return { insights, recommendations };
+      }
+
+      case 'eh_search_events': {
+        const { eventSearch } = this.deps;
+        if (!eventSearch) return { error: 'Event search not available (persistence may be disabled)' };
+        const query = args.query as string;
+        const limit = typeof args.limit === 'number' ? Math.min(args.limit, 200) : 50;
+        const opts: { agentId?: string; type?: string; since?: number; limit?: number } = { limit };
+        if (args.agent_id_filter) opts.agentId = args.agent_id_filter as string;
+        if (args.type) opts.type = args.type as string;
+        if (typeof args.since === 'number') opts.since = args.since;
+        const results = eventSearch.search(query, opts);
+        return { query, count: results.length, events: results };
       }
 
       default:

@@ -73,6 +73,18 @@ export interface OperationsViewProps {
   costRecommendations?: string[];
   contextLayers?: Record<string, import('./panels/CostInsightsPanel.js').ContextLayerBreakdown> | null;
   onAddToSharedKnowledge?: (file: string) => void;
+  /** Trigger a persistence-backed event search (Phase 4.2). */
+  onPersistedSearch?: (query: string, opts?: { agentId?: string; type?: string; since?: number }) => void;
+  /** Results from the last persisted search — when non-null, replaces live log feed. */
+  persistedSearchResults?: import('./panels/LogsPanel.js').PersistedSearchResult[] | null;
+  /** Callback to clear persisted search and return to live mode. */
+  onClearPersistedSearch?: () => void;
+  /** Trigger an execution drill-down for a done/failed task (Phase 4.5). */
+  onViewExecution?: (taskId: string, agentId: string, claimTime: number, completeTime: number) => void;
+  /** Events returned for the most recent drill-down request. */
+  taskExecution?: { taskId: string; events: import('./panels/PlanPanel.js').TaskExecutionEvent[] } | null;
+  /** Close the execution modal. */
+  onCloseExecution?: () => void;
 }
 
 const OPS_TOOLTIP_STYLE: React.CSSProperties = {
@@ -90,7 +102,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -243,7 +255,11 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
                   )}
                   {activityView === 'logs' && (
                     <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                      <LogsPanel />
+                      <LogsPanel
+                        onPersistedSearch={onPersistedSearch}
+                        persistedResults={persistedSearchResults}
+                        onClearPersistedSearch={onClearPersistedSearch}
+                      />
                     </div>
                   )}
                 </div>
@@ -255,7 +271,12 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               </div>
             )}
             {activeTab === 'plan' && (
-              <PlanPanel plan={plan ?? { loaded: false }} />
+              <PlanPanel
+                plan={plan ?? { loaded: false }}
+                onViewExecution={onViewExecution}
+                taskExecution={taskExecution}
+                onCloseExecution={onCloseExecution}
+              />
             )}
             {activeTab === 'roles' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
