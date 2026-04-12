@@ -21,6 +21,12 @@ export interface SpawnOpts {
   envVars?: Record<string, string>;
   /** When 'worktree', create a git worktree before spawning and set cwd to it. */
   isolation?: 'none' | 'worktree';
+  /**
+   * Interactive mode: spawn without `-p` so the user can type follow-up prompts
+   * and the agent responds. Default false — batch mode via `-p` is correct for
+   * orchestrated work.
+   */
+  interactive?: boolean;
 }
 
 export interface SpawnResult {
@@ -413,16 +419,24 @@ export class ClaudeCodeSpawner implements SpawnBackend {
 
   async spawn(opts: SpawnOpts): Promise<SpawnResult> {
     const agentId = `claude-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const terminalName = `\u2600\uFE0F Claude \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
+    const suffix = opts.interactive ? 'Interactive' : (opts.taskId ?? 'general');
+    const terminalName = `\u2600\uFE0F Claude \u2014 ${opts.role ?? 'Worker'} (${suffix})`;
 
     // Write prompt to temp file to avoid shell escaping issues
     const pf = await writePromptFile(opts.prompt, agentId);
 
-    // Build command — --verbose is required when using -p with --output-format stream-json
-    const parts = ['claude', '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json'];
-    // Pre-authorize tools so spawned agents can actually edit files without permission prompts
-    // Pre-authorize all built-in tools + Event Horizon MCP tools so spawned agents
-    // can call eh_get_plan, eh_claim_task, eh_update_task, etc. without permission prompts.
+    // Interactive mode: omit -p / --output-format so the CLI drops into its
+    // interactive REPL. The user can then type follow-up prompts in the
+    // terminal and the agent responds.
+    const parts: string[] = ['claude'];
+    if (opts.interactive) {
+      // Pass the initial prompt as a positional arg — Claude's interactive
+      // mode seeds the conversation with it and then keeps the REPL open.
+      parts.push(pf.readFragment);
+    } else {
+      parts.push('-p', pf.readFragment, '--verbose', '--output-format', 'stream-json');
+    }
+    // Pre-authorize tools so spawned agents can actually edit files without permission prompts.
     parts.push('--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*'));
     if (opts.model) parts.push('--model', opts.model);
     if (opts.role) {
@@ -438,6 +452,34 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       ...(opts.taskId ? { EH_TASK_ID: opts.taskId } : {}),
       ...opts.envVars,
     };
+
+    // Interactive mode uses vscode.window.createTerminal so the terminal
+    // accepts user input naturally. We can't track the real PID in that
+    // path, but interactive users can Ctrl+C or close the terminal.
+    if (opts.interactive) {
+      const terminal = vscode.window.createTerminal({
+        name: terminalName,
+        cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        env,
+      });
+      terminal.sendText(parts.join(' ') + pf.cleanup);
+      terminal.show();
+      this.registry.trackAgent(agentId, {
+        type: this.type,
+        terminalName,
+        terminal,
+        role: opts.role ?? 'worker',
+        taskId: opts.taskId ?? '',
+        spawnedAt: Date.now(),
+      });
+      return {
+        agentId,
+        type: this.type,
+        status: 'spawned',
+        message: `Claude Code agent spawned interactively in terminal "${terminalName}". Use the terminal to send follow-up prompts.`,
+        terminalName,
+      };
+    }
 
     const registry = this.registry;
     const command = parts.join(' ') + pf.cleanup;

@@ -421,6 +421,7 @@ export const MCP_TOOLS: McpToolDef[] = [
         model: { type: 'string', description: 'Model override (e.g. claude-sonnet-4-20250514). Optional — defaults to the CLI default.' },
         plan_id: { type: 'string', description: 'Plan ID to associate with the spawned agent' },
         task_id: { type: 'string', description: 'Task ID the agent should work on' },
+        interactive: { type: 'boolean', description: 'When true, spawn in interactive REPL mode so the user can type follow-up prompts. Default false (batch -p mode, correct for orchestrated work).' },
       },
       required: ['agent_id', 'agent_type', 'prompt'],
     },
@@ -1418,13 +1419,14 @@ export class McpServer {
         const model = args.model as string | undefined;
         const planId = args.plan_id as string | undefined;
         const taskId = args.task_id as string | undefined;
+        const interactive = args.interactive === true;
 
         // Sync skills before spawning
         if (this.deps.syncSkills) {
           await this.deps.syncSkills(agentType);
         }
 
-        const result = await spawnRegistry.spawn(agentType, { prompt, role, cwd, model, planId, taskId });
+        const result = await spawnRegistry.spawn(agentType, { prompt, role, cwd, model, planId, taskId, interactive });
         return result;
       }
 
