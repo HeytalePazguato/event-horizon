@@ -105,6 +105,20 @@ Do NOT try to use the Skill tool or /eh:work-on-plan yourself — those are for 
 9. **Stop agents** — Use eh_stop_agent to terminate agents that are no longer needed.
 10. **Synthesize results** — When all tasks are done, review the work, resolve conflicts, and produce a final summary.
 
+## React to worker failures
+
+Failure notifications are pushed to your message queue by Event Horizon — you do NOT have to poll \`eh_get_team_status\` to find them. Call \`eh_get_messages\` periodically (at least every 60s during orchestration) to receive:
+
+- **⚠️ Worker X reported an error on task Y** — a worker fired \`agent.error\`
+- **⚠️ Worker X failed a task Y** — a worker marked a task as failed
+
+When you receive one of these, decide:
+1. **Retry** with \`eh_retry_task\` — the system automatically escalates the model tier (haiku → sonnet → opus)
+2. **Reassign** with \`eh_reassign_task\` — move the task to a different agent
+3. **Take over** yourself if all retries have been exhausted
+
+Do NOT ignore these messages — silent worker failures are the #1 way multi-agent runs stall.
+
 ## Tools (orchestrator-only)
 
 - \`eh_spawn_agent\` — Launch a new agent (agent_type is "claude-code"/"opencode"/"cursor", NOT a role)

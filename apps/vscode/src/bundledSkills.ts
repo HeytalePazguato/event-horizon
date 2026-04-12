@@ -673,19 +673,16 @@ For each batch of ready tasks:
 
    Spawn as many parallel agents as there are independent ready tasks (up to 5 at a time to avoid overload).
 
-2. **Monitor progress** — Every 30-60 seconds, call \`eh_get_team_status\` to check:
-   - Which agents are still working
-   - Which tasks changed status
-   - Any failures or blockers
+2. **Check messages FIRST, then status** — Every 30-60 seconds, pull worker failure notifications BEFORE polling the team status:
+   1. Call \`eh_get_messages\` — Event Horizon pushes \`⚠️ Worker X reported an error on task Y\` and \`⚠️ Worker X failed a task Y\` messages here whenever a worker fires \`agent.error\` or \`task.fail\`. You MUST read these every cycle, or you'll silently miss worker failures.
+   2. Call \`eh_get_team_status\` to check which agents are still working, which tasks changed status, any blockers.
 
-3. **Handle failures** — If a task fails:
-   - Read the failure note via \`eh_get_plan\`
-   - Decide: retry with same model, escalate to higher model via \`eh_retry_task\`, or skip and report to user
+3. **Handle failures** — When you see a failure notification from step 2:
+   - Read the failure note via \`eh_get_plan\` for full context
+   - Decide: retry with same model, escalate to higher model via \`eh_retry_task\` (automatically bumps tier), reassign via \`eh_reassign_task\`, or take over the task yourself if all retries exhausted
    - If retrying, spawn a new agent for the retried task
 
 4. **Unblock next phase** — When all tasks in a dependency group complete, identify newly-unblocked tasks and spawn agents for them.
-
-5. **Check messages** — Call \`eh_get_messages\` periodically to see if worker agents reported issues.
 
 ## Completion
 

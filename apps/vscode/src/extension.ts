@@ -10,6 +10,7 @@ import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
 import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, wsBroadcast, setEventSearchEngine } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
+import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -799,6 +800,9 @@ export function activate(context: vscode.ExtensionContext): void {
     broadcastEvent(event);
     wsBroadcast(event);
     updateStatusBar();
+
+    // ── Push worker errors to the orchestrator so they can react ──
+    notifyOrchestratorsOfFailure(event, planBoardManager.getAllPlans(), messageQueue);
 
     // ── Rate extension prompt (one-time, after 2+ agents connect) ──
     if (event.type === 'agent.spawn' && !ratingPromptShown) {
