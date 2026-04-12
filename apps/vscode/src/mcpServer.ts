@@ -1481,12 +1481,15 @@ export class McpServer {
         const planId = args.plan_id as string | undefined;
         const agents = this.deps.agentStateManager.getAllAgents();
         const getMetrics = this.deps.getMetrics;
+        // Pull context layers per agent (CIP Phase 3) so orchestrator sees who's near limit
+        const contextLayers = this.deps.tokenAnalyzer?.getContextLayers() ?? {};
 
         const agentInfos = agents.map((a) => {
           const m = getMetrics?.(a.id);
           const currentTask = planId
             ? planBoardManager.getPlan(planId)?.tasks.find((t) => t.assignee === a.id && (t.status === 'claimed' || t.status === 'in_progress'))
             : null;
+          const ctx = contextLayers[a.id];
           return {
             id: a.id,
             name: a.name,
@@ -1495,6 +1498,10 @@ export class McpServer {
             currentTask: currentTask ? { id: currentTask.id, title: currentTask.title, status: currentTask.status } : null,
             load: m?.load ?? 0,
             cost: m?.estimatedCostUsd ?? 0,
+            // Context window pressure — orchestrator should avoid assigning new tasks to agents > 0.8
+            contextUsageRatio: ctx?.usageRatio ?? null,
+            contextTokensUsed: ctx?.totalUsed ?? null,
+            contextWindowSize: ctx?.contextWindowSize ?? null,
           };
         });
 

@@ -166,11 +166,13 @@ export class SharedKnowledgeStore {
   /**
    * Get a markdown summary of all knowledge, grouped by scope and author.
    */
-  getSummary(planId?: string): string {
+  getSummary(planId?: string, includeExpired = false): string {
     const sections: string[] = [];
+    const now = Date.now();
+    const isValid = (e: KnowledgeEntry) => includeExpired || !e.validUntil || e.validUntil > now;
 
     // Workspace section
-    const wsEntries = Array.from(this.workspace.values());
+    const wsEntries = Array.from(this.workspace.values()).filter(isValid);
     if (wsEntries.length > 0) {
       sections.push('## Workspace Knowledge');
       for (const e of wsEntries) {
@@ -185,13 +187,16 @@ export class SharedKnowledgeStore {
     const pid = planId ?? '_default';
     const planMap = this.planEntries.get(pid);
     if (planMap && planMap.size > 0) {
+      const planEntries = Array.from(planMap.values()).filter(isValid);
+      if (planEntries.length > 0) {
       sections.push('');
       sections.push('## Plan Knowledge');
-      for (const e of planMap.values()) {
+      for (const e of planEntries) {
         const val = e.value.length > SUMMARY_TRUNCATE
           ? e.value.slice(0, SUMMARY_TRUNCATE) + '...'
           : e.value;
         sections.push(`- **${e.key}** (by ${e.author}): ${val}`);
+      }
       }
     }
 

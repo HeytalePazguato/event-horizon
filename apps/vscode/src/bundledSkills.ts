@@ -330,9 +330,20 @@ You are a researcher agent. Your job is to explore the codebase, gather context,
 ## Process
 
 1. Read the task description from your argument or from the plan (call \`eh_get_plan\` to see current tasks)
-2. Explore relevant files using Read, Grep, and Glob
-3. Search for related patterns, dependencies, and potential risks
-4. Produce a structured findings summary
+
+2. **Stand on prior agents' shoulders FIRST** — call \`eh_search_events\` for the task's key terms (file paths, function names, error messages) before re-exploring. Event Horizon persists every event verbatim, so prior agent activity on related files is searchable. Examples:
+   - \`eh_search_events({ query: "auth.ts" })\` → see who touched it, what tools ran
+   - \`eh_search_events({ query: "TypeError", type: "agent.error" })\` → find prior failures
+   - \`eh_search_events({ query: "<feature name>", type: "task.complete" })\` → see if anyone already shipped this
+   Also call \`eh_read_shared\` to check if shared knowledge already covers your topic — don't re-discover what's documented.
+
+3. Explore relevant files using Read, Grep, and Glob (only after step 2 — let prior work narrow your search)
+
+4. Search for related patterns, dependencies, and potential risks
+
+5. Produce a structured findings summary
+
+6. **Save key findings as shared knowledge** — use \`eh_write_shared\` for non-trivial discoveries that future agents would benefit from. If the finding is time-bound (e.g. "build is broken on this branch as of today"), set \`valid_until\` so it auto-expires.
 
 ## Output format
 
@@ -475,11 +486,23 @@ You are a debugger agent. Your job is to diagnose bugs, trace root causes, and a
 ## Process
 
 1. Understand the bug (read task description, check plan via \`eh_get_plan\`)
-2. Reproduce the issue if possible (run relevant commands)
-3. Trace the root cause through the code using Read and Grep
-4. Apply a minimal, targeted fix — change as little as possible
-5. Verify the fix doesn't break existing tests: \`pnpm test\`
-6. Document your findings
+
+2. **Search prior agent activity FIRST** — Event Horizon persists every event from every agent. Use \`eh_search_events\` to find context the bug report alone won't give you:
+   - \`eh_search_events({ query: "<error message excerpt>" })\` → has this error appeared before? in what context?
+   - \`eh_search_events({ query: "<file or function name>", type: "tool.call" })\` → what tools touched the suspect code recently?
+   - \`eh_search_events({ query: "<feature name>", type: "task.fail" })\` → prior failures on similar work?
+   - \`eh_search_events({ query: "<file>", type: "file.write" })\` → who last wrote to this file, when?
+   This often surfaces the introducing change in seconds vs hours of git blame archaeology.
+
+3. Reproduce the issue if possible (run relevant commands)
+
+4. Trace the root cause through the code using Read and Grep
+
+5. Apply a minimal, targeted fix — change as little as possible
+
+6. Verify the fix doesn't break existing tests: \`pnpm test\`
+
+7. Document your findings
 
 ## Guidelines
 
@@ -487,6 +510,7 @@ You are a debugger agent. Your job is to diagnose bugs, trace root causes, and a
 - Prefer the smallest possible fix
 - Do NOT refactor surrounding code
 - Explain WHY the bug occurred, not just what you changed
+- When you find the introducing event via \`eh_search_events\`, cite it in your fix note (timestamp + agent + tool call) so future debuggers can trust the trail
 
 ## After debugging
 
@@ -545,11 +569,26 @@ For each file found:
 
 4. **Identify skill candidates** — Detailed step-by-step procedures (e.g. "how to add a new API endpoint") could be extracted into on-demand skills that agents invoke only when needed, instead of paying the token cost on every session.
 
+## Optimization Strategy — MemPalace-Inspired Tiered Loading
+
+The goal is NOT to shrink CLAUDE.md to the smallest possible size. The goal is to **tier the content** so the always-loaded part is small while the full detail remains available on demand. MemPalace's published benchmark proved that aggressive summarization regresses retrieval by 12+ percentage points — losing the *why* costs more than it saves in tokens.
+
+Apply this 4-tier model (analogous to MemPalace's L0-L3 stack):
+
+- **L0 — Identity & Critical Rules (~50-200 tokens, always loaded in CLAUDE.md):** Project name, tech stack one-liner, hard rules ("never commit X", "always run Y before merging"). This is the only part that must always be present.
+- **L1 — Essential Architecture (~400-800 tokens, in CLAUDE.md):** Build/test/lint commands, top-level directory map, key conventions agents need on every session. Concise.
+- **L2 — Path-Scoped Rules (loaded on demand):** Detailed rules that only matter when working in specific areas → \`.claude/rules/<area>.md\` with glob frontmatter. Loaded only when an agent touches matching files.
+- **L3 — On-Demand Procedures (loaded only when invoked):** Step-by-step how-tos → \`.claude/skills/<task>.md\` with \`user-invocable: true\`. Loaded only when an agent explicitly invokes the skill.
+
+A well-tiered project pays ~600-1000 tokens per agent wake-up instead of 4000+, freeing 95%+ of the context window for actual work.
+
 ## Actions
 
 Present your analysis first, then offer these optimizations (with user approval):
 
-1. **Split large CLAUDE.md** — Move path-specific rules to \`.claude/rules/\` with appropriate glob patterns in frontmatter:
+1. **Tier the content into L0/L1/L2/L3** — restructure CLAUDE.md to keep only L0 + L1, move L2 to \`.claude/rules/\`, move L3 to \`.claude/skills/\`. Show the proposed tier assignment for each section before moving anything.
+
+2. **Split path-specific rules** into \`.claude/rules/<area>.md\` with frontmatter:
    \\\`\\\`\\\`markdown
    ---
    description: Rules for React components
@@ -558,18 +597,24 @@ Present your analysis first, then offer these optimizations (with user approval)
    [rules that only apply to UI components]
    \\\`\\\`\\\`
 
-2. **Extract procedures into skills** — Move detailed how-to procedures into \`.claude/skills/\` as on-demand skills agents can invoke when needed.
+3. **Extract procedures into skills** — Move detailed how-to procedures into \`.claude/skills/<task>/SKILL.md\` so agents only pay the token cost when they invoke the skill.
 
-3. **Deduplicate across files** — If the same information exists in multiple instruction files, consolidate into one source and reference it from others.
+4. **Deduplicate across files** — If the same information exists in CLAUDE.md, .cursorrules, AGENTS.md, etc., consolidate into one source and reference it from others.
 
-4. **Summarize verbose sections** — Replace long explanations with concise bullet points. Keep the meaning, reduce the words.
+5. **Move dated content to shared knowledge with expiration** — content like "as of Q1 2025" or "until the new auth lands in March" should NOT live in always-loaded instruction files. Move it to shared knowledge via \`eh_write_shared\` with a \`valid_until\` timestamp so it auto-expires and stops costing tokens once stale.
+
+## What NOT to do
+
+- **DO NOT summarize for the sake of brevity.** MemPalace's benchmarks (96.6% R@5 raw vs 84.2% with their AAAK lossy compression) prove summarization loses critical context. Trim filler words, but never remove the *why*.
+- **DO NOT collapse examples that show different patterns.** If three examples illustrate three distinct cases, keep all three. Only collapse examples that are redundant.
+- **DO NOT delete dated content — expire it.** Move time-bound notes to shared knowledge with \`valid_until\`. Future agents can still find expired entries with \`include_expired: true\` if needed.
 
 ## Safety
 
 - **ALWAYS create backups** — Before modifying any file, copy it to \`<filename>.backup\` in the same directory.
-- **Never delete content** — Only move content to other files. Every line removed from one file must appear in another.
-- **Report before/after** — Show estimated token savings: "CLAUDE.md: 4,200 → 2,100 tokens (saved 2,100 tokens per session)".
-- **Ask before modifying** — Present the plan and get user confirmation before making changes.
+- **Never delete content** — Only move content to other files (or to shared knowledge). Every line removed from one file must appear in another location, with the same fidelity.
+- **Report before/after with tier breakdown** — "CLAUDE.md: 4,200 → 800 tokens (L0+L1 only). Moved 2,400 tokens to .claude/rules/ (L2). Moved 800 tokens to .claude/skills/ (L3). Per-session wake-up cost: 4,200 → 800 tokens."
+- **Ask before modifying** — Present the tiered plan and get user confirmation before making changes.
 `,
   },
   {
