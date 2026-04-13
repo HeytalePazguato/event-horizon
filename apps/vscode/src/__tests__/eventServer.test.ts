@@ -17,6 +17,7 @@ import {
   isRateLimited,
   RATE_LIMIT_RPS,
 } from '../eventServer.js';
+import { signJwt, verifyJwt } from '../mcpOAuth.js';
 
 // ── Test HTTP server on random port ─────────────────────────────────────────
 
@@ -25,7 +26,7 @@ let port: number;
 let baseUrl: string;
 const receivedEvents: AgentEvent[] = [];
 
-function post(path: string, body: unknown, headers?: Record<string, string>): Promise<{ status: number; body: unknown }> {
+function post(path: string, body: unknown, headers?: Record<string, string>): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
   const data = JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = http.request(`${baseUrl}${path}`, {
@@ -37,14 +38,33 @@ function post(path: string, body: unknown, headers?: Record<string, string>): Pr
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         try {
-          resolve({ status: res.statusCode!, body: JSON.parse(text) });
+          resolve({ status: res.statusCode!, body: JSON.parse(text), headers: res.headers });
         } catch {
-          resolve({ status: res.statusCode!, body: text });
+          resolve({ status: res.statusCode!, body: text, headers: res.headers });
         }
       });
     });
     req.on('error', reject);
     req.end(data);
+  });
+}
+
+function get(path: string, headers?: Record<string, string>): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${baseUrl}${path}`, { method: 'GET', headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        try {
+          resolve({ status: res.statusCode!, body: JSON.parse(text), headers: res.headers });
+        } catch {
+          resolve({ status: res.statusCode!, body: text, headers: res.headers });
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
   });
 }
 
@@ -172,16 +192,212 @@ describe('HTTP server', () => {
       expect(res.status).toBe(200);
     });
 
-    it('accepts token in query parameter', async () => {
+    it('rejects ?token= query-string auth (v2.0.0 breaking change)', async () => {
       _setAuthToken('test-secret-token');
       const res = await post('/claude?token=test-secret-token', { hook_event_name: 'SessionStart' });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
     });
 
     it('rejects wrong token', async () => {
       _setAuthToken('test-secret-token');
       const res = await post('/claude', { hook_event_name: 'SessionStart' }, {
         Authorization: 'Bearer wrong-token',
+      });
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe('OAuth 2.1 (RFC 6749/8414/7591/9728)', () => {
+    const SECRET = 'test-startup-token-abcdef0123456789';
+
+    it('serves RFC 9728 protected-resource metadata publicly (GET, no auth)', async () => {
+      _setAuthToken(SECRET);
+      const res = await get('/.well-known/oauth-protected-resource');
+      expect(res.status).toBe(200);
+      const body = res.body as Record<string, unknown>;
+      expect(typeof body.resource).toBe('string');
+      expect(body.authorization_servers).toBeInstanceOf(Array);
+      expect(body.bearer_methods_supported).toEqual(['header']);
+    });
+
+    it('serves RFC 8414 authorization-server metadata publicly (GET, no auth)', async () => {
+      _setAuthToken(SECRET);
+      const res = await get('/.well-known/oauth-authorization-server');
+      expect(res.status).toBe(200);
+      const body = res.body as Record<string, unknown>;
+      expect(body.grant_types_supported).toEqual(['authorization_code', 'refresh_token', 'client_credentials']);
+      expect(body.response_types_supported).toEqual(['code']);
+      expect(body.code_challenge_methods_supported).toEqual(['S256', 'plain']);
+      expect(typeof body.authorization_endpoint).toBe('string');
+      expect(typeof body.token_endpoint).toBe('string');
+      expect(typeof body.registration_endpoint).toBe('string');
+    });
+
+    it('/oauth/authorize returns unsupported_response_type (stub endpoint)', async () => {
+      _setAuthToken(SECRET);
+      const res = await get('/oauth/authorize');
+      expect(res.status).toBe(400);
+      expect((res.body as { error: string }).error).toBe('unsupported_response_type');
+    });
+
+    it('DCR is open (RFC 7591) — registers without auth header', async () => {
+      _setAuthToken(SECRET);
+      const res = await post('/oauth/register', {});
+      expect(res.status).toBe(201);
+      const body = res.body as Record<string, unknown>;
+      expect(typeof body.client_id).toBe('string');
+      expect(body.client_secret).toBe(SECRET);
+    });
+
+    it('DCR also works when the caller happens to send a Bearer header', async () => {
+      _setAuthToken(SECRET);
+      const res = await post('/oauth/register', {}, { Authorization: `Bearer ${SECRET}` });
+      expect(res.status).toBe(201);
+    });
+
+    it('mints a JWT access token on client_credentials grant', async () => {
+      _setAuthToken(SECRET);
+      const res = await post('/oauth/token', {
+        grant_type: 'client_credentials',
+        client_id: 'test-client',
+        client_secret: SECRET,
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as Record<string, unknown>;
+      expect(typeof body.access_token).toBe('string');
+      expect(body.token_type).toBe('Bearer');
+
+      const verified = verifyJwt(body.access_token as string, SECRET);
+      expect(verified.valid).toBe(true);
+    });
+
+    it('rejects token request with wrong client_secret', async () => {
+      _setAuthToken(SECRET);
+      const res = await post('/oauth/token', {
+        grant_type: 'client_credentials',
+        client_id: 'test-client',
+        client_secret: 'wrong',
+      });
+      expect(res.status).toBe(401);
+      expect((res.body as { error: string }).error).toBe('invalid_client');
+    });
+
+    it('rejects unsupported grant types', async () => {
+      _setAuthToken(SECRET);
+      const res = await post('/oauth/token', {
+        grant_type: 'password',
+        username: 'a',
+        password: 'b',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as { error: string }).error).toBe('unsupported_grant_type');
+    });
+
+    it('accepts form-encoded /oauth/token bodies (MCP SDK default)', async () => {
+      _setAuthToken(SECRET);
+      const formBody = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: 'test-client',
+        client_secret: SECRET,
+      }).toString();
+      const res = await new Promise<{ status: number; body: unknown }>((resolve, reject) => {
+        const req = http.request(`${baseUrl}/oauth/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Length': Buffer.byteLength(formBody).toString(),
+          },
+        }, (r) => {
+          const chunks: Buffer[] = [];
+          r.on('data', (c) => chunks.push(c));
+          r.on('end', () => {
+            const t = Buffer.concat(chunks).toString('utf8');
+            try { resolve({ status: r.statusCode!, body: JSON.parse(t) }); }
+            catch { resolve({ status: r.statusCode!, body: t }); }
+          });
+        });
+        req.on('error', reject);
+        req.end(formBody);
+      });
+      expect(res.status).toBe(200);
+      expect(typeof (res.body as { access_token: string }).access_token).toBe('string');
+    });
+
+    it('full authorization_code + PKCE flow via HTTP', async () => {
+      _setAuthToken(SECRET);
+
+      // Step 1 — DCR
+      const dcr = await post('/oauth/register', {
+        redirect_uris: ['http://localhost:9999/cb'],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+        client_name: 'Test Client',
+      });
+      expect(dcr.status).toBe(201);
+      const clientId = (dcr.body as { client_id: string }).client_id;
+
+      // Step 2 — /authorize
+      const crypto = await import('crypto');
+      const verifier = 'abcdefghijklmnopqrstuvwxyz0123456789abcdef0123';
+      const challenge = crypto.createHash('sha256').update(verifier).digest('base64')
+        .replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+      const authUrl = `/oauth/authorize?${new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: 'http://localhost:9999/cb',
+        state: 'abc',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }).toString()}`;
+      const authRes = await get(authUrl);
+      expect(authRes.status).toBe(302);
+      const loc = String(authRes.headers.location ?? '');
+      const code = new URL(loc).searchParams.get('code')!;
+
+      // Step 3 — /token with authorization_code
+      const tokenRes = await post('/oauth/token', {
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: 'http://localhost:9999/cb',
+        client_id: clientId,
+        code_verifier: verifier,
+      });
+      expect(tokenRes.status).toBe(200);
+      const accessToken = (tokenRes.body as { access_token: string }).access_token;
+
+      // Step 4 — /mcp with the JWT
+      const mcpRes = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, {
+        Authorization: `Bearer ${accessToken}`,
+      });
+      // Without a real mcpServer wired the route returns 503; auth itself
+      // should have passed (not 401). Accept either 503 or 500.
+      expect([500, 503]).toContain(mcpRes.status);
+      expect(mcpRes.headers['www-authenticate']).toBeUndefined();
+    });
+
+    it('returns 401 + WWW-Authenticate with resource_metadata on /mcp without JWT', async () => {
+      _setAuthToken(SECRET);
+      const res = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+      expect(res.status).toBe(401);
+      const wwwAuth = res.headers['www-authenticate'];
+      expect(typeof wwwAuth).toBe('string');
+      expect(String(wwwAuth)).toMatch(/^Bearer resource_metadata="http:\/\/.+\/\.well-known\/oauth-protected-resource"$/);
+    });
+
+    it('rejects /mcp with the startup token used as Bearer (JWT required)', async () => {
+      _setAuthToken(SECRET);
+      const res = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, {
+        Authorization: `Bearer ${SECRET}`,
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects /mcp with an expired JWT', async () => {
+      _setAuthToken(SECRET);
+      const expired = signJwt({ sub: 'test', iss: baseUrl }, SECRET, -1);
+      const res = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, {
+        Authorization: `Bearer ${expired}`,
       });
       expect(res.status).toBe(401);
     });

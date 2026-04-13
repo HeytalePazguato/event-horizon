@@ -48,9 +48,6 @@
     "type": "git",
     "url": "https://github.com/HeytalePazguato/event-horizon.git"
   },
-  "activationEvents": [
-    "onCommand:eventHorizon.open"
-  ],
   "contributes": {
     "commands": [
       {

@@ -60,7 +60,7 @@ describe('initialize', () => {
     expect(res.result).toMatchObject({
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'event-horizon' },
+      serverInfo: { name: 'Event Horizon' },
     });
   });
 });

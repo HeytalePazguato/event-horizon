@@ -47,8 +47,8 @@ const EH_HOOK_EVENTS = [
  */
 function buildCurlCommand(): string {
   const token = getAuthToken();
-  const tokenParam = token ? `?token=${token}` : '';
-  return `curl.exe -s -X POST http://127.0.0.1:${PORT}/copilot${tokenParam} -H "Content-Type: application/json" --data-binary "@-"`;
+  const authHeader = token ? `-H "Authorization: Bearer ${token}"` : '';
+  return `curl.exe -s -X POST http://127.0.0.1:${PORT}/copilot -H "Content-Type: application/json" ${authHeader} --data-binary "@-"`;
 }
 
 function isEhCommand(cmd: string): boolean {
@@ -56,6 +56,8 @@ function isEhCommand(cmd: string): boolean {
 }
 
 function isCurrentEhCommand(cmd: string): boolean {
+  // Legacy commands with ?token= are not current (v2.0.0 breaking change).
+  if (cmd.includes('?token=')) return false;
   return cmd === buildCurlCommand();
 }
 
@@ -157,9 +159,10 @@ export async function registerCopilotMcpServer(): Promise<void> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return;
 
-  const token = getAuthToken();
-  const tokenParam = token ? `?token=${token}` : '';
-  const mcpUrl = `http://127.0.0.1:${PORT}/mcp${tokenParam}`;
+  // v2.0.0: MCP URL no longer carries ?token=. Clients discover auth via
+  // RFC 9728 .well-known/oauth-protected-resource and obtain JWT access
+  // tokens through OAuth 2.1 client_credentials flow.
+  const mcpUrl = `http://127.0.0.1:${PORT}/mcp`;
 
   for (const folder of folders) {
     const vscodePath = path.join(folder.uri.fsPath, '.vscode');

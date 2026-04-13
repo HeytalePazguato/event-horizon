@@ -4,12 +4,22 @@
  */
 
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 import * as http from 'http';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { AgentEvent } from '@event-horizon/core';
 import { AGENT_EVENT_TYPES, AGENT_TYPES } from '@event-horizon/core';
 import { mapOpenCodeToEvent, mapClaudeHookToEvent, mapCopilotHookToEvent, mapCursorHookToEvent } from '@event-horizon/connectors';
+import {
+  buildProtectedResourceMetadata,
+  buildAuthorizationServerMetadata,
+  handleRegister as oauthHandleRegister,
+  handleToken as oauthHandleToken,
+  handleAuthorize as oauthHandleAuthorize,
+  validateAccessToken,
+} from './mcpOAuth.js';
 
 export const DEFAULT_PORT = 28765;
 export const MAX_BODY_BYTES = 1_048_576;
@@ -71,6 +81,14 @@ let authToken: string | null = null;
 /** Returns the current auth token (for hooks to include in requests). */
 export function getAuthToken(): string | null {
   return authToken;
+}
+
+// Extension root path — used to locate static assets (logo.png). Set by
+// extension.ts during activation.
+let extensionRootPath: string | null = null;
+
+export function setExtensionRoot(p: string): void {
+  extensionRootPath = p;
 }
 
 // ── File lock manager (extracted to lockManager.ts) ─────────────────────────
@@ -238,7 +256,16 @@ export function parseBody(req: http.IncomingMessage): Promise<unknown> {
       settled = true;
       try {
         const body = Buffer.concat(chunks).toString('utf8');
-        resolve(body ? JSON.parse(body) : {});
+        if (!body) { resolve({}); return; }
+        const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
+        if (contentType.includes('application/x-www-form-urlencoded')) {
+          const params = new URLSearchParams(body);
+          const obj: Record<string, string> = {};
+          for (const [k, v] of params) obj[k] = v;
+          resolve(obj);
+          return;
+        }
+        resolve(JSON.parse(body));
       } catch {
         reject(new Error('Invalid JSON'));
       }
@@ -249,44 +276,151 @@ export function parseBody(req: http.IncomingMessage): Promise<unknown> {
   });
 }
 
+function getIssuer(req: http.IncomingMessage): string {
+  const host = req.headers.host ?? `127.0.0.1:${boundPort}`;
+  return `http://${host}`;
+}
+
+function extractBearer(authHeader: string | undefined): string | null {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7).trim();
+  return token || null;
+}
+
+function constantTimeEquals(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
 export function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const send = (status: number, body: string) => {
+  const send = (status: number, body: string, extraHeaders: Record<string, string> = {}) => {
     if (!res.headersSent) {
-      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.writeHead(status, { 'Content-Type': 'application/json', ...extraHeaders });
       res.end(body);
     }
   };
 
-  if (req.method !== 'POST' || !req.url?.startsWith('/')) {
+  if (!req.url?.startsWith('/')) {
     send(404, JSON.stringify({ error: 'Not found' }));
     return;
   }
 
-  // Rate limit by remote address
+  // Rate limit by remote address (applied uniformly to all requests)
   const addr = req.socket.remoteAddress ?? '127.0.0.1';
   if (isRateLimited(addr)) {
     send(429, JSON.stringify({ error: 'Too many requests' }));
     return;
   }
 
-  // Auth token validation — check Authorization header or ?token= query param
-  if (authToken) {
-    const authHeader = req.headers['authorization'];
-    const urlToken = req.url && new URL(req.url, 'http://localhost').searchParams.get('token');
-    const provided = authHeader?.startsWith('Bearer ')
-      ? authHeader.slice(7)
-      : urlToken;
-    if (provided !== authToken) {
-      send(401, JSON.stringify({ error: 'Unauthorized' }));
-      return;
-    }
+  const route = req.url.split('?')[0];
+  const method = req.method ?? 'GET';
+  const issuer = getIssuer(req);
+
+  // ── Public OAuth discovery (GET) ──────────────────────────────────────
+  if (method === 'GET' && route === '/.well-known/oauth-protected-resource') {
+    send(200, JSON.stringify(buildProtectedResourceMetadata(issuer)));
+    return;
+  }
+  if (method === 'GET' && route === '/.well-known/oauth-authorization-server') {
+    send(200, JSON.stringify(buildAuthorizationServerMetadata(issuer)));
+    return;
   }
 
-  // Strip query string from URL for route matching
-  const route = req.url?.split('?')[0];
+  // ── Public logo (GET) ─────────────────────────────────────────────────
+  // Referenced from OAuth metadata so MCP client UIs can render the EH mark
+  // next to the connection listing.
+  if (method === 'GET' && route === '/logo.png') {
+    if (!extensionRootPath) {
+      send(503, JSON.stringify({ error: 'Extension root not set' }));
+      return;
+    }
+    try {
+      const logoPath = path.join(extensionRootPath, 'assets', 'icon.png');
+      const buf = fs.readFileSync(logoPath);
+      if (!res.headersSent) {
+        res.writeHead(200, {
+          'Content-Type': 'image/png',
+          'Content-Length': buf.length.toString(),
+          'Cache-Control': 'public, max-age=3600',
+        });
+        res.end(buf);
+      }
+    } catch {
+      send(404, JSON.stringify({ error: 'Logo not found' }));
+    }
+    return;
+  }
+
+  // ── /oauth/authorize (GET) — auto-approved for localhost ──────────────
+  // EH binds to 127.0.0.1 with no interactive user; every valid request is
+  // auto-approved and redirected back to the client's redirect_uri with a
+  // short-lived auth code. PKCE is required.
+  if (method === 'GET' && route === '/oauth/authorize') {
+    const query = new URL(req.url, 'http://localhost').searchParams;
+    const result = oauthHandleAuthorize(query);
+    send(result.status, JSON.stringify(result.response), result.headers ?? {});
+    return;
+  }
+
+  if (method !== 'POST') {
+    send(404, JSON.stringify({ error: 'Not found' }));
+    return;
+  }
+
+  const bearer = extractBearer(req.headers['authorization']);
+  const hasValidStartupToken =
+    authToken !== null && bearer !== null && constantTimeEquals(bearer, authToken);
+
+  // Per-route auth policy.
+  //   /mcp                 → JWT access token required (WWW-Authenticate on 401)
+  //   /oauth/token         → body-authenticated (client_secret validated by handler)
+  //   /oauth/register      → open per RFC 7591 (localhost binding is the real boundary)
+  //   all other routes     → startup-token-authenticated (header Bearer)
+  if (route === '/mcp') {
+    if (authToken) {
+      const result = validateAccessToken(req.headers['authorization'], authToken);
+      if (!result.valid) {
+        const metadataUrl = `${issuer}/.well-known/oauth-protected-resource`;
+        send(
+          401,
+          JSON.stringify({ error: 'Unauthorized', reason: result.reason }),
+          { 'WWW-Authenticate': `Bearer resource_metadata="${metadataUrl}"` },
+        );
+        return;
+      }
+    }
+  } else if (route === '/oauth/token' || route === '/oauth/register') {
+    // /oauth/token: credential validation happens inside the handler.
+    // /oauth/register: open per RFC 7591; server binds to 127.0.0.1 only.
+  } else if (authToken && !hasValidStartupToken) {
+    send(401, JSON.stringify({ error: 'Unauthorized' }));
+    return;
+  }
 
   parseBody(req)
     .then((body) => {
+      // ── OAuth endpoints ────────────────────────────────────────────────
+      if (route === '/oauth/register') {
+        if (!authToken) {
+          send(503, JSON.stringify({ error: 'Server not ready' }));
+          return;
+        }
+        const result = oauthHandleRegister(body, authToken);
+        send(result.status, JSON.stringify(result.response));
+        return;
+      }
+      if (route === '/oauth/token') {
+        if (!authToken) {
+          send(503, JSON.stringify({ error: 'Server not ready' }));
+          return;
+        }
+        const result = oauthHandleToken(body, authToken, issuer);
+        send(result.status, JSON.stringify(result.response));
+        return;
+      }
+
       const cb = callbacks;
       if (!cb) {
         send(503, JSON.stringify({ error: 'Not ready' }));
@@ -453,15 +587,14 @@ export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT
 
     srv.on('upgrade', (req, socket, head) => {
       // Only upgrade on /ws path
-      if (req.url !== '/ws') {
+      if (!req.url || req.url.split('?')[0] !== '/ws') {
         socket.destroy();
         return;
       }
-      // Verify auth token (query param or header)
-      const url = new URL(req.url, `http://127.0.0.1`);
-      const token = url.searchParams.get('token')
-        ?? req.headers['authorization']?.replace('Bearer ', '');
-      if (authToken && token !== authToken) {
+      // Verify startup token via Authorization: Bearer header only.
+      const bearer = extractBearer(req.headers['authorization']);
+      const ok = authToken === null || (bearer !== null && constantTimeEquals(bearer, authToken));
+      if (!ok) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;

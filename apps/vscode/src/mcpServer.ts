@@ -717,7 +717,7 @@ export class McpServer {
     return this.success(req.id ?? null, {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'event-horizon', version: '2.0.0' },
+      serverInfo: { name: 'Event Horizon', version: '2.0.0' },
     });
   }
 
