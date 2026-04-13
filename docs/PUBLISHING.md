@@ -23,10 +23,7 @@ Step-by-step setup for the `HeytalePazguato` namespace:
 3. **Sign the Eclipse Publisher Agreement** at https://open-vsx.org/user-settings/namespaces. The namespace becomes writable after signing.
 4. **Generate an access token** at https://open-vsx.org/user-settings/tokens. Copy the token value once — it is not shown again.
 5. **Store the token** as the repo secret `OVSX_PAT` (GitHub → Settings → Secrets and variables → Actions → New repository secret).
-6. **CI steps** — `.github/workflows/ci.yml` has two publish steps that consume `OVSX_PAT`:
-   - `release` job → `Publish to Open VSX` (stable, gated on a new tag)
-   - `package-prerelease` job → `Publish pre-release to Open VSX` (pre-release, uses `--pre-release`)
-   Both steps have `continue-on-error: true`, so an expired or missing `OVSX_PAT` never blocks the primary GitHub Release or the VS Code Marketplace publish.
+6. **CI step** — the `release` job in `.github/workflows/ci.yml` runs `Publish to Open VSX` after the VS Code Marketplace publish on pushes to `master`. It uses `continue-on-error: true`, so an expired or missing `OVSX_PAT` never blocks the primary GitHub Release or the VS Code Marketplace publish. Open VSX gets stable releases only — pre-release testing happens by installing the VSIX from the GitHub pre-release page (see "Manual publish fallback" below), because Open VSX rejects duplicate version numbers and we use the same `X.Y.Z` for a release branch's alphas/betas/rcs and its eventual stable tag.
 
 ## 3. Manual publish fallback
 

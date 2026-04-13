@@ -235,12 +235,6 @@ jobs:
           prerelease: true
           generate_release_notes: true
 
-      - name: Publish pre-release to Open VSX
-        continue-on-error: true
-        run: cd apps/vscode && npx ovsx publish --no-dependencies --pre-release --packagePath *.vsix
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-
   cleanup-prereleases:
     name: Cleanup old pre-releases
     runs-on: ubuntu-latest

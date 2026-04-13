@@ -33,6 +33,6 @@ Microsoft's VS Code Marketplace Terms of Use restrict consumption of its gallery
 ## CI flow
 
 - Push to `master` → the `release` job in `ci.yml` tags the release, publishes the VSIX to the VS Code Marketplace via `vsce`, then publishes to Open VSX via `ovsx publish` (`continue-on-error: true`).
-- Push to `release/*` → the `package-prerelease` job builds a pre-release VSIX, creates a GitHub pre-release, and publishes the pre-release to Open VSX via `ovsx publish --pre-release` (`continue-on-error: true`). Pre-releases are not pushed to the VS Code Marketplace.
+- Push to `release/*` → the `package-prerelease` job builds a pre-release VSIX and creates a GitHub pre-release. Pre-releases are **not** pushed to the VS Code Marketplace or to Open VSX — since both marketplaces reject duplicate version numbers and we use the same `X.Y.Z` across a release branch's alphas/betas/rcs and its stable tag, publishing a pre-release would block the stable publish. Test pre-releases by downloading the VSIX from the GitHub pre-release page and installing it manually.
 
 See [`docs/PUBLISHING.md`](PUBLISHING.md) for the end-to-end publisher setup, token generation, namespace claim, and manual-publish fallback.
