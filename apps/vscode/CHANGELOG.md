@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [2.0.0] — Unreleased
+## [2.0.0] — 2026-04-13
 
 ### Added
 - **SQLite event persistence**: all agent events stored verbatim in a local SQLite database (sql.js WASM) at the extension's global storage path. Events survive VS Code reloads and restarts. Configurable via `eventHorizon.persistence.enabled` and `eventHorizon.persistence.retentionDays` (default 30 days). Auto-pruning removes events older than the retention period on activation
@@ -33,6 +33,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Worker failure notifications pushed to orchestrator**: when a worker fires `agent.error` or `task.fail`, Event Horizon now sends a message to every active plan's orchestrator describing the failure and suggesting `eh_retry_task` / `eh_reassign_task`. Self-notifications are suppressed so the orchestrator's own errors don't loop. `eh:orchestrate` skill and the Orchestrator role instructions both include the "check messages before status" pattern
 - **Optional interactive spawn mode**: `eh_spawn_agent` accepts a new `interactive: true` parameter. When set, spawns Claude without `-p` so the user can type follow-up prompts in the terminal and the agent responds. Default behavior (batch `-p` mode) is unchanged — still correct for orchestrated work
 - **Worker silence watchdog**: spawned workers that emit no events for 10 minutes (configurable via `eventHorizon.watchdog.timeoutMinutes`, set 0 to disable) are auto-failed. A synthetic `task.fail` fires so the orchestrator gets a notification and the child process is killed, freeing up tokens. Only workers with a claimed / in-progress task are checked; interactive workers are always excluded so they can legitimately wait for user input
+- **Open VSX publishing**: stable releases (`master`) now publish to the Open VSX Registry in addition to the VS Code Marketplace, and pre-releases (`release/*`) publish to Open VSX as pre-releases. A single publish reaches Cursor, VSCodium, Windsurf, Gitpod, Eclipse Theia, Coder / code-server, and every other VS Code fork. Driven by a new `OVSX_PAT` repo secret and `ovsx` devDependency; both CI steps are `continue-on-error: true` so a missing/expired token never blocks the VS Code Marketplace publish
+- **Per-editor install docs**: README gains Open VSX version + downloads badges and a new `## Install` section with per-editor instructions (VS Code, Cursor, VSCodium, Windsurf, Gitpod, Eclipse Theia, Coder). New `docs/PUBLISHING.md` runbook covers token generation, namespace claim, manual publish fallback, and verification. New `docs/MARKETPLACES.md` is the canonical editor → marketplace coverage matrix and explains why Visual Studio IDE is not a target. `CONTRIBUTING.md` cross-links the publishing runbook
 
 ### Improved
 - **`eh:research` skill** now instructs researchers to call `eh_search_events` and `eh_read_shared` BEFORE re-exploring the codebase. Also saves non-trivial findings via `eh_write_shared` with `valid_until` for time-bound facts

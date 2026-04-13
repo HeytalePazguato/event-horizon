@@ -1,6 +1,8 @@
 # Event Horizon
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/HeytalePazguato.event-horizon-vscode?label=VS%20Code%20Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode)
+[![Open VSX](https://img.shields.io/open-vsx/v/HeytalePazguato/event-horizon-vscode?label=Open%20VSX)](https://open-vsx.org/extension/HeytalePazguato/event-horizon-vscode)
+[![Open VSX downloads](https://img.shields.io/open-vsx/dt/HeytalePazguato/event-horizon-vscode)](https://open-vsx.org/extension/HeytalePazguato/event-horizon-vscode)
 [![GitHub stars](https://img.shields.io/github/stars/HeytalePazguato/event-horizon?style=social)](https://github.com/HeytalePazguato/event-horizon)
 
 **The multi-agent orchestration framework for AI coding.** Tell one agent to build a feature. It creates the plan, spawns the team, assigns roles, tracks budget, and manages the entire project. Works with Claude Code, OpenCode, Copilot, and Cursor.
@@ -198,9 +200,19 @@ From that answer, Event Horizon was born.
 
 ---
 
+## Install
+
+Event Horizon is published to the VS Code Marketplace **and** the Open VSX Registry, so it works in VS Code and every major VS Code fork. A single package, one listing per registry.
+
+- **VS Code** — install via `ext install HeytalePazguato.event-horizon-vscode` or the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode).
+- **Cursor** — open the Extensions panel, search **"Event Horizon"** (served from Open VSX).
+- **VSCodium, Windsurf, Gitpod, Eclipse Theia, Coder / code-server** — open Extensions, search **"Event Horizon"**, or install the VSIX directly from https://open-vsx.org/extension/HeytalePazguato/event-horizon-vscode.
+
+See [`docs/MARKETPLACES.md`](docs/MARKETPLACES.md) for the full editor → marketplace coverage matrix.
+
 ## Getting Started
 
-Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode), then:
+After installing:
 
 1. **Open**: Rocket icon in editor title bar, or `Ctrl+Shift+E H`
 2. **Connect**: Click Connect → choose agent → Install
