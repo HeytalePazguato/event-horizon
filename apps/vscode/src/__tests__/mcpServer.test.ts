@@ -60,7 +60,7 @@ describe('initialize', () => {
     expect(res.result).toMatchObject({
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'event-horizon' },
+      serverInfo: { name: 'Event Horizon' },
     });
   });
 });
@@ -71,7 +71,7 @@ describe('tools/list', () => {
   it('returns all 19 tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(41);
+    expect(result.tools).toHaveLength(42);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');

@@ -54,8 +54,14 @@ export interface WebviewMessageDeps {
   setCompactingAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setSpawnBeams?: React.Dispatch<React.SetStateAction<Array<{ fromAgentId: string; toAgentId: string; color: number; startTime: number }>>>;
   setOrchestratorAgentIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setOrchestratorMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setAgentRoleMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setCostInsights?: React.Dispatch<React.SetStateAction<unknown>>;
   setCostRecommendations?: React.Dispatch<React.SetStateAction<string[]>>;
+  setContextLayers?: React.Dispatch<React.SetStateAction<Record<string, unknown> | null>>;
+  setPersistedSearchResults?: React.Dispatch<React.SetStateAction<import('@event-horizon/ui').PersistedSearchResult[] | null>>;
+  setTaskExecutionEvents?: React.Dispatch<React.SetStateAction<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>>;
+  setWormholes?: React.Dispatch<React.SetStateAction<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -103,6 +109,8 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
             achievementCounts: data.achievementCounts ?? {},
           });
         }
+        // Mark medals hydrated so achievement triggers can now fire without duplicating already-earned toasts
+        useCommandCenterStore.getState().markMedalsHydrated();
         return;
       }
       if (msg?.type === 'init-singularity') {
@@ -135,6 +143,8 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.fileLockingEnabled !== undefined) store.setFileLockingEnabled(data.fileLockingEnabled);
         if (data.planShowAllColumns !== undefined) store.setPlanShowAllColumns(data.planShowAllColumns);
         if (data.fontSize) store.setFontSize(data.fontSize);
+        // Mark settings hydrated so the initial view can render without flash
+        store.markSettingsHydrated();
         return;
       }
       if (msg?.type === 'plan-update') {
@@ -158,9 +168,15 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         return;
       }
       if (msg?.type === 'orchestrator-update') {
-        const data = msg as unknown as { orchestratorAgentIds: Record<string, boolean> };
+        const data = msg as unknown as {
+          orchestratorAgentIds?: Record<string, boolean>;
+          orchestratorMap?: Record<string, string>;
+        };
         if (data.orchestratorAgentIds && depsRef.current.setOrchestratorAgentIds) {
           depsRef.current.setOrchestratorAgentIds(data.orchestratorAgentIds);
+        }
+        if (data.orchestratorMap && depsRef.current.setOrchestratorMap) {
+          depsRef.current.setOrchestratorMap(data.orchestratorMap);
         }
         return;
       }
@@ -176,6 +192,9 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (data.roles) depsRef.current.setRoles(data.roles);
         if (data.assignments) depsRef.current.setRoleAssignments(data.assignments);
         if (data.profiles) depsRef.current.setAgentProfiles(data.profiles);
+        if (data.agentRoleMap && depsRef.current.setAgentRoleMap) {
+          depsRef.current.setAgentRoleMap(data.agentRoleMap);
+        }
         return;
       }
       if (msg?.type === 'heartbeat-update') {
@@ -211,6 +230,34 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         }
         if (depsRef.current.setCostRecommendations) {
           depsRef.current.setCostRecommendations(data.recommendations ?? []);
+        }
+        if (data.contextLayers && depsRef.current.setContextLayers) {
+          depsRef.current.setContextLayers(data.contextLayers);
+        }
+        return;
+      }
+      if (msg?.type === 'search-results') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (depsRef.current.setPersistedSearchResults) {
+          depsRef.current.setPersistedSearchResults(data.events ?? []);
+        }
+        return;
+      }
+      if (msg?.type === 'task-execution-events') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        if (depsRef.current.setTaskExecutionEvents) {
+          depsRef.current.setTaskExecutionEvents({ taskId: data.taskId, events: data.events ?? [] });
+        }
+        return;
+      }
+      if (msg?.type === 'wormhole-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        const ws = (data.data?.wormholes ?? data.wormholes ?? []) as Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>;
+        if (depsRef.current.setWormholes) {
+          depsRef.current.setWormholes(ws);
         }
         return;
       }
@@ -293,6 +340,52 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         setMarketplaceSearchLoading(false);
         setMarketplaceSearchError((data.reason === 'timeout' ? 'timeout' : 'error') as 'timeout' | 'error');
         setMarketplaceSearchSource(data.source ?? '');
+        return;
+      }
+
+      // ── Historical event replay from persistence ──
+      if (msg?.type === 'event-history') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        const events = (data.events ?? []) as Array<{
+          agentId: string; agentName: string; agentType: string; type: string;
+          timestamp: number; payload?: Record<string, unknown>;
+        }>;
+        const sessions = (data.sessions ?? []) as Array<{
+          agentId: string; agentName?: string; agentType: string;
+          sessionStart: number; sessionEnd?: number; cwd?: string;
+        }>;
+
+        // Replay historical agents from sessions
+        for (const session of sessions) {
+          const existing = agentMapRef.current[session.agentId];
+          if (!existing) {
+            const state: AgentState = {
+              id: session.agentId,
+              name: session.agentName ?? session.agentId,
+              type: session.agentType as AgentRuntimeState,
+              state: session.sessionEnd ? 'idle' : 'idle',
+              cwd: session.cwd,
+            } as AgentState;
+            setAgentMap((prev) => ({ ...prev, [session.agentId]: state }));
+            setAgents((prev) => {
+              if (prev.some((a) => a.id === session.agentId)) return prev;
+              return [...prev, { id: session.agentId, name: session.agentName ?? session.agentId, agentType: session.agentType, cwd: session.cwd }];
+            });
+          }
+        }
+
+        // Replay historical log entries (most recent first → reverse for chronological add)
+        for (const evt of [...events].reverse()) {
+          addLog({
+            id: `hist-${evt.timestamp}-${evt.agentId}`,
+            ts: new Date(evt.timestamp).toLocaleTimeString(),
+            agentId: evt.agentId,
+            agentName: evt.agentName ?? evt.agentId,
+            type: evt.type,
+            skillName: evt.payload?.isSkill ? (evt.payload.skillName as string | undefined) : undefined,
+          });
+        }
         return;
       }
 

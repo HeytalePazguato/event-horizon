@@ -71,6 +71,10 @@ curl -X POST http://127.0.0.1:28765/events \
 - Zustand for UI state management
 - Vitest for unit tests — run `pnpm test` from the repo root
 
+## Publishing a release
+
+Stable releases (pushes to `master`) auto-publish to both the VS Code Marketplace and Open VSX. Pre-releases (pushes to `release/*`) auto-publish as pre-releases to Open VSX and appear as GitHub pre-releases. Contributors do not run publish commands — CI owns them. For the token setup, namespace claim, and manual publish fallback, see [`docs/PUBLISHING.md`](./PUBLISHING.md).
+
 ## Questions?
 
 Open an issue on GitHub. We're happy to help!

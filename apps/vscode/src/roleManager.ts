@@ -51,9 +51,9 @@ const BUILT_IN_ROLES: RoleDefinition[] = [
   {
     id: 'reviewer',
     name: 'Reviewer',
-    description: 'Reviews code changes, checks for bugs, suggests improvements, validates against requirements.',
+    description: 'Reviews code changes, checks for bugs, validates build/lint/test pass, ensures all requested tasks are completed.',
     skills: ['eh-review'],
-    instructions: 'You are acting as a reviewer. Read the code changes for the assigned task, check for correctness, edge cases, and adherence to project conventions. Report findings as a task note.',
+    instructions: 'You are acting as a reviewer. Your job is to verify that work is FULLY complete and correct before approving it. You MUST: (1) Check that ALL tasks the user requested are done — not just some. (2) Run the full verification pipeline: `pnpm lint`, `pnpm build`, `pnpm test` — all three must pass with zero errors. (3) Read the code changes for correctness, edge cases, and adherence to project conventions. (4) Verify acceptance criteria are met for each task. (5) If any check fails, report it as a blocker — do NOT approve partial work.',
     builtIn: true,
   },
   {
@@ -104,6 +104,20 @@ Do NOT try to use the Skill tool or /eh:work-on-plan yourself — those are for 
 8. **Reassign work** — Use eh_reassign_task to move tasks between agents when one is stuck or overloaded.
 9. **Stop agents** — Use eh_stop_agent to terminate agents that are no longer needed.
 10. **Synthesize results** — When all tasks are done, review the work, resolve conflicts, and produce a final summary.
+
+## React to worker failures
+
+Failure notifications are pushed to your message queue by Event Horizon — you do NOT have to poll \`eh_get_team_status\` to find them. Call \`eh_get_messages\` periodically (at least every 60s during orchestration) to receive:
+
+- **⚠️ Worker X reported an error on task Y** — a worker fired \`agent.error\`
+- **⚠️ Worker X failed a task Y** — a worker marked a task as failed
+
+When you receive one of these, decide:
+1. **Retry** with \`eh_retry_task\` — the system automatically escalates the model tier (haiku → sonnet → opus)
+2. **Reassign** with \`eh_reassign_task\` — move the task to a different agent
+3. **Take over** yourself if all retries have been exhausted
+
+Do NOT ignore these messages — silent worker failures are the #1 way multi-agent runs stall.
 
 ## Tools (orchestrator-only)
 

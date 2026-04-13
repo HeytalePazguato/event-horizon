@@ -8,7 +8,10 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine } from './eventServer';
+import { EventSearchEngine } from './eventSearch';
+import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
+import { Watchdog } from './watchdog';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -20,9 +23,19 @@ import type { SkillInfo } from './skillScanner';
 import { TranscriptWatcher } from './transcriptWatcher';
 import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
 import { ensureBundledSkills } from './bundledSkills';
+import { EventHorizonDB } from './persistence';
+import { deriveEventCategory } from '@event-horizon/core';
+import { CrossAgentCorrelator } from './crossAgentCorrelator';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
+let ehDatabase: EventHorizonDB | null = null;
+const crossAgentCorrelator = new CrossAgentCorrelator();
+
+/** Access the persistence database (if enabled). Used by webviewProvider for event replay. */
+export function getDatabase(): EventHorizonDB | null {
+  return ehDatabase;
+}
 
 /** Forward an event to the main webview. */
 function broadcastEvent(event: AgentEvent): void {
@@ -100,6 +113,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const agentStateManager = new AgentStateManager();
   let ratingPromptShown = context.globalState.get<boolean>('ratingPromptShown') ?? false;
 
+  // Expose extension root so /logo.png can locate assets/icon.png.
+  setExtensionRoot(context.extensionPath);
+
   // Initialize MCP server with runtime dependencies
   initMcpServer({ agentStateManager, metricsEngine });
 
@@ -150,6 +166,50 @@ export function activate(context: vscode.ExtensionContext): void {
   // Restore shared knowledge from globalState
   const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
   if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
+
+  // ── Initialize SQLite persistence ──
+  const persistenceEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('persistence.enabled', true);
+  if (persistenceEnabled) {
+    const dbDir = context.globalStorageUri.fsPath;
+    const dbPath = path.join(dbDir, 'event-horizon.db');
+    (async () => {
+      try {
+        await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+        // Try loading existing DB from disk
+        let dbData: Uint8Array | undefined;
+        try {
+          dbData = await vscode.workspace.fs.readFile(vscode.Uri.file(dbPath));
+        } catch { /* no existing DB — will create new */ }
+        ehDatabase = await EventHorizonDB.create(dbData);
+
+        // Prune old events on startup
+        const retentionDays = vscode.workspace.getConfiguration('eventHorizon').get<number>('persistence.retentionDays', 30);
+        const pruned = ehDatabase.pruneEvents(retentionDays * 24 * 60 * 60 * 1000);
+        if (pruned > 0) {
+          console.log(`[Event Horizon] Pruned ${pruned} events older than ${retentionDays} days`);
+        }
+
+        // Auto-save DB to disk every 60 seconds
+        const dbSaveInterval = setInterval(() => {
+          if (ehDatabase) {
+            try {
+              const data = ehDatabase.save();
+              void vscode.workspace.fs.writeFile(vscode.Uri.file(dbPath), data);
+            } catch { /* save failed — will retry next interval */ }
+          }
+        }, 60_000);
+        context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
+
+        // Wire event search engine into MCP server now that DB is ready
+        const eventSearchEngine = new EventSearchEngine(ehDatabase);
+        setEventSearchEngine(eventSearchEngine);
+
+        console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
+      } catch (err) {
+        console.error('[Event Horizon] Failed to initialize persistence:', err);
+      }
+    })();
+  }
 
   // Auto-seed workspace knowledge from project instruction files on first activation.
   // Scans all workspace folders + immediate subdirectories for CLAUDE.md, .cursorrules, AGENTS.md, etc.
@@ -348,16 +408,21 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         prevPlanStatuses.set(changedPlanId, board.status);
 
-        // Broadcast orchestrator agent IDs
-        const orchIds: Record<string, boolean> = {};
-        for (const p of allPlans) {
-          if (p.orchestratorAgentId && p.status === 'active') {
-            orchIds[p.orchestratorAgentId] = true;
-          }
-        }
-        webviewRef.current.postMessage({ type: 'orchestrator-update', orchestratorAgentIds: orchIds });
       }
     }
+
+    // Broadcast orchestrator map on ANY plan change (not just completion)
+    const orchIds: Record<string, boolean> = {};
+    for (const p of allPlans) {
+      if (p.orchestratorAgentId && p.status === 'active') {
+        orchIds[p.orchestratorAgentId] = true;
+      }
+    }
+    webviewRef.current.postMessage({
+      type: 'orchestrator-update',
+      orchestratorAgentIds: orchIds,
+      orchestratorMap: planBoardManager.getOrchestratorMap(),
+    });
   });
 
   // Record completed tasks for agent profiling
@@ -420,6 +485,20 @@ export function activate(context: vscode.ExtensionContext): void {
         roles: roleManager.getAllRoles(),
         assignments: roleManager.getAllAssignments(),
         profiles: agentProfiler.getAllProfiles(),
+        agentRoleMap: spawnRegistry.getAgentRoleMap(),
+      });
+    }
+  });
+
+  // Rebroadcast role map whenever the spawn registry changes (spawn/stop)
+  spawnRegistry.onChange(() => {
+    if (webviewRef.current) {
+      webviewRef.current.postMessage({
+        type: 'roles-update',
+        roles: roleManager.getAllRoles(),
+        assignments: roleManager.getAllAssignments(),
+        profiles: agentProfiler.getAllProfiles(),
+        agentRoleMap: spawnRegistry.getAgentRoleMap(),
       });
     }
   });
@@ -583,8 +662,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
-    // Skip if hooks already emitted this type for this agent recently
-    // (transcript events carry fromTranscript=true in payload)
+    // Feed transcript events to TokenAnalyzer — they carry the real per-turn
+    // token deltas, so without this the Costs tab stays empty forever for
+    // Claude Code sessions (hooks alone only report tokens on Stop).
+    tokenAnalyzer.onEvent(event);
+    // Persist transcript events too so replay / search work across reloads
+    if (ehDatabase) {
+      try {
+        const workspace = (event.payload?.cwd as string) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        ehDatabase.insertEvent(event, workspace, deriveEventCategory(event.type));
+      } catch { /* persistence failure should never block event processing */ }
+    }
     metricsEngine.process(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
@@ -621,6 +709,42 @@ export function activate(context: vscode.ExtensionContext): void {
   function onAgentEvent(event: AgentEvent): void {
     // Feed event to TokenAnalyzer for cost insights
     tokenAnalyzer.onEvent(event);
+
+    // ── Persist event to SQLite (verbatim, MemPalace principle) ──
+    if (ehDatabase) {
+      try {
+        const workspace = (event.payload?.cwd as string)
+          ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const category = deriveEventCategory(event.type);
+        ehDatabase.insertEvent(event, workspace, category);
+
+        // Track agent sessions
+        if (event.type === 'agent.spawn') {
+          ehDatabase.upsertSession({
+            agentId: event.agentId,
+            agentName: event.agentName,
+            agentType: event.agentType,
+            sessionStart: event.timestamp,
+            cwd: (event.payload?.cwd as string) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            totalTokensIn: 0, totalTokensOut: 0, totalCostUsd: 0, eventCount: 1,
+          });
+        } else if (event.type === 'agent.terminate' || event.type === 'agent.idle') {
+          // Update session end + stats on terminate/idle
+          const sessions = ehDatabase.getSessions();
+          const session = sessions.find((s) => s.agentId === event.agentId && !s.sessionEnd);
+          if (session) {
+            ehDatabase.upsertSession({
+              ...session,
+              sessionEnd: event.type === 'agent.terminate' ? event.timestamp : undefined,
+              totalTokensIn: session.totalTokensIn + ((event.payload?.inputTokens as number) ?? 0),
+              totalTokensOut: session.totalTokensOut + ((event.payload?.outputTokens as number) ?? 0),
+              totalCostUsd: session.totalCostUsd + ((event.payload?.costUsd as number) ?? 0),
+              eventCount: session.eventCount + 1,
+            });
+          }
+        }
+      } catch { /* persistence failure should never block event processing */ }
+    }
 
     // Inject workspace cwd if the agent/event doesn't provide one
     if (!event.payload?.cwd) {
@@ -687,7 +811,11 @@ export function activate(context: vscode.ExtensionContext): void {
     metricsEngine.process(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
+    wsBroadcast(event);
     updateStatusBar();
+
+    // ── Push worker errors to the orchestrator so they can react ──
+    notifyOrchestratorsOfFailure(event, planBoardManager.getAllPlans(), messageQueue);
 
     // ── Rate extension prompt (one-time, after 2+ agents connect) ──
     if (event.type === 'agent.spawn' && !ratingPromptShown) {
@@ -805,6 +933,11 @@ export function activate(context: vscode.ExtensionContext): void {
         action,
         timestamp: event.timestamp,
       });
+    }
+
+    // Feed file events to cross-agent correlator for wormhole detection
+    if (event.type === 'file.read' || event.type === 'file.write') {
+      crossAgentCorrelator.onEvent(event);
     }
 
     // Record heartbeat on any event (agent is clearly alive if sending events)
@@ -946,11 +1079,40 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
 
+  // ── Worker silence watchdog ──
+  const watchdogTimeoutMin = vscode.workspace.getConfiguration('eventHorizon').get<number>('watchdog.timeoutMinutes', 10);
+  const watchdog = new Watchdog({
+    spawnRegistry,
+    planBoardManager,
+    timeoutMs: watchdogTimeoutMin * 60_000,
+    emitTaskFail: (agentId, taskId, reason) => {
+      const agent = agentStateManager.getAgent(agentId);
+      const event: AgentEvent = {
+        id: `watchdog-${agentId}-${Date.now()}`,
+        timestamp: Date.now(),
+        agentId,
+        agentName: agent?.name ?? agentId,
+        agentType: (agent?.type ?? 'unknown') as AgentEvent['agentType'],
+        type: 'task.fail',
+        payload: { taskId, reason, source: 'watchdog' },
+      };
+      eventBus.emit(event);
+    },
+  });
+  // Record activity on every event so the watchdog knows the worker is alive
+  const unsubscribeWatchdog = eventBus.on((event) => watchdog.onActivity(event.agentId));
+  watchdog.start();
+
   // Forward cost insights to webview every 30 seconds
+  // Read context window size from settings
+  const contextWindowSetting = vscode.workspace.getConfiguration('eventHorizon').get<number>('contextGauge.windowSize', 200000);
+  tokenAnalyzer.setContextWindowSize(contextWindowSetting);
+
   const costInsightsInterval = setInterval(() => {
     const insights = tokenAnalyzer.getInsights();
     const recommendations = tokenAnalyzer.getRecommendations();
-    webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations });
+    const contextLayers = tokenAnalyzer.getContextLayers();
+    webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations, contextLayers });
 
     // Log duplicate read warnings
     for (const dup of insights.duplicateReads) {
@@ -960,6 +1122,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }, 30_000);
   context.subscriptions.push({ dispose: () => clearInterval(costInsightsInterval) });
+
+  // Broadcast wormhole connections every 15 seconds (cross-agent correlation)
+  const wormholeInterval = setInterval(() => {
+    crossAgentCorrelator.prune();
+    const activeWormholes = crossAgentCorrelator.getActiveWormholes();
+    webviewRef.current?.postMessage({ type: 'wormhole-update', data: { wormholes: activeWormholes } });
+  }, 15_000);
+  context.subscriptions.push({ dispose: () => clearInterval(wormholeInterval) });
 
   const ehConfig = vscode.workspace.getConfiguration('eventHorizon');
   const configuredPort = ehConfig.get<number>('port', 28765);
@@ -984,6 +1154,11 @@ export function activate(context: vscode.ExtensionContext): void {
         budgetManager.setWarningThreshold(
           vscode.workspace.getConfiguration('eventHorizon').get<number>('budgetWarningThreshold', 0.8),
         );
+      }
+      if (e.affectsConfiguration('eventHorizon.watchdog.timeoutMinutes')) {
+        const minutes = vscode.workspace.getConfiguration('eventHorizon').get<number>('watchdog.timeoutMinutes', 10);
+        watchdog.setTimeoutMs(minutes * 60_000);
+        if (minutes > 0) watchdog.start();
       }
     }),
   );
@@ -1019,6 +1194,47 @@ export function activate(context: vscode.ExtensionContext): void {
       if (hasOpenCode) { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
       if (hasCopilot) { await setupCopilotHooks(); await registerCopilotMcpServer(); }
       if (hasCursor) { await setupCursorHooks(); await registerCursorMcpServer(); }
+
+      // ── Agent CLI auto-detection ──
+      // Scan PATH for installed agent CLIs without configured hooks and offer one-click setup.
+      const autoDetectEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('autoDetect.enabled', true);
+      if (autoDetectEnabled) {
+        const { AgentDetector } = await import('./agentDetector.js');
+        const detector = new AgentDetector({
+          isClaudeCodeHooksInstalled,
+          isOpenCodeHooksInstalled,
+          isCopilotHooksInstalled,
+          isCursorHooksInstalled,
+          copilotExtensionInstalled: !!vscode.extensions.getExtension('GitHub.copilot'),
+        });
+        const unconfigured = await detector.detectUnconfigured();
+        if (unconfigured.length > 0) {
+          const names = unconfigured.map((a) => a.name).join(', ');
+          void vscode.window.showInformationMessage(
+            `Event Horizon detected ${names} ${unconfigured.length === 1 ? 'is' : 'are'} installed but ${unconfigured.length === 1 ? 'has' : 'have'} no EH hooks configured. Set up hooks to start visualizing?`,
+            'Configure',
+            'Dismiss',
+          ).then(async (choice) => {
+            if (choice !== 'Configure') return;
+            const picks = await vscode.window.showQuickPick(
+              unconfigured.map((a) => ({ label: a.name, picked: true, agent: a })),
+              { canPickMany: true, placeHolder: 'Select agents to configure hooks for' },
+            );
+            if (!picks || picks.length === 0) return;
+            for (const pick of picks) {
+              try {
+                if (pick.agent.type === 'claude-code') { await setupClaudeCodeHooks(); await registerMcpServer(); }
+                else if (pick.agent.type === 'opencode') { await setupOpenCodeHooks(); await registerOpenCodeMcpServer(); }
+                else if (pick.agent.type === 'cursor') { await setupCursorHooks(); await registerCursorMcpServer(); }
+                else if (pick.agent.type === 'copilot') { await setupCopilotHooks(); await registerCopilotMcpServer(); }
+              } catch (err) {
+                void vscode.window.showWarningMessage(`Event Horizon: failed to configure ${pick.agent.name} — ${String(err)}`);
+              }
+            }
+            void vscode.window.showInformationMessage(`Event Horizon: configured ${picks.length} agent(s).`);
+          });
+        }
+      }
 
       // Write bundled skills to ~/.claude/skills/
       await ensureBundledSkills();
@@ -1139,6 +1355,85 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('eventHorizon.toggleView', () => {
       webviewRef.current?.postMessage({ type: 'toggle-view' });
+    })
+  );
+
+  // ── Export data command ──────────────────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('eventHorizon.exportData', async () => {
+      if (!ehDatabase) {
+        void vscode.window.showWarningMessage('Event Horizon: persistence is disabled. Enable eventHorizon.persistence.enabled to use export.');
+        return;
+      }
+      // Step 1: pick format
+      const format = await vscode.window.showQuickPick(
+        [
+          { label: 'Events (JSON)', detail: 'All persisted events as JSON array', id: 'events-json' },
+          { label: 'Events (CSV)', detail: 'Events with summary columns: id, type, agentId, agentType, timestamp, payload', id: 'events-csv' },
+          { label: 'Agent Sessions (JSON)', detail: 'Session history with token usage and cost', id: 'sessions-json' },
+        ] as const,
+        { placeHolder: 'Choose export format' }
+      );
+      if (!format) return;
+
+      // Step 2: pick date range
+      const range = await vscode.window.showQuickPick(
+        [
+          { label: 'Last 24 hours', ms: 24 * 60 * 60 * 1000 },
+          { label: 'Last 7 days', ms: 7 * 24 * 60 * 60 * 1000 },
+          { label: 'Last 30 days', ms: 30 * 24 * 60 * 60 * 1000 },
+          { label: 'All time', ms: 0 },
+        ] as const,
+        { placeHolder: 'Choose date range' }
+      );
+      if (!range) return;
+
+      // Step 3: save dialog
+      const ext = format.id.endsWith('csv') ? 'csv' : 'json';
+      const defaultName = `event-horizon-${format.id}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(defaultName),
+        filters: ext === 'csv' ? { 'CSV': ['csv'] } : { 'JSON': ['json'] },
+      });
+      if (!uri) return;
+
+      // Step 4: query + serialize
+      try {
+        const since = range.ms > 0 ? Date.now() - range.ms : undefined;
+        let content: string;
+        if (format.id === 'sessions-json') {
+          const sessions = ehDatabase.getSessions(since);
+          content = JSON.stringify(sessions, null, 2);
+        } else {
+          const events = ehDatabase.queryEvents({ since, limit: 100_000 });
+          if (format.id === 'events-csv') {
+            // CSV: id,type,agentId,agentType,timestamp,payload
+            const escape = (s: string) => `"${s.replace(/"/g, '""')}"`;
+            const header = 'id,type,agentId,agentType,timestamp,payload\n';
+            const rows = events.map((e) => [
+              escape(e.id),
+              escape(e.type),
+              escape(e.agentId),
+              escape(e.agentType),
+              String(e.timestamp),
+              escape(JSON.stringify(e.payload ?? {})),
+            ].join(','));
+            content = header + rows.join('\n');
+          } else {
+            content = JSON.stringify(events, null, 2);
+          }
+        }
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+        const choice = await vscode.window.showInformationMessage(
+          `Event Horizon: exported ${format.label} to ${uri.fsPath}`,
+          'Open File',
+        );
+        if (choice === 'Open File') {
+          void vscode.commands.executeCommand('vscode.open', uri);
+        }
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Event Horizon: export failed — ${String(err)}`);
+      }
     })
   );
 
@@ -1294,6 +1589,8 @@ export function activate(context: vscode.ExtensionContext): void {
       if (cooperationTimer) clearTimeout(cooperationTimer);
       if (statusBarBlinkTimer) clearInterval(statusBarBlinkTimer);
       unsubscribeEventBus();
+      unsubscribeWatchdog();
+      watchdog.stop();
       stopEventServer();
       // Clean up all transcript watchers
       for (const w of transcriptWatchers.values()) w.destroy();
@@ -1303,12 +1600,20 @@ export function activate(context: vscode.ExtensionContext): void {
       openCodeSSEWatchers.clear();
       // Clean up spawn registry
       spawnRegistry.dispose();
+      // Close persistence DB (save handled by deactivate)
+      if (ehDatabase) {
+        try { ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
+      }
       webviewRef.current = null;
     },
   });
 }
 
 export function deactivate(): void {
+  // Close persistence DB — interval saves already persisted data to disk
+  if (ehDatabase) {
+    try { ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
+  }
   stopEventServer();
   webviewRef.current = null;
 }

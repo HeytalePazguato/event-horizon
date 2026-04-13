@@ -346,19 +346,22 @@ export const MCP_TOOLS: McpToolDef[] = [
         value: { type: 'string', description: 'Knowledge value' },
         scope: { type: 'string', enum: ['workspace', 'plan'], description: 'Scope: workspace (persistent) or plan (scoped to active plan). Defaults to plan.' },
         plan_id: { type: 'string', description: 'Plan ID for plan-scoped entries (optional, defaults to active plan)' },
+        valid_until: { type: 'string', description: 'Expiration timestamp (ISO 8601 string or epoch ms). Entry will be excluded from reads after this time. Omit for no expiration.' },
+        tier: { type: 'string', enum: ['L0', 'L1', 'L2'], description: 'MemPalace loading tier. L0 = critical identity (~50-100 tok), L1 = essentials (workspace default, ~500-800 tok), L2 = on-demand (plan default). Use L0 sparingly — every L0 entry costs tokens in every agent session.' },
       },
       required: ['agent_id', 'key', 'value'],
     },
   },
   {
     name: 'eh_read_shared',
-    description: 'Read shared knowledge entries. Returns merged workspace + active plan entries. Optionally filter by key.',
+    description: 'Read shared knowledge entries. Returns merged workspace + active plan entries. By default excludes expired entries.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent/session ID' },
         key: { type: 'string', description: 'Specific key to read (optional, omit for all entries)' },
         plan_id: { type: 'string', description: 'Plan ID (optional, defaults to active plan)' },
+        include_expired: { type: 'boolean', description: 'Include expired entries (default: false)' },
       },
       required: ['agent_id'],
     },
@@ -418,6 +421,7 @@ export const MCP_TOOLS: McpToolDef[] = [
         model: { type: 'string', description: 'Model override (e.g. claude-sonnet-4-20250514). Optional — defaults to the CLI default.' },
         plan_id: { type: 'string', description: 'Plan ID to associate with the spawned agent' },
         task_id: { type: 'string', description: 'Task ID the agent should work on' },
+        interactive: { type: 'boolean', description: 'When true, spawn in interactive REPL mode so the user can type follow-up prompts. Default false (batch -p mode, correct for orchestrated work).' },
       },
       required: ['agent_id', 'agent_type', 'prompt'],
     },
@@ -598,6 +602,22 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id'],
     },
   },
+  {
+    name: 'eh_search_events',
+    description: 'Full-text search over persisted events. Applies MemPalace-style query sanitization to handle long or malformed input. Returns matching events with payload.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        query: { type: 'string', description: 'Search query (will be sanitized — long/malformed queries are auto-truncated)' },
+        agent_id_filter: { type: 'string', description: 'Filter results to a specific agent ID (optional)' },
+        type: { type: 'string', description: 'Filter by event type (e.g. "tool.call", "agent.spawn")' },
+        since: { type: 'number', description: 'Filter to events after this timestamp (epoch ms)' },
+        limit: { type: 'number', description: 'Max results to return (default 50)' },
+      },
+      required: ['agent_id', 'query'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -658,6 +678,7 @@ export interface McpServerDeps {
   workspaceRoot?: string;
   modelTierManager?: ModelTierManager;
   tokenAnalyzer?: TokenAnalyzer;
+  eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
 }
 
 export class McpServer {
@@ -665,6 +686,11 @@ export class McpServer {
 
   constructor(deps: McpServerDeps) {
     this.deps = deps;
+  }
+
+  /** Wire the event search engine after the DB is initialized (called from extension.ts). */
+  setEventSearch(eventSearch: McpServerDeps['eventSearch']): void {
+    this.deps.eventSearch = eventSearch;
   }
 
   /** Handle a JSON-RPC request and return a response. */
@@ -691,7 +717,7 @@ export class McpServer {
     return this.success(req.id ?? null, {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'event-horizon', version: '2.0.0' },
+      serverInfo: { name: 'Event Horizon', version: '2.0.0' },
     });
   }
 
@@ -1302,15 +1328,25 @@ export class McpServer {
         const value = args.value as string;
         const scope = (args.scope as 'workspace' | 'plan') ?? 'plan';
         const planId = args.plan_id as string | undefined;
-        const entry = sharedKnowledge.write(key, value, scope, agentName, agentId, planId);
-        return { written: true, key: entry.key, scope: entry.scope, author: entry.author };
+        // Parse valid_until — accept ISO 8601 string or epoch ms
+        let validUntil: number | undefined;
+        if (args.valid_until) {
+          const raw = args.valid_until as string;
+          const parsed = Number(raw);
+          validUntil = Number.isFinite(parsed) ? parsed : new Date(raw).getTime();
+          if (!Number.isFinite(validUntil)) validUntil = undefined;
+        }
+        const tier = (args.tier === 'L0' || args.tier === 'L1' || args.tier === 'L2') ? args.tier : undefined;
+        const entry = sharedKnowledge.write(key, value, scope, agentName, agentId, planId, validUntil, tier);
+        return { written: true, key: entry.key, scope: entry.scope, author: entry.author, validUntil: entry.validUntil, tier: entry.tier };
       }
 
       case 'eh_read_shared': {
         const { sharedKnowledge } = this.deps;
         const key = args.key as string | undefined;
         const planId = args.plan_id as string | undefined;
-        const entries = sharedKnowledge.read(key, planId);
+        const includeExpired = args.include_expired === true;
+        const entries = sharedKnowledge.read(key, planId, includeExpired);
         return {
           entries: entries.map((e) => ({
             key: e.key,
@@ -1318,6 +1354,9 @@ export class McpServer {
             scope: e.scope,
             author: e.author,
             updatedAt: e.updatedAt,
+            validUntil: e.validUntil,
+            expired: e.validUntil ? e.validUntil < Date.now() : false,
+            tier: e.tier ?? (e.scope === 'workspace' ? 'L1' : 'L2'),
           })),
           count: entries.length,
         };
@@ -1371,17 +1410,23 @@ export class McpServer {
         const agentType = args.agent_type as string;
         const role = args.role as string | undefined;
         const prompt = args.prompt as string;
-        const cwd = args.cwd as string | undefined;
+        // Fallback chain for cwd: explicit arg → orchestrator's cwd from agent state → spawn registry's default (workspace folder)
+        let cwd = args.cwd as string | undefined;
+        if (!cwd) {
+          const orchestrator = this.deps.agentStateManager.getAgent(agentId);
+          if (orchestrator?.cwd) cwd = orchestrator.cwd;
+        }
         const model = args.model as string | undefined;
         const planId = args.plan_id as string | undefined;
         const taskId = args.task_id as string | undefined;
+        const interactive = args.interactive === true;
 
         // Sync skills before spawning
         if (this.deps.syncSkills) {
           await this.deps.syncSkills(agentType);
         }
 
-        const result = await spawnRegistry.spawn(agentType, { prompt, role, cwd, model, planId, taskId });
+        const result = await spawnRegistry.spawn(agentType, { prompt, role, cwd, model, planId, taskId, interactive });
         return result;
       }
 
@@ -1441,12 +1486,15 @@ export class McpServer {
         const planId = args.plan_id as string | undefined;
         const agents = this.deps.agentStateManager.getAllAgents();
         const getMetrics = this.deps.getMetrics;
+        // Pull context layers per agent (CIP Phase 3) so orchestrator sees who's near limit
+        const contextLayers = this.deps.tokenAnalyzer?.getContextLayers() ?? {};
 
         const agentInfos = agents.map((a) => {
           const m = getMetrics?.(a.id);
           const currentTask = planId
             ? planBoardManager.getPlan(planId)?.tasks.find((t) => t.assignee === a.id && (t.status === 'claimed' || t.status === 'in_progress'))
             : null;
+          const ctx = contextLayers[a.id];
           return {
             id: a.id,
             name: a.name,
@@ -1455,6 +1503,10 @@ export class McpServer {
             currentTask: currentTask ? { id: currentTask.id, title: currentTask.title, status: currentTask.status } : null,
             load: m?.load ?? 0,
             cost: m?.estimatedCostUsd ?? 0,
+            // Context window pressure — orchestrator should avoid assigning new tasks to agents > 0.8
+            contextUsageRatio: ctx?.usageRatio ?? null,
+            contextTokensUsed: ctx?.totalUsed ?? null,
+            contextWindowSize: ctx?.contextWindowSize ?? null,
           };
         });
 
@@ -1744,6 +1796,19 @@ export class McpServer {
         }
         const recommendations = tokenAnalyzer.getRecommendations();
         return { insights, recommendations };
+      }
+
+      case 'eh_search_events': {
+        const { eventSearch } = this.deps;
+        if (!eventSearch) return { error: 'Event search not available (persistence may be disabled)' };
+        const query = args.query as string;
+        const limit = typeof args.limit === 'number' ? Math.min(args.limit, 200) : 50;
+        const opts: { agentId?: string; type?: string; since?: number; limit?: number } = { limit };
+        if (args.agent_id_filter) opts.agentId = args.agent_id_filter as string;
+        if (args.type) opts.type = args.type as string;
+        if (typeof args.since === 'number') opts.since = args.since;
+        const results = eventSearch.search(query, opts);
+        return { query, count: results.length, events: results };
       }
 
       default:

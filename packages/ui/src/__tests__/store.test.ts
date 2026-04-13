@@ -33,6 +33,8 @@ beforeEach(() => {
     spawnOpen: false,
     pendingConnectAgent: null,
   });
+  // Mark medals hydrated so unlock attempts aren't suppressed by the startup gate
+  useCommandCenterStore.getState().markMedalsHydrated();
 });
 
 // ── Agent selection ──────────────────────────────────────────────────────────

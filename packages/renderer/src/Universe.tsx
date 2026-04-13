@@ -33,6 +33,8 @@ import { updateUFO } from './systems/UFOSystem.js';
 import { updateAstronaut, updateJetSpray } from './systems/AstronautSystem.js';
 import type { PlanetInfo, ViewportBounds } from './systems/AstronautSystem.js';
 import { animatePlanets } from './systems/PlanetAnimationSystem.js';
+import { syncWormholes, animateWormholes } from './systems/WormholeSystem.js';
+import type { ExtendedWormhole } from './entities/Wormhole.js';
 import { updateMoons } from './systems/MoonSystem.js';
 import { updateDebris } from './systems/DebrisSystem.js';
 import type { DebrisPlan } from './systems/DebrisSystem.js';
@@ -143,6 +145,10 @@ export interface UniverseProps {
   knowledgeLinks?: KnowledgeLink[];
   /** Agent type per agent ID — used for constellation coloring. */
   agentTypesMap?: Record<string, string>;
+  /** Context usage ratio per agent (0-1) — drives planet fuel gauge. */
+  contextUsage?: Record<string, number>;
+  /** Wormhole connections between correlated agents (cross-agent file collaboration). */
+  wormholes?: Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>;
 }
 
 // --- constants -----------------------------------------------------------
@@ -345,6 +351,8 @@ export const Universe: FC<UniverseProps> = ({
   spawnBeams = [],
   knowledgeLinks = [],
   agentTypesMap = {},
+  contextUsage = {},
+  wormholes = [],
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
@@ -432,9 +440,13 @@ export const Universe: FC<UniverseProps> = ({
   const orchestratorIdsRef = useRef(orchestratorAgentIds);
   const heartbeatStatusesRef = useRef(heartbeatStatuses);
   const compactingAgentIdsRef = useRef(compactingAgentIds);
+  const contextUsageRef = useRef(contextUsage);
   const mcpServersRef = useRef(mcpServers);
   const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
+  const wormholesContainerRef = useRef<Container | null>(null);
+  const wormholesRef = useRef<Map<string, ExtendedWormhole>>(new Map());
+  const wormholesDataRef = useRef(wormholes);
   const workspaceGroupsRef = useRef<WorkspaceGroup[]>([]);
   const skillOrbitsRef = useRef<Map<string, ExtendedSkillOrbit>>(new Map());
   const agentSkillCountsRef = useRef<Record<string, number>>(agentSkillCounts);
@@ -518,6 +530,8 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => { orchestratorIdsRef.current = orchestratorAgentIds; }, [orchestratorAgentIds]);
   useEffect(() => { heartbeatStatusesRef.current = heartbeatStatuses; }, [heartbeatStatuses]);
   useEffect(() => { compactingAgentIdsRef.current = compactingAgentIds; }, [compactingAgentIds]);
+  useEffect(() => { contextUsageRef.current = contextUsage; }, [contextUsage]);
+  useEffect(() => { wormholesDataRef.current = wormholes; }, [wormholes]);
   useEffect(() => { mcpServersRef.current = mcpServers; }, [mcpServers]);
   useEffect(() => { visibleRef.current = visible; }, [visible]);
   useEffect(() => { spawnBeamsRef.current = spawnBeams; }, [spawnBeams]);
@@ -612,6 +626,11 @@ export const Universe: FC<UniverseProps> = ({
         const beltsContainer = new Container();
         world.addChild(beltsContainer);
         beltsContainerRef.current = beltsContainer;
+
+        // Wormholes drawn between planets — added before planets so they render behind
+        const wormholesContainer = new Container();
+        world.addChild(wormholesContainer);
+        wormholesContainerRef.current = wormholesContainer;
 
         const planetsContainer = new Container();
         world.addChild(planetsContainer);
@@ -824,11 +843,31 @@ export const Universe: FC<UniverseProps> = ({
   }, [width, height, canvasReady]);
 
   // --- pause ticker when hidden (Operations view) --------------------------
+  // When becoming hidden we also flush any queued spiral-out planets and ships.
+  // Otherwise when we become visible again, every agent that terminated while hidden
+  // animates at once ("ghost planets flying to the hole").
   useEffect(() => {
     const app = appRef.current;
     if (!app) return;
-    if (visible) { try { app.ticker.start(); } catch { /* ignore */ } }
-    else { try { app.ticker.stop(); } catch { /* ignore */ } }
+    if (visible) {
+      try { app.ticker.start(); } catch { /* ignore */ }
+    } else {
+      try { app.ticker.stop(); } catch { /* ignore */ }
+      // Drain the spiral queue — destroy everything in flight so we don't see stale animations on return
+      for (const s of spiralRef.current) {
+        try { s.c.destroy({ children: true }); } catch { /* already destroyed */ }
+      }
+      spiralRef.current = [];
+      // Also clear any ships/shooting stars that were in-flight
+      const shipsContainer = shipsContainerRef.current;
+      if (shipsContainer) {
+        while (shipsContainer.children.length > 0) {
+          const c = shipsContainer.children[0];
+          shipsContainer.removeChild(c);
+          try { c.destroy({ children: true }); } catch { /* ignore */ }
+        }
+      }
+    }
   }, [visible, canvasReady]);
 
   // --- re-center -----------------------------------------------------------
@@ -1520,7 +1559,15 @@ export const Universe: FC<UniverseProps> = ({
         isolatedAgentId: isolatedRef.current,
         heartbeatStatuses: heartbeatStatusesRef.current,
         compactingAgentIds: compactingAgentIdsRef.current,
+        contextUsage: contextUsageRef.current,
       });
+
+      // Wormholes — sync data + animate (cross-agent file collaboration visual)
+      const whContainer = wormholesContainerRef.current;
+      if (whContainer) {
+        syncWormholes(whContainer, wormholesRef.current, wormholesDataRef.current, planetPositionsRef.current);
+        animateWormholes(wormholesRef.current.values(), app.ticker.deltaTime);
+      }
 
       // Animate skill orbit rings
       const skillOrbits = skillOrbitsRef.current;

@@ -33,15 +33,19 @@ const EH_HOOK_EVENTS = [
 ] as const;
 
 function buildEhUrl(): string {
+  return `http://127.0.0.1:${PORT}/claude`;
+}
+
+function buildAuthHeader(): string {
   const token = getAuthToken();
-  const tokenParam = token ? `?token=${token}` : '';
-  return `http://127.0.0.1:${PORT}/claude${tokenParam}`;
+  return token ? `-H "Authorization: Bearer ${token}"` : '';
 }
 
 /** Build a command that POSTs stdin to the EH server, silently succeeding if it's down. */
 function buildEhCommand(): string {
   const url = buildEhUrl();
-  return `curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d @- ${url} > /dev/null 2>&1 || true`;
+  const authHeader = buildAuthHeader();
+  return `curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeader} -d @- ${url} > /dev/null 2>&1 || true`;
 }
 
 /**
@@ -54,15 +58,15 @@ export async function ensureLockScripts(): Promise<{ checkScript: string; releas
   await fsp.mkdir(dir, { recursive: true });
 
   const token = getAuthToken();
-  const tokenParam = token ? `?token=${token}` : '';
-  const lockUrl = `http://127.0.0.1:${PORT}/lock${tokenParam}`;
-  const claudeUrl = `http://127.0.0.1:${PORT}/claude${tokenParam}`;
+  const lockUrl = `http://127.0.0.1:${PORT}/lock`;
+  const claudeUrl = `http://127.0.0.1:${PORT}/claude`;
+  const authHeaderLine = token ? `-H "Authorization: Bearer ${token}"` : '';
 
   const checkScript = path.join(dir, 'eh-lock-check.sh');
   const checkContent = `#!/usr/bin/env bash
 # Event Horizon — PreToolUse lock check. Auto-generated, do not edit.
 PAYLOAD=$(cat)
-echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d @- "${claudeUrl}" > /dev/null 2>&1 || true
+echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} -d @- "${claudeUrl}" > /dev/null 2>&1 || true
 TN=$(echo "$PAYLOAD" | sed -n 's/.*"tool_name" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
 FP=$(echo "$PAYLOAD" | sed -n 's/.*"file_path" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
 if [ -n "$FP" ]; then
@@ -77,7 +81,7 @@ if [ -n "$FP" ]; then
   if [ "$TN" = "Write" ] || [ "$TN" = "Edit" ] || [ "$TN" = "MultiEdit" ] || [ "$TN" = "WriteFile" ]; then
     ACTION="check"
   fi
-  RESP=$(curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" \\
+  RESP=$(curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} \\
     -d "{\\"action\\":\\"$ACTION\\",\\"filePath\\":\\"$FP\\",\\"agentId\\":\\"$AGENT\\",\\"agentName\\":\\"$ANAME\\"}" \\
     "${lockUrl}" 2>/dev/null)
   if echo "$RESP" | grep -q '"allowed":false'; then
@@ -94,11 +98,11 @@ fi
   const releaseContent = `#!/usr/bin/env bash
 # Event Horizon — PostToolUse lock release. Auto-generated, do not edit.
 PAYLOAD=$(cat)
-echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" -d @- "${claudeUrl}" > /dev/null 2>&1 || true
+echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} -d @- "${claudeUrl}" > /dev/null 2>&1 || true
 FP=$(echo "$PAYLOAD" | sed -n 's/.*"file_path" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
 if [ -n "$FP" ]; then
   AGENT=$(echo "$PAYLOAD" | sed -n 's/.*"session_id" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
-  curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" \\
+  curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} \\
     -d "{\\"action\\":\\"release\\",\\"filePath\\":\\"$FP\\",\\"agentId\\":\\"$AGENT\\"}" \\
     "${lockUrl}" > /dev/null 2>&1 || true
 fi
@@ -139,6 +143,8 @@ function isEhHook(h: Record<string, unknown>): boolean {
 /** True if the hook matches the current expected format exactly. */
 function isCurrentEhHook(h: Record<string, unknown>): boolean {
   if (typeof h.command === 'string') {
+    // Legacy hooks contain the query-string token; they're NOT current (v2.0.0 breaking change).
+    if (h.command.includes('?token=')) return false;
     if (h.command === buildEhCommand()) return true;
     if (h.command === buildPreToolUseCommand()) return true;
   }
@@ -278,9 +284,10 @@ export async function setupClaudeCodeHooks(): Promise<void> {
  */
 export async function registerMcpServer(): Promise<void> {
   const claudeJsonPath = path.join(os.homedir(), '.claude.json');
-  const token = getAuthToken();
-  const tokenParam = token ? `?token=${token}` : '';
-  const mcpUrl = `http://127.0.0.1:${PORT}/mcp${tokenParam}`;
+  // v2.0.0: MCP URL no longer carries ?token=. Claude Code discovers auth via
+  // RFC 9728 .well-known/oauth-protected-resource and obtains JWT access
+  // tokens through OAuth 2.1 client_credentials flow.
+  const mcpUrl = `http://127.0.0.1:${PORT}/mcp`;
 
   let config: Record<string, unknown> = {};
   try {

@@ -386,7 +386,7 @@ describe('Plan MCP tools', () => {
     expect(names).toContain('eh_get_plan');
     expect(names).toContain('eh_claim_task');
     expect(names).toContain('eh_update_task');
-    expect(result.tools).toHaveLength(41); // 6 lock + 7 plan + 1 verify + 2 messaging + 4 roles + 6 phase1 + 8 phase2 + 5 phase3 + 1 phase4 (traces)
+    expect(result.tools).toHaveLength(42); // 6 lock + 7 plan + 1 verify + 2 messaging + 4 roles + 6 phase1 + 8 phase2 + 5 phase3 + 1 phase4 (traces) + 1 eh_search_events (CIP phase 4)
   });
 
   describe('eh_load_plan', () => {
@@ -569,5 +569,46 @@ describe('Plan MCP tools', () => {
       expect(plan.tasks.find((t) => t.id === '1.2')!.assignee).toBe('Alpha');
       expect(plan.tasks.find((t) => t.id === '1.3')!.status).toBe('done');
     });
+  });
+});
+
+// ── Orchestrator map helpers ────────────────────────────────────────────────
+
+describe('PlanBoardManager — orchestrator helpers', () => {
+  let manager: PlanBoardManager;
+
+  beforeEach(() => {
+    manager = new PlanBoardManager();
+  });
+
+  it('getOrchestratorMap returns empty object when no plans loaded', () => {
+    expect(manager.getOrchestratorMap()).toEqual({});
+  });
+
+  it('getOrchestratorMap excludes plans without an orchestrator', () => {
+    manager.loadPlan('# A\n- [ ] 1.1 task', 'a.md');
+    expect(manager.getOrchestratorMap()).toEqual({});
+  });
+
+  it('getOrchestratorMap maps planId → orchestratorAgentId across multiple plans', () => {
+    manager.loadPlan('# A\n- [ ] 1.1 task', 'a.md', 'agent-a');
+    manager.loadPlan('# B\n- [ ] 1.1 task', 'b.md', 'agent-b');
+    manager.loadPlan('# C\n- [ ] 1.1 task', 'c.md');
+    const map = manager.getOrchestratorMap();
+    expect(map).toEqual({ a: 'agent-a', b: 'agent-b' });
+  });
+
+  it('getAllOrchestratorAgentIds returns empty set when no plans loaded', () => {
+    expect(manager.getAllOrchestratorAgentIds().size).toBe(0);
+  });
+
+  it('getAllOrchestratorAgentIds returns unique set of agents across plans', () => {
+    manager.loadPlan('# A\n- [ ] 1.1 task', 'a.md', 'agent-a');
+    manager.loadPlan('# B\n- [ ] 1.1 task', 'b.md', 'agent-a');
+    manager.loadPlan('# C\n- [ ] 1.1 task', 'c.md', 'agent-b');
+    const ids = manager.getAllOrchestratorAgentIds();
+    expect(ids.size).toBe(2);
+    expect(ids.has('agent-a')).toBe(true);
+    expect(ids.has('agent-b')).toBe(true);
   });
 });

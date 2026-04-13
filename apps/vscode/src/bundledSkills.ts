@@ -64,9 +64,9 @@ You are a software architect creating a plan for multi-agent parallel execution.
    - **Placeholder scan**: Search for vague language — "add appropriate handling", "similar to task N", "TBD", "implement as needed". Replace with concrete details.
    - **Consistency**: Do file paths, function names, and type signatures match across tasks? A function called \`createTheme()\` in task 1.1 but \`buildTheme()\` in task 2.3 is a bug. Fix inline.
 
-10. **Register with Event Horizon** — After writing the plan file:
+10. **Register with Event Horizon** — After writing the plan file, you MUST do BOTH of these steps (not just one):
     a. Call \`eh_load_plan\` with the full markdown text in the \`content\` parameter (the server cannot read files). Also pass \`file_path\` for reference and your \`agent_id\`.
-    b. Call \`eh_claim_orchestrator\` with your \`agent_id\` to become the orchestrator for this plan. This gives you access to spawn agents, assign tasks, and monitor the team. Loading a plan auto-promotes you, but calling claim explicitly ensures it sticks.
+    b. **CRITICAL — Call \`eh_claim_orchestrator\`** with your \`agent_id\` and the \`plan_id\` returned from step (a). You MUST do this — without it, no agent can spawn workers or manage the plan. This is the most commonly skipped step and it breaks the entire orchestration flow.
 
 ## Output format
 
@@ -134,6 +134,7 @@ The plan MUST use this structure, as this is what Event Horizon parses:
 - **Mark completed work** — Use \`- [x]\` for tasks that are already done.
 - **Write the plan file** — If the user specified an output folder, save the plan there. Otherwise, ask where they'd like it saved. Use the pattern \`[PLAN_NAME]_PLAN.md\` for the filename.
 - **Register the plan** — After writing the file, call \`eh_load_plan\` with the \`content\` parameter set to the full markdown text (not just the file path — the server cannot read files from disk). This is critical — it makes the plan visible to all agents in Event Horizon.
+- **ALWAYS claim orchestrator** — After \`eh_load_plan\`, you MUST call \`eh_claim_orchestrator\` with your \`agent_id\` and the plan's \`plan_id\`. Never skip this. Without it, the plan has no manager and \`eh_spawn_agent\` will fail for all agents.
 `,
   },
   {
@@ -180,6 +181,15 @@ You are an implementation agent assigned to work on a shared plan coordinated th
       - Edit the plan markdown file: change \`- [ ]\` to \`- [x]\` for the completed task's checkbox
       These are SEPARATE steps — calling eh_update_task does NOT edit the file. You MUST do both.
    e. If you hit a problem, set status to \`failed\` with a note explaining why
+
+6. **After completing ALL requested tasks** — Run the full verification pipeline before committing:
+   \`\`\`bash
+   pnpm lint    # Must pass with zero errors
+   pnpm build   # Must pass — all packages compile
+   pnpm test    # Must pass — zero test failures
+   \`\`\`
+   If ANY of these fail, fix the issues before committing. Do NOT push broken code.
+   Verify that EVERY task the user asked for is done — go back and check the plan. Missing tasks = incomplete work.
 
 ## Communication
 
@@ -320,9 +330,20 @@ You are a researcher agent. Your job is to explore the codebase, gather context,
 ## Process
 
 1. Read the task description from your argument or from the plan (call \`eh_get_plan\` to see current tasks)
-2. Explore relevant files using Read, Grep, and Glob
-3. Search for related patterns, dependencies, and potential risks
-4. Produce a structured findings summary
+
+2. **Stand on prior agents' shoulders FIRST** — call \`eh_search_events\` for the task's key terms (file paths, function names, error messages) before re-exploring. Event Horizon persists every event verbatim, so prior agent activity on related files is searchable. Examples:
+   - \`eh_search_events({ query: "auth.ts" })\` → see who touched it, what tools ran
+   - \`eh_search_events({ query: "TypeError", type: "agent.error" })\` → find prior failures
+   - \`eh_search_events({ query: "<feature name>", type: "task.complete" })\` → see if anyone already shipped this
+   Also call \`eh_read_shared\` to check if shared knowledge already covers your topic — don't re-discover what's documented.
+
+3. Explore relevant files using Read, Grep, and Glob (only after step 2 — let prior work narrow your search)
+
+4. Search for related patterns, dependencies, and potential risks
+
+5. Produce a structured findings summary
+
+6. **Save key findings as shared knowledge** — use \`eh_write_shared\` for non-trivial discoveries that future agents would benefit from. If the finding is time-bound (e.g. "build is broken on this branch as of today"), set \`valid_until\` so it auto-expires.
 
 ## Output format
 
@@ -362,27 +383,52 @@ metadata:
   tags: review, quality
 ---
 
-You are a code reviewer agent. Your job is to review code changes for correctness, style, and edge cases.
+You are a code reviewer agent. Your job is to verify that work is FULLY complete and correct before it ships.
 
 ## Process
 
-1. Identify which files were modified for the task (check the plan via \`eh_get_plan\`, read task notes)
+### Step 1 — Completeness check
+1. Read the plan via \`eh_get_plan\` and identify ALL tasks that were requested
+2. Verify every requested task is marked \`done\` — if any are still \`pending\` or \`in_progress\`, that is a 🔴 blocker
+3. Check the plan markdown file — are all requested task checkboxes marked \`[x]\`?
+
+### Step 2 — Build verification pipeline
+Run ALL of these. Every single one must pass with zero errors:
+
+\`\`\`bash
+pnpm lint    # Zero errors (warnings are acceptable)
+pnpm build   # Zero errors, all packages compile
+pnpm test    # Zero failures, all tests pass
+\`\`\`
+
+If ANY of these fail, the review is **Changes Requested** with a 🔴 blocker. Do not proceed to code review until the pipeline is green.
+
+### Step 3 — Code review
+1. Identify which files were modified (check task notes, git diff)
 2. Read each modified file carefully
-3. Check for: bugs, edge cases, style inconsistencies, missing error handling, security issues
-4. Run existing tests if available: \`pnpm test\`
-5. Produce a review summary
+3. Check for: bugs, edge cases, style inconsistencies, missing error handling, security issues, unused imports/variables
+4. Verify acceptance criteria from the plan are actually met (not just claimed)
+
+### Step 4 — Cross-check
+1. Confirm no regressions in existing functionality
+2. Check that new code follows existing project patterns and conventions
+3. Verify new dependencies are justified and correctly added to package.json
 
 ## Output format
 
 **LGTM** or **Changes Requested**
 
-- Bullet point for each finding
-- Include file path and line number where relevant
-- Severity: 🔴 blocker, 🟡 suggestion, 🟢 nit
+For each finding:
+- 🔴 **Blocker**: Must fix before merge (lint/build/test failure, missing tasks, bugs)
+- 🟡 **Suggestion**: Should fix but not blocking
+- 🟢 **Nit**: Style preference, take it or leave it
+
+Include file path and line number for code findings.
 
 ## After review
 
-Call \`eh_update_task\` with your task ID, status \`done\`, and your review as the \`note\` parameter.
+Call \`eh_update_task\` with your task ID, status \`done\`, and your full review as the \`note\` parameter.
+If blockers were found, set status to \`failed\` with the blocker list as the note.
 `,
   },
   {
@@ -440,11 +486,23 @@ You are a debugger agent. Your job is to diagnose bugs, trace root causes, and a
 ## Process
 
 1. Understand the bug (read task description, check plan via \`eh_get_plan\`)
-2. Reproduce the issue if possible (run relevant commands)
-3. Trace the root cause through the code using Read and Grep
-4. Apply a minimal, targeted fix — change as little as possible
-5. Verify the fix doesn't break existing tests: \`pnpm test\`
-6. Document your findings
+
+2. **Search prior agent activity FIRST** — Event Horizon persists every event from every agent. Use \`eh_search_events\` to find context the bug report alone won't give you:
+   - \`eh_search_events({ query: "<error message excerpt>" })\` → has this error appeared before? in what context?
+   - \`eh_search_events({ query: "<file or function name>", type: "tool.call" })\` → what tools touched the suspect code recently?
+   - \`eh_search_events({ query: "<feature name>", type: "task.fail" })\` → prior failures on similar work?
+   - \`eh_search_events({ query: "<file>", type: "file.write" })\` → who last wrote to this file, when?
+   This often surfaces the introducing change in seconds vs hours of git blame archaeology.
+
+3. Reproduce the issue if possible (run relevant commands)
+
+4. Trace the root cause through the code using Read and Grep
+
+5. Apply a minimal, targeted fix — change as little as possible
+
+6. Verify the fix doesn't break existing tests: \`pnpm test\`
+
+7. Document your findings
 
 ## Guidelines
 
@@ -452,6 +510,7 @@ You are a debugger agent. Your job is to diagnose bugs, trace root causes, and a
 - Prefer the smallest possible fix
 - Do NOT refactor surrounding code
 - Explain WHY the bug occurred, not just what you changed
+- When you find the introducing event via \`eh_search_events\`, cite it in your fix note (timestamp + agent + tool call) so future debuggers can trust the trail
 
 ## After debugging
 
@@ -510,11 +569,26 @@ For each file found:
 
 4. **Identify skill candidates** — Detailed step-by-step procedures (e.g. "how to add a new API endpoint") could be extracted into on-demand skills that agents invoke only when needed, instead of paying the token cost on every session.
 
+## Optimization Strategy — MemPalace-Inspired Tiered Loading
+
+The goal is NOT to shrink CLAUDE.md to the smallest possible size. The goal is to **tier the content** so the always-loaded part is small while the full detail remains available on demand. MemPalace's published benchmark proved that aggressive summarization regresses retrieval by 12+ percentage points — losing the *why* costs more than it saves in tokens.
+
+Apply this 4-tier model (analogous to MemPalace's L0-L3 stack):
+
+- **L0 — Identity & Critical Rules (~50-200 tokens, always loaded in CLAUDE.md):** Project name, tech stack one-liner, hard rules ("never commit X", "always run Y before merging"). This is the only part that must always be present.
+- **L1 — Essential Architecture (~400-800 tokens, in CLAUDE.md):** Build/test/lint commands, top-level directory map, key conventions agents need on every session. Concise.
+- **L2 — Path-Scoped Rules (loaded on demand):** Detailed rules that only matter when working in specific areas → \`.claude/rules/<area>.md\` with glob frontmatter. Loaded only when an agent touches matching files.
+- **L3 — On-Demand Procedures (loaded only when invoked):** Step-by-step how-tos → \`.claude/skills/<task>.md\` with \`user-invocable: true\`. Loaded only when an agent explicitly invokes the skill.
+
+A well-tiered project pays ~600-1000 tokens per agent wake-up instead of 4000+, freeing 95%+ of the context window for actual work.
+
 ## Actions
 
 Present your analysis first, then offer these optimizations (with user approval):
 
-1. **Split large CLAUDE.md** — Move path-specific rules to \`.claude/rules/\` with appropriate glob patterns in frontmatter:
+1. **Tier the content into L0/L1/L2/L3** — restructure CLAUDE.md to keep only L0 + L1, move L2 to \`.claude/rules/\`, move L3 to \`.claude/skills/\`. Show the proposed tier assignment for each section before moving anything.
+
+2. **Split path-specific rules** into \`.claude/rules/<area>.md\` with frontmatter:
    \\\`\\\`\\\`markdown
    ---
    description: Rules for React components
@@ -523,18 +597,112 @@ Present your analysis first, then offer these optimizations (with user approval)
    [rules that only apply to UI components]
    \\\`\\\`\\\`
 
-2. **Extract procedures into skills** — Move detailed how-to procedures into \`.claude/skills/\` as on-demand skills agents can invoke when needed.
+3. **Extract procedures into skills** — Move detailed how-to procedures into \`.claude/skills/<task>/SKILL.md\` so agents only pay the token cost when they invoke the skill.
 
-3. **Deduplicate across files** — If the same information exists in multiple instruction files, consolidate into one source and reference it from others.
+4. **Deduplicate across files** — If the same information exists in CLAUDE.md, .cursorrules, AGENTS.md, etc., consolidate into one source and reference it from others.
 
-4. **Summarize verbose sections** — Replace long explanations with concise bullet points. Keep the meaning, reduce the words.
+5. **Move dated content to shared knowledge with expiration** — content like "as of Q1 2025" or "until the new auth lands in March" should NOT live in always-loaded instruction files. Move it to shared knowledge via \`eh_write_shared\` with a \`valid_until\` timestamp so it auto-expires and stops costing tokens once stale.
+
+## What NOT to do
+
+- **DO NOT summarize for the sake of brevity.** MemPalace's benchmarks (96.6% R@5 raw vs 84.2% with their AAAK lossy compression) prove summarization loses critical context. Trim filler words, but never remove the *why*.
+- **DO NOT collapse examples that show different patterns.** If three examples illustrate three distinct cases, keep all three. Only collapse examples that are redundant.
+- **DO NOT delete dated content — expire it.** Move time-bound notes to shared knowledge with \`valid_until\`. Future agents can still find expired entries with \`include_expired: true\` if needed.
 
 ## Safety
 
 - **ALWAYS create backups** — Before modifying any file, copy it to \`<filename>.backup\` in the same directory.
-- **Never delete content** — Only move content to other files. Every line removed from one file must appear in another.
-- **Report before/after** — Show estimated token savings: "CLAUDE.md: 4,200 → 2,100 tokens (saved 2,100 tokens per session)".
-- **Ask before modifying** — Present the plan and get user confirmation before making changes.
+- **Never delete content** — Only move content to other files (or to shared knowledge). Every line removed from one file must appear in another location, with the same fidelity.
+- **Report before/after with tier breakdown** — "CLAUDE.md: 4,200 → 800 tokens (L0+L1 only). Moved 2,400 tokens to .claude/rules/ (L2). Moved 800 tokens to .claude/skills/ (L3). Per-session wake-up cost: 4,200 → 800 tokens."
+- **Ask before modifying** — Present the tiered plan and get user confirmation before making changes.
+`,
+  },
+  {
+    dirName: 'eh-orchestrate',
+    content: `---
+name: eh:orchestrate
+description: "Orchestrate a plan — spawn agents, assign tasks, monitor progress, handle failures"
+user-invocable: true
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Bash
+argument-hint: "[plan name or ID] [optional: phase or task range] [optional: --agent opencode|claude-code|cursor]"
+metadata:
+  category: coordination
+  tags: orchestration, multi-agent, coordination, management
+---
+
+You are an orchestrator agent. Your job is to MANAGE a plan — spawn worker agents, assign tasks, monitor their progress, and handle failures. You do NOT implement tasks yourself.
+
+## Startup
+
+1. **Claim orchestrator** — Call \`eh_claim_orchestrator\` with your \`agent_id\` and the plan's \`plan_id\`. This is MANDATORY — without it you cannot spawn agents. Do this FIRST, every time, even if you think you already have the role.
+
+2. **Get the plan** — Call \`eh_get_plan\` to load the current plan. If the user specified a plan name or ID, use it. Otherwise use the most recent active plan.
+
+3. **Determine worker agent type** — Decide which agent CLI to use when spawning workers, in this priority order:
+   a. **User specified \`--agent\`** in the arguments (e.g. \`--agent opencode\`) → use that for all spawns
+   b. **Task specifies agent type** in plan metadata (e.g. \`[agent: opencode]\`) → use per-task
+   c. **Same as orchestrator** — if you (the orchestrator) are running as \`claude-code\`, spawn \`claude-code\` workers. If you're \`opencode\`, spawn \`opencode\`. This is the default.
+
+   Common reason to override: the user's organization requires authentication per session for one agent type but not another (e.g. claude-code needs auth but opencode doesn't).
+
+4. **Assess the scope** — The user may specify a phase ("Phase 4"), a task range ("tasks 4.1-4.5"), or nothing (work on all pending tasks). Identify which tasks to work on.
+
+5. **Identify ready tasks** — From the plan, find tasks that are:
+   - Status: \`pending\` (not claimed, not done, not failed)
+   - Dependencies satisfied: all \`blockedBy\` tasks are \`done\`
+   These are the tasks you can assign NOW.
+
+## Orchestration loop
+
+For each batch of ready tasks:
+
+1. **Spawn agents** — For each ready task, call \`eh_spawn_agent\` with:
+   - \`agent_id\`: your agent ID
+   - \`agent_type\`: the resolved agent type from step 3 (user override → task metadata → same as you)
+   - \`role\`: the role from the task (e.g. \`implementer\`, \`tester\`, \`reviewer\`)
+   - \`model\`: the model from the task metadata (e.g. \`haiku\`, \`sonnet\`, \`opus\`)
+   - \`plan_id\`: the plan ID
+   - \`task_id\`: the task ID
+   - \`prompt\`: A clear prompt telling the agent what to do. Include:
+     - The task title and description from the plan
+     - The acceptance criteria
+     - The verify command
+     - The file paths to modify
+     - Instruction to use \`/eh:work-on-plan\` skill with the specific task ID
+
+   Spawn as many parallel agents as there are independent ready tasks (up to 5 at a time to avoid overload).
+
+2. **Check messages FIRST, then status** — Every 30-60 seconds, pull worker failure notifications BEFORE polling the team status:
+   1. Call \`eh_get_messages\` — Event Horizon pushes \`⚠️ Worker X reported an error on task Y\` and \`⚠️ Worker X failed a task Y\` messages here whenever a worker fires \`agent.error\` or \`task.fail\`. You MUST read these every cycle, or you'll silently miss worker failures.
+   2. Call \`eh_get_team_status\` to check which agents are still working, which tasks changed status, any blockers.
+
+3. **Handle failures** — When you see a failure notification from step 2:
+   - Read the failure note via \`eh_get_plan\` for full context
+   - Decide: retry with same model, escalate to higher model via \`eh_retry_task\` (automatically bumps tier), reassign via \`eh_reassign_task\`, or take over the task yourself if all retries exhausted
+   - If retrying, spawn a new agent for the retried task
+
+4. **Unblock next phase** — When all tasks in a dependency group complete, identify newly-unblocked tasks and spawn agents for them.
+
+## Completion
+
+When all requested tasks are done (or failed with no more retries):
+
+1. Call \`eh_get_team_status\` for a final summary
+2. Run the full verification pipeline yourself: \`pnpm lint && pnpm build && pnpm test\`
+3. If verification fails, identify which task's changes caused the failure and spawn a debugger agent to fix it
+4. Report to the user: what completed, what failed, what needs attention
+5. If the user asked to commit, stage the changes, commit with a descriptive message, and push
+
+## Rules
+
+- **Prefer spawning over doing** — Your primary job is to spawn worker agents and coordinate. Only implement tasks yourself as a fallback when: (a) spawning fails due to auth/permission errors, (b) all model tiers fail to load, (c) there's a single trivial task where spawn overhead isn't justified, or (d) the user explicitly asks you to do the work. When you do fall back to implementing, use \`/eh:work-on-plan\` with the specific task ID.
+- **Always claim orchestrator first** — Call \`eh_claim_orchestrator\` before doing anything else. Every time. Even if you think you already have the role.
+- **Spawn in parallel** — Independent tasks should be assigned to separate agents simultaneously. Don't serialize work that can be parallelized.
+- **Respect the plan's roles** — If a task says \`[role: tester]\`, spawn the agent with role \`tester\`. Don't make every agent an implementer.
+- **Use the plan's model recommendations** — If a task says \`<!-- model: haiku -->\`, pass \`model: haiku\` to \`eh_spawn_agent\`. The ModelTierManager will override if it has better data.
+- **Communicate with workers** — Use \`eh_send_message\` to notify agents of relevant changes (e.g. "task 2.1 is done, you can start 2.2 now").
+- **Update task statuses** — Call \`eh_update_task\` to mark tasks as they progress. Workers should do this themselves, but verify via \`eh_get_team_status\`.
 `,
   },
 ];

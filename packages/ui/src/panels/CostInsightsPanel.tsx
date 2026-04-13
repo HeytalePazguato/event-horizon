@@ -20,9 +20,20 @@ export interface CostInsightsData {
   modelEfficiency: Record<string, { successRate: number; avgCost: number; attempts: number }>;
 }
 
+export interface ContextLayerBreakdown {
+  systemPrompt: number;
+  conversationHistory: number;
+  toolResults: number;
+  cachedTokens: number;
+  totalUsed: number;
+  contextWindowSize: number;
+  usageRatio: number;
+}
+
 export interface CostInsightsPanelProps {
   insights: CostInsightsData | null;
   recommendations: string[];
+  contextLayers?: Record<string, ContextLayerBreakdown> | null;
   onAddToSharedKnowledge?: (file: string) => void;
 }
 
@@ -65,17 +76,19 @@ const Section: FC<{ title: string; children: React.ReactNode; count?: number }> 
 
 // ── Panel ──────────────────────────────────────────────────────────────────
 
-export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recommendations, onAddToSharedKnowledge }) => {
+export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recommendations, contextLayers, onAddToSharedKnowledge }) => {
   const [expandedDup, setExpandedDup] = useState<string | null>(null);
 
   const agentCacheEntries = insights ? Object.entries(insights.cacheHitByAgent) : [];
   const compactionEntries = insights ? Object.entries(insights.compactionFrequency) : [];
   const modelEntries = insights ? Object.entries(insights.modelEfficiency) : [];
+  const contextLayerEntries = contextLayers ? Object.entries(contextLayers) : [];
 
   // Show empty state when there's no meaningful data at all
   const hasData = agentCacheEntries.length > 0 || compactionEntries.length > 0
     || modelEntries.length > 0 || (insights?.duplicateReads?.length ?? 0) > 0
-    || (insights?.anomalies?.length ?? 0) > 0 || recommendations.length > 0;
+    || (insights?.anomalies?.length ?? 0) > 0 || recommendations.length > 0
+    || contextLayerEntries.length > 0;
 
   if (!insights || !hasData) {
     return (
@@ -96,6 +109,54 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
 
   return (
     <div style={{ padding: sizes.spacing.lg, fontFamily: fonts.mono, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+
+      {/* ── Context Layers (MemPalace-inspired L0-L3 breakdown) ────────── */}
+      {contextLayerEntries.length > 0 && (
+        <Section title="Context Layers" count={contextLayerEntries.length}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.sm }}>
+            {contextLayerEntries.map(([agentId, layer]) => {
+              const total = layer.totalUsed;
+              const window = layer.contextWindowSize;
+              const usedK = Math.round(total / 1000);
+              const windowK = Math.round(window / 1000);
+              const usagePct = Math.round(layer.usageRatio * 100);
+              const usageColor = layer.usageRatio < 0.5 ? '#40a060' : layer.usageRatio < 0.8 ? '#cc8833' : '#cc4444';
+
+              // Widths for stacked bar segments (proportional to total used)
+              const barTotal = layer.systemPrompt + layer.conversationHistory + layer.toolResults;
+              const sysPct = barTotal > 0 ? (layer.systemPrompt / barTotal) * 100 : 0;
+              const convPct = barTotal > 0 ? (layer.conversationHistory / barTotal) * 100 : 0;
+              const toolPct = barTotal > 0 ? (layer.toolResults / barTotal) * 100 : 0;
+
+              return (
+                <div key={agentId} style={{ marginBottom: sizes.spacing.xs }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                    <span style={{ fontSize: sizes.text.sm, color: colors.text.primary, maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {agentId.slice(0, 24)}
+                    </span>
+                    <span style={{ fontSize: sizes.text.sm, color: usageColor, fontWeight: 600 }}>
+                      {usedK}k / {windowK}k ({usagePct}%)
+                    </span>
+                  </div>
+                  {/* Stacked bar */}
+                  <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+                    {sysPct > 0 && <div style={{ width: `${sysPct}%`, background: '#2a4a7f' }} title={`System: ${Math.round(layer.systemPrompt / 1000)}k`} />}
+                    {convPct > 0 && <div style={{ width: `${convPct}%`, background: '#2a7f6f' }} title={`Conversation: ${Math.round(layer.conversationHistory / 1000)}k`} />}
+                    {toolPct > 0 && <div style={{ width: `${toolPct}%`, background: '#7f6f2a' }} title={`Tools: ${Math.round(layer.toolResults / 1000)}k`} />}
+                  </div>
+                  {/* Legend */}
+                  <div style={{ display: 'flex', gap: sizes.spacing.md, marginTop: 3, fontSize: sizes.text.xs, color: colors.text.dim }}>
+                    <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#2a4a7f', marginRight: 3, verticalAlign: 'middle' }} />System</span>
+                    <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#2a7f6f', marginRight: 3, verticalAlign: 'middle' }} />Conversation</span>
+                    <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#7f6f2a', marginRight: 3, verticalAlign: 'middle' }} />Tools</span>
+                    {layer.cachedTokens > 0 && <span style={{ color: '#666' }}>Cached: {Math.round(layer.cachedTokens / 1000)}k</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
 
       {/* ── Recommendations ──────────────────────────────────────────────── */}
       {recommendations.length > 0 && (

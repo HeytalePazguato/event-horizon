@@ -32,9 +32,27 @@ export interface AgentSidebarProps {
   plans?: PlanSummary[];
   selectedPlanId?: string | null;
   onSelectPlan?: (id: string) => void;
+  /** Map of planId → orchestrator agentId — used to render ★ ORCH badge. */
+  orchestratorMap?: Record<string, string>;
+  /** Map of agentId → role (e.g. "implementer") — used to render role badge. */
+  agentRoleMap?: Record<string, string>;
 }
 
-export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, plans = [], selectedPlanId, onSelectPlan }) => {
+// ── Role badge colors (matches Roles tab conventions) ──
+const roleColors: Record<string, { bg: string; fg: string }> = {
+  implementer: { bg: '#1e4030', fg: '#90d898' },
+  reviewer:    { bg: '#3a2a4a', fg: '#c8a4e8' },
+  tester:      { bg: '#2a3a4a', fg: '#a4c8e8' },
+  researcher:  { bg: '#4a3a20', fg: '#e8c88a' },
+  planner:     { bg: '#2a4a3a', fg: '#90d8b8' },
+  debugger:    { bg: '#4a2a2a', fg: '#e8a4a4' },
+};
+
+function roleBadgeStyle(role: string): { bg: string; fg: string } {
+  return roleColors[role.toLowerCase()] ?? { bg: '#2a3a2a', fg: '#a0b8a8' };
+}
+
+export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, plans = [], selectedPlanId, onSelectPlan, orchestratorMap = {}, agentRoleMap = {} }) => {
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
   const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
   const setSelectedAgent = useCommandCenterStore((s) => s.setSelectedAgent);
@@ -43,6 +61,9 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, plans
 
   const groups = groupAgentsByWorkspace(agents, agentStates);
   const isAllSelected = singularitySelected || (!selectedAgentId && agents.length > 0);
+
+  // Derive unique set of orchestrator agent IDs across all plans
+  const orchestratorAgentIdSet = new Set(Object.values(orchestratorMap));
 
   // Group plans by status
   const activePlans = plans.filter((p) => p.status === 'active');
@@ -134,6 +155,9 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, plans
 
                 {group.agents.map((a) => {
                   const isSelected = selectedAgentId === a.id;
+                  const isOrchestrator = orchestratorAgentIdSet.has(a.id);
+                  const role = agentRoleMap[a.id];
+                  const roleStyle = role ? roleBadgeStyle(role) : null;
                   return (
                     <div
                       key={a.id}
@@ -157,8 +181,49 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, plans
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
                         }}>
-                          {a.name}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}</span>
+                          {isOrchestrator && (
+                            <span
+                              title="Orchestrator — manages this plan and spawns worker agents"
+                              style={{
+                                fontSize: 8,
+                                lineHeight: 1,
+                                padding: '2px 4px',
+                                background: '#2a4a20',
+                                color: '#f0d890',
+                                border: '1px solid #5a6a20',
+                                borderRadius: 2,
+                                letterSpacing: '0.05em',
+                                fontWeight: 700,
+                                flexShrink: 0,
+                              }}
+                            >
+                              {'\u2605'} ORCH
+                            </span>
+                          )}
+                          {role && roleStyle && (
+                            <span
+                              title={`Role: ${role}`}
+                              style={{
+                                fontSize: 8,
+                                lineHeight: 1,
+                                padding: '2px 4px',
+                                background: roleStyle.bg,
+                                color: roleStyle.fg,
+                                borderRadius: 2,
+                                letterSpacing: '0.05em',
+                                fontWeight: 600,
+                                textTransform: 'uppercase',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {role}
+                            </span>
+                          )}
                         </div>
                         {a.cwd && (
                           <div style={{

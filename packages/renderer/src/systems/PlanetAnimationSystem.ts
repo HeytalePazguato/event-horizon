@@ -14,6 +14,8 @@ export interface AnimatedPlanet {
   __errorGlow?: Graphics & { alpha: number; visible: boolean };
   __waitingRing?: Container & { alpha: number; visible: boolean; scale: { set: (v: number) => void } };
   __heartbeatRing?: Graphics & { alpha: number; visible: boolean; scale: { set: (v: number) => void }; tint: number };
+  __contextGauge?: Graphics & { visible: boolean; alpha: number; clear: () => Graphics; arc: (x: number, y: number, r: number, start: number, end: number, anti?: boolean) => Graphics; stroke: (opts: { width: number; color: number; alpha: number }) => Graphics };
+  __contextUsage?: number;
   __radius?: number;
   __compactionStartTime?: number;
   /** Spawn animation progress: 0 (just spawned) to 1 (fully materialized). */
@@ -33,6 +35,7 @@ export interface PlanetAnimationContext {
   isolatedAgentId: string | null;
   heartbeatStatuses?: Record<string, string>;
   compactingAgentIds?: Record<string, boolean>;
+  contextUsage?: Record<string, number>;
 }
 
 /** Animate all planets — pulse, thinking ring, error glow, waiting ring. */
@@ -169,6 +172,46 @@ export function animatePlanets(planets: AnimatedPlanet[], ctx: PlanetAnimationCo
         hb.alpha = 0.15;
       } else {
         hb.visible = false;
+      }
+    }
+
+    // Context fuel gauge — 270° arc showing context window usage
+    const cg = p.__contextGauge;
+    const usage = ctx.contextUsage?.[agentId] ?? p.__contextUsage ?? 0;
+    if (cg) {
+      if (usage > 0) {
+        cg.visible = true;
+        const r = p.__radius ?? 20;
+        const gaugeR = r * 1.4;
+        const maxAngle = Math.PI * 1.5; // 270 degrees
+        const fillAngle = maxAngle * Math.min(1, usage);
+        // Start at bottom-left, sweep clockwise
+        const startAngle = Math.PI * 0.75; // 135° (bottom-left gap)
+
+        // Color: cyan (<50%) → amber (50-80%) → red (≥80%)
+        let gaugeColor: number;
+        if (usage < 0.5) gaugeColor = 0x44ddff;      // cyan
+        else if (usage < 0.8) gaugeColor = 0xffaa44;  // amber
+        else gaugeColor = 0xff4444;                    // red
+
+        cg.clear();
+        // Background track (dim)
+        cg.arc(0, 0, gaugeR, startAngle, startAngle + maxAngle)
+          .stroke({ width: 2, color: 0x333344, alpha: 0.3 });
+        // Filled arc
+        if (fillAngle > 0.01) {
+          cg.arc(0, 0, gaugeR, startAngle, startAngle + fillAngle)
+            .stroke({ width: 3, color: gaugeColor, alpha: 0.7 });
+        }
+
+        // Critical pulse when >90%
+        if (usage > 0.9) {
+          cg.alpha = 0.7 + 0.3 * Math.sin(t * 6);
+        } else {
+          cg.alpha = 1;
+        }
+      } else {
+        cg.visible = false;
       }
     }
   }

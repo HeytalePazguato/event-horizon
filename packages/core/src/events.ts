@@ -31,6 +31,15 @@ export interface AgentEvent {
   type: AgentEventType;
   timestamp: number;
   payload: Record<string, unknown>;
+  /** Workspace identifier — hierarchical partition for event filtering. Set from agent's cwd or VS Code workspace folder. */
+  workspace?: string;
+  /** Event category — derived from event type prefix: 'agent', 'task', 'tool', 'file', 'message', 'data'. */
+  category?: string;
+}
+
+/** Derive event category from the dot-namespaced event type (e.g. 'tool.call' → 'tool'). */
+export function deriveEventCategory(eventType: string): string {
+  return eventType.split('.')[0];
 }
 
 /** All agent types for validation. */

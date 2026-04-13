@@ -156,8 +156,14 @@ function App() {
   const [compactingAgentIds, setCompactingAgentIds] = useState<Record<string, boolean>>({});
   const [costInsights, setCostInsights] = useState<unknown>(null);
   const [costRecommendations, setCostRecommendations] = useState<string[]>([]);
+  const [contextLayers, setContextLayers] = useState<Record<string, unknown> | null>(null);
   const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
   const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
+  const [orchestratorMap, setOrchestratorMap] = useState<Record<string, string>>({});
+  const [agentRoleMap, setAgentRoleMap] = useState<Record<string, string>>({});
+  const [persistedSearchResults, setPersistedSearchResults] = useState<import('@event-horizon/ui').PersistedSearchResult[] | null>(null);
+  const [taskExecutionEvents, setTaskExecutionEvents] = useState<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>(null);
+  const [wormholes, setWormholes] = useState<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>([]);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -189,6 +195,7 @@ function App() {
   const exportRequestedAt    = useCommandCenterStore((s) => s.exportRequestedAt);
   const screenshotRequestedAt = useCommandCenterStore((s) => s.screenshotRequestedAt);
   const viewMode             = useCommandCenterStore((s) => s.viewMode);
+  const settingsHydrated     = useCommandCenterStore((s) => s.settingsHydrated);
   const fontSize             = useCommandCenterStore((s) => s.fontSize);
 
   // ── Refs ──
@@ -216,8 +223,12 @@ function App() {
     setHeartbeatStatuses,
     setTraceSpans, setTraceAggregate,
     setMcpServers, setCompactingAgentIds,
-    setSpawnBeams, setOrchestratorAgentIds,
+    setSpawnBeams, setOrchestratorAgentIds, setOrchestratorMap, setAgentRoleMap,
     setCostInsights, setCostRecommendations,
+    setContextLayers,
+    setPersistedSearchResults,
+    setTaskExecutionEvents,
+    setWormholes,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -513,8 +524,9 @@ function App() {
   // ── Render ──
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 380, flex: 1, background: 'transparent', zoom: fontSize === 'small' ? 0.87 : fontSize === 'large' ? 1.15 : 1 }}>
-      {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state */}
-      <div style={{ flex: 1, display: viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
+      {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state.
+           Also hidden until settings have hydrated, so user's defaultView preference wins over the initial default. */}
+      <div style={{ flex: 1, display: settingsHydrated && viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
         <div ref={panelSize.ref} data-tour="universe" style={{ flex: 1, minHeight: 0, position: 'relative', background: 'transparent' }}>
           <RandomStarfield />
           <Universe
@@ -552,28 +564,40 @@ function App() {
             spawnBeams={spawnBeams}
             knowledgeLinks={knowledgeLinksComputed}
             agentTypesMap={agentTypesMap}
+            contextUsage={contextLayers ? Object.fromEntries(
+              Object.entries(contextLayers).map(([id, layer]) => [id, (layer as { usageRatio?: number }).usageRatio ?? 0])
+            ) : undefined}
+            wormholes={wormholes}
           />
         </div>
         {showOnboarding && <OnboardingCard onDismiss={() => setOnboardingDismissed(true)} onConnect={toggleConnect} />}
         <CommandCenter role={selectedAgentRole} knowledgeCount={knowledgeCount} recentKnowledge={recentKnowledge} budgetInfo={budgetInfo} onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace} onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill} />
       </div>
 
-      {viewMode === 'operations' && (
+      {settingsHydrated && viewMode === 'operations' && (
         <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
           plan={planTasksWithRecommendations} plans={plans} selectedPlanId={selectedPlanId}
+          orchestratorMap={orchestratorMap} agentRoleMap={agentRoleMap}
           roles={roles} roleAssignments={roleAssignments} agentProfiles={agentProfiles}
           onAssignRole={handleAssignRole} onCreateRole={handleCreateRole} onEditRole={handleEditRole} onDeleteRole={handleDeleteRole}
           onSelectPlan={(id) => { setSelectedPlanId(id); vscodeApi?.postMessage({ type: 'request-plan', planId: id }); }}
           onOpenSkill={handleOpenSkill} onCreateSkill={toggleCreateSkill} onOpenMarketplace={toggleMarketplace}
           onMoveSkill={handleMoveSkill} onDuplicateSkill={handleDuplicateSkill}
           knowledgeWorkspace={knowledgeWorkspace} knowledgePlan={knowledgePlan} knowledgePlanName={plan?.name}
-          onKnowledgeAdd={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-add', key, value, scope })}
-          onKnowledgeEdit={(key, value, scope) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope })}
+          onKnowledgeAdd={(key, value, scope, validUntil, tier) => vscodeApi?.postMessage({ type: 'knowledge-add', key, value, scope, validUntil, tier })}
+          onKnowledgeEdit={(key, value, scope, validUntil, tier) => vscodeApi?.postMessage({ type: 'knowledge-edit', key, value, scope, validUntil, tier })}
           onKnowledgeDelete={(key, scope) => vscodeApi?.postMessage({ type: 'knowledge-delete', key, scope })}
           traceSpans={traceSpans as import('@event-horizon/ui').OperationsViewProps['traceSpans']}
           traceAggregate={traceAggregate}
-          costInsights={costInsights as import('@event-horizon/ui').CostInsightsData | null}
+          costInsights={costInsights as CostInsightsData | null}
           costRecommendations={costRecommendations}
+          contextLayers={contextLayers as Record<string, import('@event-horizon/ui').ContextLayerBreakdown> | null}
+          onPersistedSearch={(query, opts) => vscodeApi?.postMessage({ type: 'search-events', query, ...(opts ?? {}) })}
+          persistedSearchResults={persistedSearchResults}
+          onClearPersistedSearch={() => setPersistedSearchResults(null)}
+          onViewExecution={(taskId, agentId, claimTime, completeTime) => vscodeApi?.postMessage({ type: 'request-task-execution', taskId, agentId, claimTime, completeTime })}
+          taskExecution={taskExecutionEvents as { taskId: string; events: import('@event-horizon/ui').TaskExecutionEvent[] } | null}
+          onCloseExecution={() => setTaskExecutionEvents(null)}
           onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
       )}
 

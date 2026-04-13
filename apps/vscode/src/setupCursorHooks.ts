@@ -63,6 +63,8 @@ function isEhHook(cmd: string): boolean {
 
 /** True if a hook command matches the current expected format exactly. */
 function isCurrentEhHook(cmd: string): boolean {
+  // Legacy hooks with ?token= are not current (v2.0.0 breaking change).
+  if (cmd.includes('?token=')) return false;
   return cmd === buildEhCommand();
 }
 
@@ -181,10 +183,11 @@ export async function setupCursorHooks(): Promise<void> {
  */
 export async function registerCursorMcpServer(): Promise<void> {
   const mcpJsonPath = path.join(os.homedir(), '.cursor', 'mcp.json');
-  const token = getAuthToken();
   const port = getPort();
-  const tokenParam = token ? `?token=${token}` : '';
-  const mcpUrl = `http://127.0.0.1:${port}/mcp${tokenParam}`;
+  // v2.0.0: MCP URL no longer carries ?token=. Cursor's MCP client discovers
+  // auth via RFC 9728 .well-known/oauth-protected-resource and obtains JWT
+  // access tokens through OAuth 2.1 client_credentials flow.
+  const mcpUrl = `http://127.0.0.1:${port}/mcp`;
 
   let config: Record<string, unknown> = {};
   try {

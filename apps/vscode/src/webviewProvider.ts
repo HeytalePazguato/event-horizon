@@ -12,7 +12,8 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler, sharedKnowledge } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry } from './eventServer.js';
+import { getDatabase } from './extension.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -322,14 +323,36 @@ function wireUniverseWebview(
       void webview.postMessage({ type: 'init-state', agents, metrics });
     }
 
+    // ── Send historical events from persistence for replay ──
+    const db = getDatabase();
+    if (db) {
+      try {
+        const since = Date.now() - 24 * 60 * 60 * 1000; // last 24 hours
+        const historicalEvents = db.queryEvents({ since, limit: 500 });
+        const sessions = db.getSessions(since);
+        if (historicalEvents.length > 0) {
+          void webview.postMessage({
+            type: 'event-history',
+            events: historicalEvents,
+            sessions,
+          });
+        }
+      } catch { /* persistence not ready yet — skip history */ }
+    }
+
     const savedMedals = context.globalState.get<{
       unlockedAchievements: string[];
       achievementTiers: Record<string, number>;
       achievementCounts: Record<string, number>;
     }>('medals');
-    if (savedMedals?.unlockedAchievements?.length) {
-      void webview.postMessage({ type: 'init-medals', ...savedMedals });
-    }
+    // Always send init-medals (even empty) so the webview knows medals are hydrated and achievement
+    // triggers can fire. Otherwise users with zero medals would never see any toasts.
+    void webview.postMessage({
+      type: 'init-medals',
+      unlockedAchievements: savedMedals?.unlockedAchievements ?? [],
+      achievementTiers: savedMedals?.achievementTiers ?? {},
+      achievementCounts: savedMedals?.achievementCounts ?? {},
+    });
 
     // Read from VS Code native settings (preferred) with globalState fallback for
     // settings not exposed in contributes.configuration (e.g. tourCompleted).
@@ -359,6 +382,26 @@ function wireUniverseWebview(
         })
       );
     }
+
+    // Hydrate orchestrator + role maps so the Agents sidebar can render badges
+    const orchIds: Record<string, boolean> = {};
+    for (const p of planBoardManager.getAllPlans()) {
+      if (p.orchestratorAgentId && p.status === 'active') {
+        orchIds[p.orchestratorAgentId] = true;
+      }
+    }
+    void webview.postMessage({
+      type: 'orchestrator-update',
+      orchestratorAgentIds: orchIds,
+      orchestratorMap: planBoardManager.getOrchestratorMap(),
+    });
+    void webview.postMessage({
+      type: 'roles-update',
+      roles: roleManager.getAllRoles(),
+      assignments: roleManager.getAllAssignments(),
+      profiles: agentProfiler.getAllProfiles(),
+      agentRoleMap: spawnRegistry.getAgentRoleMap(),
+    });
 
     // Hydrate all plans from persisted state
     const allPlans = planBoardManager.getAllPlans();
@@ -556,6 +599,7 @@ function wireUniverseWebview(
         roles: roleManager.getAllRoles(),
         assignments: roleManager.getAllAssignments(),
         profiles: agentProfiler.getAllProfiles(),
+        agentRoleMap: spawnRegistry.getAgentRoleMap(),
       });
     } else if (msg?.type === 'assign-role') {
       const { roleId, agentType } = msg as { roleId: string; agentType: string };
@@ -583,11 +627,67 @@ function wireUniverseWebview(
         }
       });
     } else if (msg?.type === 'knowledge-add') {
-      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+      const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
+      const tier = (msg.tier === 'L0' || msg.tier === 'L1' || msg.tier === 'L2') ? msg.tier : undefined;
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil, tier);
     } else if (msg?.type === 'knowledge-edit') {
-      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user');
+      const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
+      const tier = (msg.tier === 'L0' || msg.tier === 'L1' || msg.tier === 'L2') ? msg.tier : undefined;
+      sharedKnowledge.write(msg.key as string, msg.value as string, msg.scope as 'workspace' | 'plan', 'user', 'user', undefined, validUntil, tier);
     } else if (msg?.type === 'knowledge-delete') {
       sharedKnowledge.delete(msg.key as string, msg.scope as 'workspace' | 'plan', 'user');
+    } else if (msg?.type === 'search-events') {
+      // Persistence-backed event search with MemPalace-style sanitization
+      void (async () => {
+        try {
+          const ext = await import('./extension.js');
+          const db = ext.getDatabase();
+          if (!db) {
+            void webview.postMessage({ type: 'search-results', query: msg.query as string, events: [], error: 'Persistence disabled' });
+            return;
+          }
+          const { EventSearchEngine } = await import('./eventSearch.js');
+          const engine = new EventSearchEngine(db);
+          const opts: { agentId?: string; type?: string; since?: number; limit?: number } = {
+            limit: typeof msg.limit === 'number' ? msg.limit : 100,
+          };
+          if (msg.agentId) opts.agentId = msg.agentId as string;
+          if (msg.type_filter) opts.type = msg.type_filter as string;
+          if (typeof msg.since === 'number') opts.since = msg.since;
+          const events = engine.search(msg.query as string, opts);
+          void webview.postMessage({ type: 'search-results', query: msg.query as string, events });
+        } catch (err) {
+          void webview.postMessage({ type: 'search-results', query: msg.query as string, events: [], error: String(err) });
+        }
+      })();
+    } else if (msg?.type === 'request-task-execution') {
+      // Drill-down: get all events during the task's execution window.
+      // NOTE: we intentionally do NOT filter by agentId. The plan's assigneeId is the EH-assigned
+      // agent identifier (e.g. "claude-code-main") while persisted events carry the Claude Code
+      // session UUID — those IDs don't match. Filtering by time window + searching the task ID in
+      // payloads is the reliable approach.
+      void (async () => {
+        try {
+          const ext = await import('./extension.js');
+          const db = ext.getDatabase();
+          if (!db) {
+            void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: 'Persistence disabled — enable eventHorizon.persistence.enabled to see execution replay.' });
+            return;
+          }
+          // Widen the time window a bit — notes may have been added well after the actual work
+          const padMs = 5 * 60 * 1000; // 5 minute pad on each side
+          const since = typeof msg.claimTime === 'number' ? msg.claimTime - padMs : Date.now() - 24 * 60 * 60 * 1000;
+          const until = typeof msg.completeTime === 'number' ? msg.completeTime + padMs : Date.now();
+          const events = db.queryEvents({
+            since,
+            until,
+            limit: 500,
+          });
+          void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events });
+        } catch (err) {
+          void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: String(err) });
+        }
+      })();
     }
   });
 }

@@ -5,7 +5,7 @@
  */
 
 import type { FC } from 'react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 import { useCommandCenterStore } from './store.js';
@@ -49,6 +49,10 @@ export interface OperationsViewProps {
   plans?: PlanSummary[];
   selectedPlanId?: string | null;
   onSelectPlan?: (id: string) => void;
+  /** Map of planId → orchestrator agentId — used to render ★ ORCH badge. */
+  orchestratorMap?: Record<string, string>;
+  /** Map of agentId → role (e.g. "implementer", "reviewer") — used to render role badge. */
+  agentRoleMap?: Record<string, string>;
   onOpenSkill?: (filePath: string) => void;
   onCreateSkill?: () => void;
   onOpenMarketplace?: () => void;
@@ -64,14 +68,27 @@ export interface OperationsViewProps {
   knowledgeWorkspace?: KnowledgeEntry[];
   knowledgePlan?: KnowledgeEntry[];
   knowledgePlanName?: string;
-  onKnowledgeAdd?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
-  onKnowledgeEdit?: (key: string, value: string, scope: 'workspace' | 'plan') => void;
+  onKnowledgeAdd?: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: import('./panels/KnowledgePanel.js').KnowledgeTier) => void;
+  onKnowledgeEdit?: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: import('./panels/KnowledgePanel.js').KnowledgeTier) => void;
   onKnowledgeDelete?: (key: string, scope: 'workspace' | 'plan') => void;
   traceSpans?: TraceSpanView[];
   traceAggregate?: Record<string, number>;
   costInsights?: CostInsightsData | null;
   costRecommendations?: string[];
+  contextLayers?: Record<string, import('./panels/CostInsightsPanel.js').ContextLayerBreakdown> | null;
   onAddToSharedKnowledge?: (file: string) => void;
+  /** Trigger a persistence-backed event search (Phase 4.2). */
+  onPersistedSearch?: (query: string, opts?: { agentId?: string; type?: string; since?: number }) => void;
+  /** Results from the last persisted search — when non-null, replaces live log feed. */
+  persistedSearchResults?: import('./panels/LogsPanel.js').PersistedSearchResult[] | null;
+  /** Callback to clear persisted search and return to live mode. */
+  onClearPersistedSearch?: () => void;
+  /** Trigger an execution drill-down for a done/failed task (Phase 4.5). */
+  onViewExecution?: (taskId: string, agentId: string, claimTime: number, completeTime: number) => void;
+  /** Events returned for the most recent drill-down request. */
+  taskExecution?: { taskId: string; events: import('./panels/PlanPanel.js').TaskExecutionEvent[] } | null;
+  /** Close the execution modal. */
+  onCloseExecution?: () => void;
 }
 
 const OPS_TOOLTIP_STYLE: React.CSSProperties = {
@@ -89,7 +106,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], onAddToSharedKnowledge }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -116,15 +133,20 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
     [agentMap],
   );
 
-  // Demo elapsed timer
+  // Demo elapsed timer — use interval, not setState during render (that was causing crashes)
   const [demoElapsed, setDemoElapsed] = useState('');
-  if (demoMode && demoStartedAt) {
-    const secs = Math.floor((Date.now() - demoStartedAt) / 1000);
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    const elapsed = `${m}:${s.toString().padStart(2, '0')}`;
-    if (elapsed !== demoElapsed) setTimeout(() => setDemoElapsed(elapsed), 0);
-  }
+  useEffect(() => {
+    if (!demoMode || !demoStartedAt) { setDemoElapsed(''); return; }
+    const tick = () => {
+      const secs = Math.floor((Date.now() - demoStartedAt) / 1000);
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      setDemoElapsed(`${m}:${s.toString().padStart(2, '0')}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [demoMode, demoStartedAt]);
 
   return (
     <div style={{
@@ -138,7 +160,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* Left sidebar */}
-        <AgentSidebar agents={agents} agentStates={agentStates} plans={plans} selectedPlanId={selectedPlanId} onSelectPlan={(id) => { onSelectPlan?.(id); setActiveTab('plan'); }} />
+        <AgentSidebar agents={agents} agentStates={agentStates} plans={plans} selectedPlanId={selectedPlanId} onSelectPlan={(id) => { onSelectPlan?.(id); setActiveTab('plan'); }} orchestratorMap={orchestratorMap} agentRoleMap={agentRoleMap} />
 
         {/* Right: tabs + content */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
@@ -242,7 +264,11 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
                   )}
                   {activityView === 'logs' && (
                     <div style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>
-                      <LogsPanel />
+                      <LogsPanel
+                        onPersistedSearch={onPersistedSearch}
+                        persistedResults={persistedSearchResults}
+                        onClearPersistedSearch={onClearPersistedSearch}
+                      />
                     </div>
                   )}
                 </div>
@@ -254,7 +280,12 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               </div>
             )}
             {activeTab === 'plan' && (
-              <PlanPanel plan={plan ?? { loaded: false }} />
+              <PlanPanel
+                plan={plan ?? { loaded: false }}
+                onViewExecution={onViewExecution}
+                taskExecution={taskExecution}
+                onCloseExecution={onCloseExecution}
+              />
             )}
             {activeTab === 'roles' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -262,7 +293,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               </div>
             )}
             {activeTab === 'costs' && (
-              <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} onAddToSharedKnowledge={onAddToSharedKnowledge} />
+              <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} contextLayers={contextLayers} onAddToSharedKnowledge={onAddToSharedKnowledge} />
             )}
             {activeTab === 'knowledge' && (
               <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

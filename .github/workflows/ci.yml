@@ -346,3 +346,10 @@ jobs:
         run: cd apps/vscode && npx @vscode/vsce publish --no-dependencies --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX
+        if: steps.tag.outputs.TAG_EXISTS != 'true'
+        continue-on-error: true
+        run: cd apps/vscode && npx ovsx publish --no-dependencies --packagePath *.vsix
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}

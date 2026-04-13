@@ -21,6 +21,12 @@ export interface SpawnOpts {
   envVars?: Record<string, string>;
   /** When 'worktree', create a git worktree before spawning and set cwd to it. */
   isolation?: 'none' | 'worktree';
+  /**
+   * Interactive mode: spawn without `-p` so the user can type follow-up prompts
+   * and the agent responds. Default false — batch mode via `-p` is correct for
+   * orchestrated work.
+   */
+  interactive?: boolean;
 }
 
 export interface SpawnResult {
@@ -47,7 +53,11 @@ export interface SpawnedAgentInfo {
   role: string;
   taskId: string;
   spawnedAt: number;
+  /** Underlying child process (when spawned via spawnWithTerminal). Used for real SIGTERM/SIGKILL. */
+  process?: cp.ChildProcess;
   pid?: number;
+  /** True when spawned in interactive REPL mode — excluded from the silence watchdog. */
+  interactive?: boolean;
 }
 
 // ── Utility: shell-safe prompt handling ──────────────────────────────────────
@@ -101,25 +111,153 @@ async function commandExists(cmd: string): Promise<boolean> {
   });
 }
 
+// ── Helper: spawn a child process wired to a VS Code pseudoterminal ─────────
+
+export interface SpawnedTerminalHandle {
+  terminal: vscode.Terminal;
+  process: cp.ChildProcess;
+  pid?: number;
+}
+
+/**
+ * Spawn a shell command and pipe its stdout/stderr into a VS Code terminal
+ * via a Pseudoterminal. Returns the terminal AND the underlying ChildProcess
+ * so the spawn registry can kill the real PID (not just dispose the terminal).
+ *
+ * The command is passed to a shell (sh -c on Unix, cmd.exe /c on Windows) so
+ * existing escaping conventions (temp prompt files, `$(cat ...)`, PowerShell
+ * `[System.IO.File]::ReadAllText(...)`) keep working.
+ */
+export function spawnWithTerminal(
+  shellCommand: string,
+  opts: {
+    cwd?: string;
+    env: NodeJS.ProcessEnv;
+    name: string;
+    onExit?: (code: number | null) => void;
+  },
+): SpawnedTerminalHandle {
+  const writeEmitter = new vscode.EventEmitter<string>();
+  const closeEmitter = new vscode.EventEmitter<number | void>();
+
+  const child = cp.spawn(shellCommand, {
+    cwd: opts.cwd,
+    env: opts.env,
+    shell: true,
+    windowsHide: true,
+  });
+
+  const toTerm = (buf: Buffer | string): string => {
+    // VS Code pseudoterminal expects \r\n line endings
+    const s = typeof buf === 'string' ? buf : buf.toString('utf8');
+    return s.replace(/\r?\n/g, '\r\n');
+  };
+
+  child.stdout?.on('data', (d) => writeEmitter.fire(toTerm(d)));
+  child.stderr?.on('data', (d) => writeEmitter.fire(toTerm(d)));
+
+  child.on('error', (err) => {
+    writeEmitter.fire(`\r\n\u001b[31m[spawn error] ${err.message}\u001b[0m\r\n`);
+  });
+
+  child.on('exit', (code) => {
+    writeEmitter.fire(`\r\n\u001b[90m[process exited with code ${code ?? 'null'}]\u001b[0m\r\n`);
+    closeEmitter.fire(code ?? 0);
+    opts.onExit?.(code);
+  });
+
+  const pty: vscode.Pseudoterminal = {
+    onDidWrite: writeEmitter.event,
+    onDidClose: closeEmitter.event,
+    open: () => { /* nothing — data flows from child */ },
+    close: () => {
+      // User closed the terminal — kill the process so it doesn't linger
+      if (!child.killed && child.exitCode === null) {
+        try { child.kill('SIGTERM'); } catch { /* ignore */ }
+      }
+    },
+  };
+
+  const terminal = vscode.window.createTerminal({ name: opts.name, pty });
+
+  return { terminal, process: child, pid: child.pid };
+}
+
+/**
+ * Kill a child process gracefully (SIGTERM) and escalate to SIGKILL if it doesn't exit within 3s.
+ * Resolves with `true` once the process is dead, `false` if we couldn't confirm termination.
+ */
+export async function killChildProcess(child: cp.ChildProcess, timeoutMs = 3000): Promise<boolean> {
+  if (!child || child.exitCode !== null || child.killed) return true;
+
+  return new Promise<boolean>((resolve) => {
+    let resolved = false;
+    const done = (ok: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(ok);
+    };
+
+    child.once('exit', () => done(true));
+
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+
+    setTimeout(() => {
+      if (child.exitCode === null && !child.killed) {
+        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      }
+    }, timeoutMs);
+
+    // Hard deadline so we don't wait forever if neither signal is honored
+    setTimeout(() => done(child.exitCode !== null || child.killed), timeoutMs + 500);
+  });
+}
+
 // ── Spawn Registry ─────────────────────────────────────────────────────────
 
 export class SpawnRegistry {
   private backends = new Map<string, SpawnBackend>();
   private spawnedAgents = new Map<string, SpawnedAgentInfo>();
   private disposables: vscode.Disposable[] = [];
+  private changeListeners: Array<() => void> = [];
 
   constructor() {
-    // Track terminal close events
+    // Track terminal close events — also kill the process if the user closed
+    // the terminal without stopping first. Pseudoterminal.close() already
+    // sends SIGTERM, but this escalates to SIGKILL after the grace period.
     this.disposables.push(
       vscode.window.onDidCloseTerminal((terminal) => {
         for (const [agentId, info] of this.spawnedAgents) {
           if (info.terminal === terminal) {
+            if (info.process && info.process.exitCode === null && !info.process.killed) {
+              void killChildProcess(info.process).catch(() => { /* ignore */ });
+            }
             this.spawnedAgents.delete(agentId);
+            this.notifyChange();
             break;
           }
         }
       }),
     );
+  }
+
+  onChange(listener: () => void): void {
+    this.changeListeners.push(listener);
+  }
+
+  private notifyChange(): void {
+    for (const fn of this.changeListeners) {
+      try { fn(); } catch { /* ignore listener errors */ }
+    }
+  }
+
+  /** Map of agentId → role for every currently spawned agent. */
+  getAgentRoleMap(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const [agentId, info] of this.spawnedAgents) {
+      if (info.role) result[agentId] = info.role;
+    }
+    return result;
   }
 
   register(backend: SpawnBackend): void {
@@ -183,14 +321,29 @@ export class SpawnRegistry {
       }
       return { stopped: false, message: `Agent ${agentId} not found in spawn registry` };
     }
+
+    // Kill the real child process if we have one — terminal.dispose() alone
+    // does NOT terminate the underlying CLI in non-pty mode, so `claude -p`
+    // kept running and burned tokens.
+    let processKilled = true;
+    if (info.process) {
+      processKilled = await killChildProcess(info.process);
+    }
+
+    // Delegate to backend so it can do any backend-specific cleanup, then
+    // dispose the terminal as a belt-and-suspenders fallback.
     const backend = this.backends.get(info.type);
     if (backend) {
-      await backend.stop(agentId);
-    } else {
-      info.terminal.dispose();
+      try { await backend.stop(agentId); } catch { /* ignore */ }
     }
+    try { info.terminal.dispose(); } catch { /* ignore */ }
+
     this.spawnedAgents.delete(agentId);
-    return { stopped: true, message: `Agent ${agentId} stopped` };
+    this.notifyChange();
+    const msg = processKilled
+      ? `Agent ${agentId} stopped`
+      : `Agent ${agentId} stopped (process may still be running — check tasklist/ps)`;
+    return { stopped: processKilled, message: msg };
   }
 
   async getAvailableTypes(): Promise<string[]> {
@@ -213,6 +366,14 @@ export class SpawnRegistry {
 
   trackAgent(agentId: string, info: SpawnedAgentInfo): void {
     this.spawnedAgents.set(agentId, info);
+    this.notifyChange();
+  }
+
+  /** Remove an agent from the registry (used by natural-exit handlers). */
+  untrackAgent(agentId: string): void {
+    if (this.spawnedAgents.delete(agentId)) {
+      this.notifyChange();
+    }
   }
 
   /** Find terminal for a spawned agent. */
@@ -260,15 +421,25 @@ export class ClaudeCodeSpawner implements SpawnBackend {
 
   async spawn(opts: SpawnOpts): Promise<SpawnResult> {
     const agentId = `claude-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const terminalName = `\u2600\uFE0F Claude \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
+    const suffix = opts.interactive ? 'Interactive' : (opts.taskId ?? 'general');
+    const terminalName = `\u2600\uFE0F Claude \u2014 ${opts.role ?? 'Worker'} (${suffix})`;
 
     // Write prompt to temp file to avoid shell escaping issues
     const pf = await writePromptFile(opts.prompt, agentId);
 
-    // Build command — --verbose is required when using -p with --output-format stream-json
-    const parts = ['claude', '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json'];
-    // Pre-authorize tools so spawned agents can actually edit files without permission prompts
-    parts.push('--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit'));
+    // Interactive mode: omit -p / --output-format so the CLI drops into its
+    // interactive REPL. The user can then type follow-up prompts in the
+    // terminal and the agent responds.
+    const parts: string[] = ['claude'];
+    if (opts.interactive) {
+      // Pass the initial prompt as a positional arg — Claude's interactive
+      // mode seeds the conversation with it and then keeps the REPL open.
+      parts.push(pf.readFragment);
+    } else {
+      parts.push('-p', pf.readFragment, '--verbose', '--output-format', 'stream-json');
+    }
+    // Pre-authorize tools so spawned agents can actually edit files without permission prompts.
+    parts.push('--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*'));
     if (opts.model) parts.push('--model', opts.model);
     if (opts.role) {
       parts.push('--append-system-prompt', shellQuote(`You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon.`));
@@ -284,14 +455,48 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       ...opts.envVars,
     };
 
-    const terminal = vscode.window.createTerminal({
-      name: terminalName,
-      cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-      env,
-    });
+    // Interactive mode uses vscode.window.createTerminal so the terminal
+    // accepts user input naturally. We can't track the real PID in that
+    // path, but interactive users can Ctrl+C or close the terminal.
+    if (opts.interactive) {
+      const terminal = vscode.window.createTerminal({
+        name: terminalName,
+        cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        env,
+      });
+      terminal.sendText(parts.join(' ') + pf.cleanup);
+      terminal.show();
+      this.registry.trackAgent(agentId, {
+        type: this.type,
+        terminalName,
+        terminal,
+        role: opts.role ?? 'worker',
+        taskId: opts.taskId ?? '',
+        spawnedAt: Date.now(),
+        interactive: true,
+      });
+      return {
+        agentId,
+        type: this.type,
+        status: 'spawned',
+        message: `Claude Code agent spawned interactively in terminal "${terminalName}". Use the terminal to send follow-up prompts.`,
+        terminalName,
+      };
+    }
 
+    const registry = this.registry;
     const command = parts.join(' ') + pf.cleanup;
-    terminal.sendText(command);
+    const { terminal, process: child, pid } = spawnWithTerminal(command, {
+      cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      env: { ...process.env, ...env },
+      name: terminalName,
+      onExit: () => {
+        // Auto-remove from registry on natural exit (success or failure)
+        if (registry.getSpawnedAgent(agentId)) {
+          registry.untrackAgent(agentId);
+        }
+      },
+    });
 
     // Apply focus setting
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
@@ -306,6 +511,8 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       role: opts.role ?? 'worker',
       taskId: opts.taskId ?? '',
       spawnedAt: Date.now(),
+      process: child,
+      pid,
     });
 
     return {
@@ -314,21 +521,20 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       status: 'spawned',
       message: `Claude Code agent spawned in terminal "${terminalName}"`,
       terminalName,
+      pid,
     };
   }
 
-  async stop(agentId: string): Promise<void> {
-    const info = this.registry.getSpawnedAgent(agentId);
-    if (info?.terminal) {
-      info.terminal.dispose();
-    }
+  async stop(_agentId: string): Promise<void> {
+    // Real process termination is handled centrally in SpawnRegistry.stop()
+    // via killChildProcess(). Nothing to do at the backend level.
   }
 
   async resume(agentId: string, sessionId: string, prompt: string): Promise<SpawnResult> {
     const terminalName = `\u2600\uFE0F Claude \u2014 Resume (${sessionId.slice(0, 8)})`;
     const pf = await writePromptFile(prompt, agentId);
     const parts = ['claude', '--resume', sessionId, '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json',
-      '--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit')];
+      '--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*')];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -337,8 +543,17 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       ...(token ? { EH_AUTH_TOKEN: token } : {}),
     };
 
-    const terminal = vscode.window.createTerminal({ name: terminalName, env });
-    terminal.sendText(parts.join(' ') + pf.cleanup);
+    const registry = this.registry;
+    const command = parts.join(' ') + pf.cleanup;
+    const { terminal, process: child, pid } = spawnWithTerminal(command, {
+      env: { ...process.env, ...env },
+      name: terminalName,
+      onExit: () => {
+        if (registry.getSpawnedAgent(agentId)) {
+          registry.untrackAgent(agentId);
+        }
+      },
+    });
 
     this.registry.trackAgent(agentId, {
       type: this.type,
@@ -347,6 +562,8 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       role: 'worker',
       taskId: '',
       spawnedAt: Date.now(),
+      process: child,
+      pid,
     });
 
     return {
@@ -355,6 +572,7 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       status: 'spawned',
       message: `Claude Code agent resumed session ${sessionId}`,
       terminalName,
+      pid,
     };
   }
 }
@@ -399,13 +617,18 @@ export class OpenCodeSpawner implements SpawnBackend {
       ...opts.envVars,
     };
 
-    const terminal = vscode.window.createTerminal({
-      name: terminalName,
+    const registry = this.registry;
+    const command = parts.join(' ') + pf.cleanup;
+    const { terminal, process: child, pid } = spawnWithTerminal(command, {
       cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-      env,
+      env: { ...process.env, ...env },
+      name: terminalName,
+      onExit: () => {
+        if (registry.getSpawnedAgent(agentId)) {
+          registry.untrackAgent(agentId);
+        }
+      },
     });
-
-    terminal.sendText(parts.join(' ') + pf.cleanup);
 
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
     if (focusSetting === 'focus') {
@@ -419,6 +642,8 @@ export class OpenCodeSpawner implements SpawnBackend {
       role: opts.role ?? 'worker',
       taskId: opts.taskId ?? '',
       spawnedAt: Date.now(),
+      process: child,
+      pid,
     });
 
     return {
@@ -427,14 +652,12 @@ export class OpenCodeSpawner implements SpawnBackend {
       status: 'spawned',
       message: `OpenCode agent spawned in terminal "${terminalName}"`,
       terminalName,
+      pid,
     };
   }
 
-  async stop(agentId: string): Promise<void> {
-    const info = this.registry.getSpawnedAgent(agentId);
-    if (info?.terminal) {
-      info.terminal.dispose();
-    }
+  async stop(_agentId: string): Promise<void> {
+    // Real process termination handled centrally in SpawnRegistry.stop().
   }
 }
 
@@ -483,13 +706,18 @@ export class CursorSpawner implements SpawnBackend {
       ...opts.envVars,
     };
 
-    const terminal = vscode.window.createTerminal({
-      name: terminalName,
+    const registry = this.registry;
+    const command = parts.join(' ') + pf.cleanup;
+    const { terminal, process: child, pid } = spawnWithTerminal(command, {
       cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-      env,
+      env: { ...process.env, ...env },
+      name: terminalName,
+      onExit: () => {
+        if (registry.getSpawnedAgent(agentId)) {
+          registry.untrackAgent(agentId);
+        }
+      },
     });
-
-    terminal.sendText(parts.join(' ') + pf.cleanup);
 
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
     if (focusSetting === 'focus') {
@@ -503,6 +731,8 @@ export class CursorSpawner implements SpawnBackend {
       role: opts.role ?? 'worker',
       taskId: opts.taskId ?? '',
       spawnedAt: Date.now(),
+      process: child,
+      pid,
     });
 
     return {
@@ -511,13 +741,11 @@ export class CursorSpawner implements SpawnBackend {
       status: 'spawned',
       message: `Cursor agent spawned in terminal "${terminalName}"`,
       terminalName,
+      pid,
     };
   }
 
-  async stop(agentId: string): Promise<void> {
-    const info = this.registry.getSpawnedAgent(agentId);
-    if (info?.terminal) {
-      info.terminal.dispose();
-    }
+  async stop(_agentId: string): Promise<void> {
+    // Real process termination handled centrally in SpawnRegistry.stop().
   }
 }

@@ -11,12 +11,15 @@ export interface AchievementSlice {
   unlockedAchievements: string[];
   achievementCounts: Record<string, number>;
   achievementTiers: Record<string, number>;
+  /** True once init-medals has been processed. Prevents spurious toasts on startup before restored state arrives. */
+  medalsHydrated: boolean;
 
   unlockAchievement: (id: string) => void;
   incrementTieredAchievement: (id: string) => void;
   setTieredAchievementCount: (id: string, count: number) => void;
   recalibrateTieredAchievement: (id: string, count: number) => void;
   dismissToast: (instanceId: string) => void;
+  markMedalsHydrated: () => void;
 }
 
 /** Context needed from other slices for demo/achievement guards. */
@@ -34,11 +37,17 @@ export function createAchievementSlice(set: SetFn, get: GetFn): AchievementSlice
     unlockedAchievements: [],
     achievementCounts: {},
     achievementTiers: {},
+    medalsHydrated: false,
+
+    markMedalsHydrated: () => set(() => ({ medalsHydrated: true })),
 
     unlockAchievement: (id) => {
       const ctx = get();
       if (!ctx.achievementsEnabled && id !== 'demo_activated') return;
       if (ctx.demoMode && id !== 'demo_activated') return;
+      // Suppress unlocks (and their toasts) until medals have been restored from globalState.
+      // Prevents spurious first_contact/ground_control toasts on every reload.
+      if (!ctx.medalsHydrated && id !== 'demo_activated') return;
       if (ctx.unlockedAchievements.includes(id)) return;
       const instanceId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       set((s) => ({

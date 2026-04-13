@@ -10,6 +10,8 @@
 
 export type KnowledgeScope = 'workspace' | 'plan';
 
+export type KnowledgeTier = 'L0' | 'L1' | 'L2';
+
 export interface KnowledgeEntry {
   key: string;
   value: string;
@@ -18,6 +20,12 @@ export interface KnowledgeEntry {
   authorId: string;      // agent ID or 'user'
   createdAt: number;
   updatedAt: number;
+  /** Timestamp when the entry becomes valid (defaults to createdAt). */
+  validFrom?: number;
+  /** Timestamp when the entry expires. Undefined = never expires. */
+  validUntil?: number;
+  /** MemPalace-inspired loading tier. Defaults: workspace = L1, plan = L2. L0 = critical identity. */
+  tier?: KnowledgeTier;
 }
 
 const MAX_WORKSPACE_ENTRIES = 200;
@@ -47,6 +55,8 @@ export class SharedKnowledgeStore {
     author: string,
     authorId: string,
     planId?: string,
+    validUntil?: number,
+    tier?: KnowledgeTier,
   ): KnowledgeEntry {
     const now = Date.now();
 
@@ -60,6 +70,9 @@ export class SharedKnowledgeStore {
         authorId,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
+        validFrom: existing?.validFrom ?? now,
+        validUntil,
+        tier: tier ?? existing?.tier,
       };
       this.workspace.set(key, entry);
       this.enforceLimit(this.workspace, MAX_WORKSPACE_ENTRIES);
@@ -82,6 +95,9 @@ export class SharedKnowledgeStore {
       authorId,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      validFrom: existing?.validFrom ?? now,
+      validUntil,
+      tier: tier ?? existing?.tier,
     };
     planMap.set(key, entry);
     this.enforceLimit(planMap, MAX_PLAN_ENTRIES);
@@ -92,30 +108,40 @@ export class SharedKnowledgeStore {
   /**
    * Read entries. If key provided, returns single entry (merged lookup: plan first, then workspace).
    * If no key, returns all entries merged (workspace + active plan).
+   * By default excludes expired entries — pass includeExpired=true to see them.
    */
-  read(key?: string, planId?: string): KnowledgeEntry[] {
+  read(key?: string, planId?: string, includeExpired = false): KnowledgeEntry[] {
     const pid = planId ?? '_default';
     const planMap = this.planEntries.get(pid);
+    const now = Date.now();
+    const isValid = (e: KnowledgeEntry) => includeExpired || !e.validUntil || e.validUntil > now;
 
     if (key) {
       const planEntry = planMap?.get(key);
-      if (planEntry) return [planEntry];
+      if (planEntry && isValid(planEntry)) return [planEntry];
       const wsEntry = this.workspace.get(key);
-      if (wsEntry) return [wsEntry];
+      if (wsEntry && isValid(wsEntry)) return [wsEntry];
       return [];
     }
 
     // Return all: workspace first, then plan
     const results: KnowledgeEntry[] = [];
     for (const entry of this.workspace.values()) {
-      results.push(entry);
+      if (isValid(entry)) results.push(entry);
     }
     if (planMap) {
       for (const entry of planMap.values()) {
-        results.push(entry);
+        if (isValid(entry)) results.push(entry);
       }
     }
     return results;
+  }
+
+  /**
+   * Read all entries including expired (for UI display with stale styling).
+   */
+  readAll(planId?: string): KnowledgeEntry[] {
+    return this.read(undefined, planId, true);
   }
 
   /**
@@ -147,11 +173,13 @@ export class SharedKnowledgeStore {
   /**
    * Get a markdown summary of all knowledge, grouped by scope and author.
    */
-  getSummary(planId?: string): string {
+  getSummary(planId?: string, includeExpired = false): string {
     const sections: string[] = [];
+    const now = Date.now();
+    const isValid = (e: KnowledgeEntry) => includeExpired || !e.validUntil || e.validUntil > now;
 
     // Workspace section
-    const wsEntries = Array.from(this.workspace.values());
+    const wsEntries = Array.from(this.workspace.values()).filter(isValid);
     if (wsEntries.length > 0) {
       sections.push('## Workspace Knowledge');
       for (const e of wsEntries) {
@@ -166,13 +194,16 @@ export class SharedKnowledgeStore {
     const pid = planId ?? '_default';
     const planMap = this.planEntries.get(pid);
     if (planMap && planMap.size > 0) {
+      const planEntries = Array.from(planMap.values()).filter(isValid);
+      if (planEntries.length > 0) {
       sections.push('');
       sections.push('## Plan Knowledge');
-      for (const e of planMap.values()) {
+      for (const e of planEntries) {
         const val = e.value.length > SUMMARY_TRUNCATE
           ? e.value.slice(0, SUMMARY_TRUNCATE) + '...'
           : e.value;
         sections.push(`- **${e.key}** (by ${e.author}): ${val}`);
+      }
       }
     }
 
