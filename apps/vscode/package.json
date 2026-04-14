@@ -440,10 +440,10 @@
     ]
   },
   "scripts": {
-    "build": "tsc && pnpm run build:webview",
+    "build": "tsc && node scripts/copy-sql-wasm.mjs && pnpm run build:webview",
     "lint": "eslint src/ webview/",
-    "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap",
-    "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked",
+    "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap && node scripts/copy-sql-wasm.mjs",
+    "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked && node scripts/copy-sql-wasm.mjs",
     "build:webview": "node webview/esbuild.mjs",
     "build:webview:prod": "node webview/esbuild.mjs --minify",
     "package:vsix": "pnpm run build:ext:prod && pnpm run build:webview:prod && vsce package --no-dependencies",

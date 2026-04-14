@@ -6,6 +6,33 @@
  */
 
 import initSqlJs, { type Database, type SqlValue } from 'sql.js';
+import * as path from 'path';
+import * as fs from 'fs';
+
+/**
+ * Resolve the path to sql.js's WASM binary.
+ *
+ * Tried in order:
+ *   1. Alongside the compiled extension output (`<out>/sql-wasm.wasm`) — populated by
+ *      the `copy-sql-wasm.mjs` build step and shipped in the VSIX.
+ *   2. `node_modules/sql.js/dist/sql-wasm.wasm` via `require.resolve` — works in dev
+ *      (tsc compile) and unit tests (vitest) where node_modules is available.
+ *   3. Whatever sql.js's default is — last-resort fallback.
+ *
+ * Without this, packaged extensions crash on activation with
+ * `ENOENT: no such file or directory, open '<install>/out/sql-wasm.wasm'`
+ * because sql.js looks next to its own JS file, which gets inlined into
+ * `out/extension.js` by esbuild and leaves the WASM orphaned.
+ */
+function locateSqlWasm(file: string): string {
+  const nearby = path.join(__dirname, file);
+  if (fs.existsSync(nearby)) return nearby;
+  try {
+    return require.resolve(`sql.js/dist/${file}`);
+  } catch {
+    return file;
+  }
+}
 import type { AgentEvent } from '@event-horizon/core';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -128,7 +155,7 @@ export class EventHorizonDB {
    * @param data Optional existing database buffer to load from.
    */
   static async create(data?: ArrayLike<number>): Promise<EventHorizonDB> {
-    const SQL = await initSqlJs();
+    const SQL = await initSqlJs({ locateFile: locateSqlWasm });
     const db = data ? new SQL.Database(new Uint8Array(data)) : new SQL.Database();
 
     // Enable WAL-like performance (pragmas)
