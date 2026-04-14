@@ -319,6 +319,12 @@
           "description": "Token threshold for context optimization suggestions. A notification appears when instruction files (CLAUDE.md, .cursorrules, etc.) exceed this estimated token count.",
           "order": 8
         },
+        "eventHorizon.knowledge.autoDiscover": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan workspace instruction files (CLAUDE.md, AGENTS.md, .cursorrules, copilot-instructions.md, .claude/rules/*.md) on activation and on file changes, then surface them in the Knowledge tab tagged as source=auto. Auto entries are assigned a tier (L1 for root instructions, L2 for rules) and never overwrite user- or agent-authored entries. Disable if you only want knowledge written explicitly by agents or via the UI.",
+          "order": 9
+        },
         "eventHorizon.budgetWarningThreshold": {
           "type": "number",
           "default": 0.8,

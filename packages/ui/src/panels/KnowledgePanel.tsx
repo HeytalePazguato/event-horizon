@@ -12,6 +12,8 @@ import { colors, fonts, sizes } from '../styles/tokens.js';
 
 export type KnowledgeTier = 'L0' | 'L1' | 'L2';
 
+export type KnowledgeSource = 'auto' | 'user' | 'agent';
+
 export interface KnowledgeEntry {
   key: string;
   value: string;
@@ -24,6 +26,8 @@ export interface KnowledgeEntry {
   validUntil?: number;
   /** MemPalace-inspired loading tier. Defaults: workspace = L1, plan = L2. L0 = critical identity. */
   tier?: KnowledgeTier;
+  /** Origin: 'auto' = scanned from instruction files, 'user' = typed in UI, 'agent' = written via eh_write_shared. */
+  source?: KnowledgeSource;
 }
 
 // ── Tier metadata (MemPalace-inspired loading tiers) ───────────────────────
@@ -310,6 +314,22 @@ const EntryRow: FC<{
         >
           {tierMeta.shortName}
         </span>
+        {/* Source pill — show "auto" for entries seeded from instruction files */}
+        {entry.source === 'auto' && (
+          <span
+            title="Auto-discovered from a workspace instruction file (CLAUDE.md, AGENTS.md, .cursorrules, copilot-instructions.md, or .claude/rules/*.md). Edit the source file to update."
+            style={{
+              fontSize: sizes.text.xs, fontWeight: 600, letterSpacing: '0.06em',
+              color: colors.text.dim,
+              background: 'rgba(255,255,255,0.05)',
+              border: `1px dashed ${colors.border.primary}`,
+              borderRadius: 3, padding: '0 4px',
+              fontFamily: fonts.mono, textTransform: 'uppercase',
+            }}
+          >
+            auto
+          </span>
+        )}
         {entry.validUntil && entry.validUntil < Date.now() && (
           <span style={{
             fontSize: sizes.text.xs, color: '#cc4444', fontWeight: 600,
@@ -513,10 +533,12 @@ const Section: FC<{
   tierBadges?: KnowledgeTier[];
   scope: 'workspace' | 'plan';
   entries: KnowledgeEntry[];
+  /** When true, renders a sub-header per tier (L0, L1, Untiered) with entries grouped beneath it. */
+  groupByTier?: boolean;
   onAdd: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void;
   onEdit: (key: string, value: string, scope: 'workspace' | 'plan', validUntil?: number, tier?: KnowledgeTier) => void;
   onDelete: (key: string, scope: 'workspace' | 'plan') => void;
-}> = ({ title, description, tierBadges, scope, entries, onAdd, onEdit, onDelete }) => {
+}> = ({ title, description, tierBadges, scope, entries, groupByTier, onAdd, onEdit, onDelete }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -616,9 +638,43 @@ const Section: FC<{
       {/* Entries */}
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
-          {entries.map((entry) => (
-            <EntryRow key={entry.key} entry={entry} onEdit={onEdit} onDelete={onDelete} />
-          ))}
+          {groupByTier && entries.length > 0 ? (
+            (['L0', 'L1', 'L2'] as const).map((t) => {
+              const bucket = entries.filter((e) => getEffectiveTier(e) === t);
+              if (bucket.length === 0) return null;
+              const tm = TIER_INFO[t];
+              return (
+                <div key={t} style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    marginTop: sizes.spacing.xs,
+                    fontSize: sizes.text.xs,
+                    color: colors.text.dim,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                  }}>
+                    <span style={{
+                      color: tm.color, background: `${tm.color}1f`,
+                      border: `1px solid ${tm.color}66`,
+                      borderRadius: 3, padding: '0 4px',
+                      fontFamily: fonts.mono, fontWeight: 700,
+                    }}>
+                      {tm.shortName}
+                    </span>
+                    <span>{tm.label.replace(/^L\d\s*—\s*/, '')}</span>
+                    <span style={{ opacity: 0.7 }}>({bucket.length})</span>
+                  </div>
+                  {bucket.map((entry) => (
+                    <EntryRow key={entry.key} entry={entry} onEdit={onEdit} onDelete={onDelete} />
+                  ))}
+                </div>
+              );
+            })
+          ) : (
+            entries.map((entry) => (
+              <EntryRow key={entry.key} entry={entry} onEdit={onEdit} onDelete={onDelete} />
+            ))
+          )}
           {entries.length === 0 && !showAddForm && (
             <div style={{ fontSize: sizes.text.sm, color: colors.text.dim, padding: sizes.spacing.xs }}>
               No entries yet.
@@ -809,6 +865,7 @@ export const KnowledgePanel: FC<KnowledgePanelProps> = ({ workspace, plan, planN
         description="Persistent facts loaded into every agent session — tech stack, project conventions, key paths. Keep this small (~10-30 entries) since every spawned agent pays the token cost upfront. Mark critical entries as L0; default L1 for essentials."
         scope="workspace"
         entries={filteredWorkspace}
+        groupByTier
         onAdd={onAdd}
         onEdit={onEdit}
         onDelete={onDelete}

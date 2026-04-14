@@ -2,6 +2,19 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [2.0.1] — 2026-04-13
+
+### Fixed
+- **Knowledge tab empty on extension open**: the auto-seed pass for workspace instruction files fired before the webview existed, so its `knowledge-update` broadcast was dropped and the tab stayed empty forever. `hydrateWebview` now re-broadcasts current knowledge when the webview signals `ready`, so entries show up whether they were written before or after the panel mounted
+- **Kanban task cards overflowing their columns**: long auto-generated task IDs pushed cards past their grid cell width on narrow panels. Grid cells and `TaskCard` now have `minWidth: 0` + `overflowWrap: anywhere`, and the ID span no longer refuses to shrink
+
+### Added
+- **Workspace instruction file auto-discovery**: the extension now globs `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `copilot-instructions.md`, `.github/copilot-instructions.md`, and `.claude/rules/**/*.md` across every workspace folder via `vscode.workspace.findFiles`. Each file becomes its own workspace knowledge entry (no more 20-section merge) with a stable `auto:<relPath>` key, tier assignment (root instructions → L1, `.claude/rules/*` → L2), and `source: auto` tag
+- **Live sync via `FileSystemWatcher`**: creating, editing, or deleting an instruction file updates the corresponding Knowledge entry within ~1s without a VS Code reload. Workspace folder add/remove triggers a full re-scan
+- **`source` field on `KnowledgeEntry`**: `auto` (scanned), `user` (typed in the UI), or `agent` (written via `eh_write_shared`). `writeIfNotUserAuthored` helper ensures re-scans never overwrite user- or agent-authored entries
+- **Tier grouping + auto pill in Knowledge tab**: the Workspace section now groups entries by tier with L0 / L1 / L2 sub-headers and counts. Auto-discovered entries show a dashed "auto" pill with a tooltip explaining they came from an instruction file
+- **`eventHorizon.knowledge.autoDiscover` setting** (boolean, default `true`): disable to opt out of auto-scanning instruction files — useful if you only want knowledge that was explicitly written by agents or via the UI
+
 ## [2.0.0] — 2026-04-13
 
 ### Added

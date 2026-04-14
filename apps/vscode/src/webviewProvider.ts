@@ -371,6 +371,17 @@ function wireUniverseWebview(
       void webview.postMessage({ type: 'init-singularity', stats: savedSingularity });
     }
 
+    // Hydrate shared knowledge — this is the fix for the "Knowledge tab empty forever" race.
+    // sharedKnowledge.onChange() broadcasts via webviewRef.current?.postMessage, but on initial
+    // activation that ref is still null. Without this line, any entries written before the
+    // webview mounts (including auto-seeded instruction files) never reach the UI.
+    const knowledgeEntries = sharedKnowledge.getAllEntries();
+    void webview.postMessage({
+      type: 'knowledge-update',
+      workspace: knowledgeEntries.workspace,
+      plan: knowledgeEntries.plan,
+    });
+
     const cachedSkills = getSkills?.() ?? [];
     if (cachedSkills.length > 0) {
       void webview.postMessage({ type: 'skills-update', skills: cachedSkills });
