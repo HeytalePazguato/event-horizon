@@ -4,6 +4,7 @@
 .turbo/**
 src/**
 webview/**
+scripts/**
 node_modules/**
 **/*.ts
 **/*.tsx

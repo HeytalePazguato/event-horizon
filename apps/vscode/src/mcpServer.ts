@@ -409,12 +409,12 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_spawn_agent',
-    description: 'Spawn a new AI agent in a VS Code terminal. Orchestrator-only. agent_type must be "claude-code", "opencode", or "cursor" (NOT a role name). prompt is REQUIRED — it must be a detailed instruction telling the agent what to do (e.g. "Work on task 1.1: implement the auth module. Run /eh:work-on-plan to claim and execute it.").',
+    description: 'Spawn a new AI agent in a VS Code terminal. Orchestrator-only. prompt is REQUIRED. agent_type is OPTIONAL — when omitted, the server defaults to the orchestrator\'s own runtime (an OpenCode orchestrator gets OpenCode workers, a Claude orchestrator gets Claude workers). Only pass agent_type to override that default (e.g. user specified --agent opencode, or a task has [agent: opencode] metadata).',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'YOUR agent/session ID (the orchestrator calling this tool)' },
-        agent_type: { type: 'string', enum: ['claude-code', 'opencode', 'cursor'], description: 'Runtime to spawn. Must be one of: claude-code, opencode, cursor. This is the CLI tool, NOT a role name.' },
+        agent_type: { type: 'string', enum: ['claude-code', 'opencode', 'cursor'], description: 'OPTIONAL. Runtime to spawn (claude-code, opencode, cursor). When omitted, the server defaults to the orchestrator\'s own runtime — which is what you want in 90% of cases. Only set this when the user explicitly overrides with --agent, or a task has [agent: X] metadata.' },
         role: { type: 'string', description: 'Role to assign (e.g. implementer, tester, reviewer). Determines instructions and skills sent to the agent.' },
         prompt: { type: 'string', description: 'REQUIRED. Detailed instruction for the agent. Must tell it what task to work on and how. Example: "You are assigned task 1.1 (Build auth module). Run /eh:work-on-plan to claim and implement it. The plan is already loaded."' },
         cwd: { type: 'string', description: 'Working directory (defaults to workspace root)' },
@@ -423,7 +423,7 @@ export const MCP_TOOLS: McpToolDef[] = [
         task_id: { type: 'string', description: 'Task ID the agent should work on' },
         interactive: { type: 'boolean', description: 'When true, spawn in interactive REPL mode so the user can type follow-up prompts. Default false (batch -p mode, correct for orchestrated work).' },
       },
-      required: ['agent_id', 'agent_type', 'prompt'],
+      required: ['agent_id', 'prompt'],
     },
   },
   {
@@ -1407,15 +1407,28 @@ export class McpServer {
         if (!spawnRegistry) {
           return { error: 'Spawn registry not available' };
         }
-        const agentType = args.agent_type as string;
         const role = args.role as string | undefined;
         const prompt = args.prompt as string;
+
+        // Resolve agent_type + cwd from orchestrator state in a single lookup.
+        // Precedence for agent_type: explicit param → orchestrator's own type.
+        // This implements the "prefer my own type" rule without requiring the
+        // orchestrator LLM to know and pass its own type.
+        const orchestrator = this.deps.agentStateManager.getAgent(agentId);
+        let agentType = (args.agent_type as string | undefined)?.trim() || undefined;
+        if (!agentType) {
+          agentType = orchestrator?.type;
+        }
+        if (!agentType || agentType === 'unknown') {
+          return {
+            error: `agent_type could not be resolved. Pass agent_type explicitly, or ensure the orchestrator (agent_id="${agentId}") is registered with a known runtime type.`,
+          };
+        }
+
         // Fallback chain for cwd: explicit arg → orchestrator's cwd from agent state → spawn registry's default (workspace folder)
         let cwd = args.cwd as string | undefined;
-        if (!cwd) {
-          const orchestrator = this.deps.agentStateManager.getAgent(agentId);
-          if (orchestrator?.cwd) cwd = orchestrator.cwd;
-        }
+        if (!cwd && orchestrator?.cwd) cwd = orchestrator.cwd;
+
         const model = args.model as string | undefined;
         const planId = args.plan_id as string | undefined;
         const taskId = args.task_id as string | undefined;

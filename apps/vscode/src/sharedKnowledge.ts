@@ -12,6 +12,8 @@ export type KnowledgeScope = 'workspace' | 'plan';
 
 export type KnowledgeTier = 'L0' | 'L1' | 'L2';
 
+export type KnowledgeSource = 'auto' | 'user' | 'agent';
+
 export interface KnowledgeEntry {
   key: string;
   value: string;
@@ -26,6 +28,8 @@ export interface KnowledgeEntry {
   validUntil?: number;
   /** MemPalace-inspired loading tier. Defaults: workspace = L1, plan = L2. L0 = critical identity. */
   tier?: KnowledgeTier;
+  /** Origin of the entry. 'auto' = scanned from instruction files; 'user' = human-authored via UI; 'agent' = eh_write_shared. */
+  source?: KnowledgeSource;
 }
 
 const MAX_WORKSPACE_ENTRIES = 200;
@@ -57,6 +61,7 @@ export class SharedKnowledgeStore {
     planId?: string,
     validUntil?: number,
     tier?: KnowledgeTier,
+    source?: KnowledgeSource,
   ): KnowledgeEntry {
     const now = Date.now();
 
@@ -73,6 +78,7 @@ export class SharedKnowledgeStore {
         validFrom: existing?.validFrom ?? now,
         validUntil,
         tier: tier ?? existing?.tier,
+        source: source ?? existing?.source,
       };
       this.workspace.set(key, entry);
       this.enforceLimit(this.workspace, MAX_WORKSPACE_ENTRIES);
@@ -98,11 +104,36 @@ export class SharedKnowledgeStore {
       validFrom: existing?.validFrom ?? now,
       validUntil,
       tier: tier ?? existing?.tier,
+      source: source ?? existing?.source,
     };
     planMap.set(key, entry);
     this.enforceLimit(planMap, MAX_PLAN_ENTRIES);
     this.notifyChange();
     return entry;
+  }
+
+  /**
+   * Write an auto-scanned entry only if no user or agent entry with the same key already exists.
+   * Returns the final entry (either the preserved existing one or the newly written auto entry).
+   */
+  writeIfNotUserAuthored(
+    key: string,
+    value: string,
+    scope: KnowledgeScope,
+    author: string,
+    authorId: string,
+    planId?: string,
+    validUntil?: number,
+    tier?: KnowledgeTier,
+  ): KnowledgeEntry | null {
+    const map = scope === 'workspace'
+      ? this.workspace
+      : this.planEntries.get(planId ?? '_default');
+    const existing = map?.get(key);
+    if (existing && (existing.source === 'user' || existing.source === 'agent')) {
+      return existing;
+    }
+    return this.write(key, value, scope, author, authorId, planId, validUntil, tier, 'auto');
   }
 
   /**

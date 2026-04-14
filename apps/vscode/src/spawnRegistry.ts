@@ -1,13 +1,15 @@
 /**
  * Spawn Registry — manages spawning AI agents in VS Code terminals.
  * Supports Claude Code, OpenCode, and Cursor via pluggable backends.
+ *
+ * Spawns use argv-style `cp.spawn(bin, args, { shell: false })` — no shell,
+ * no escaping, no temp files. Windows shim files (.cmd / .bat / .ps1) are
+ * detected and wrapped via `cmd.exe` or `powershell.exe` so the underlying
+ * binary runs identically across platforms.
  */
 
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
-import * as fsp from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
 
 // ── Interfaces ─────────────────────────────────────────────────────────────
 
@@ -60,55 +62,85 @@ export interface SpawnedAgentInfo {
   interactive?: boolean;
 }
 
-// ── Utility: shell-safe prompt handling ──────────────────────────────────────
+// ── Cross-platform command resolution ───────────────────────────────────────
 
 /**
- * Write a prompt string to a temp file and return a shell fragment that reads it.
- * This avoids shell escaping issues entirely — PowerShell and bash interpret
- * inline quotes differently, so long prompts with special characters (negative
- * numbers like -93.7474, JSON, quotes) break when escaped inline.
+ * A resolved CLI binary, ready to pass to `cp.spawn(bin, [...prefix, ...args])`.
+ * On Windows, npm-installed CLIs are usually `.cmd` shim files which Node cannot
+ * execute directly with `shell: false`. We detect those and wrap with `cmd.exe /c`.
  */
-async function writePromptFile(prompt: string, id: string): Promise<{ filePath: string; readFragment: string; cleanup: string }> {
-  const filePath = path.join(os.tmpdir(), `eh-prompt-${id}.txt`);
-  await fsp.writeFile(filePath, prompt, 'utf8');
-  if (process.platform === 'win32') {
-    // PowerShell: read file via .NET, single-quoted path avoids expansion
-    const escaped = filePath.replace(/'/g, "''");
-    return {
-      filePath,
-      readFragment: `([System.IO.File]::ReadAllText('${escaped}'))`,
-      cleanup: `; Remove-Item '${escaped}' -ErrorAction SilentlyContinue`,
-    };
-  }
-  // Bash: command substitution with cat
-  const escaped = filePath.replace(/'/g, "'\\''");
-  return {
-    filePath,
-    readFragment: `"$(cat '${escaped}')"`,
-    cleanup: `; rm -f '${escaped}'`,
-  };
+export interface ResolvedCommand {
+  /** Binary to pass as the first arg to `cp.spawn`. */
+  bin: string;
+  /** Args that must precede the caller's args (for shim wrapping). Empty for direct execution. */
+  prefix: string[];
+  /** Underlying resolved path (for diagnostics). Same as `bin` when no wrapping is needed. */
+  fullPath: string;
 }
 
-/** Escape a short, controlled string for use in a shell argument (role names, etc.). */
-function shellQuote(s: string): string {
-  if (process.platform === 'win32') {
-    // PowerShell: single-quote with '' for literal quotes
-    return `'${s.replace(/'/g, "''")}'`;
-  }
-  // Bash: single-quote with '\'' for literal quotes
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
-// ── Utility: check if command exists in PATH ────────────────────────────────
-
-async function commandExists(cmd: string): Promise<boolean> {
-  // cmd is always a hardcoded binary name (claude, opencode, cursor), not user input
-  return new Promise((resolve) => {
-    const which = process.platform === 'win32' ? 'where' : 'which';
-    cp.execFile(which, [cmd], (err) => {
-      resolve(!err);
+/**
+ * Resolve a command name to a spawnable binary. Returns null when the command
+ * is not on PATH. Handles Windows `.cmd`/`.bat`/`.ps1` shim files transparently.
+ */
+export async function resolveCommand(cmd: string): Promise<ResolvedCommand | null> {
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  const fullPath = await new Promise<string | null>((resolve) => {
+    cp.execFile(finder, [cmd], (err, stdout) => {
+      if (err) return resolve(null);
+      const first = String(stdout).split(/\r?\n/).map((s) => s.trim()).find((s) => s.length > 0);
+      resolve(first ?? null);
     });
   });
+  if (!fullPath) return null;
+
+  if (process.platform === 'win32') {
+    const lower = fullPath.toLowerCase();
+    if (lower.endsWith('.cmd') || lower.endsWith('.bat')) {
+      return { bin: 'cmd.exe', prefix: ['/d', '/s', '/c', fullPath], fullPath };
+    }
+    if (lower.endsWith('.ps1')) {
+      return {
+        bin: 'powershell.exe',
+        prefix: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fullPath],
+        fullPath,
+      };
+    }
+  }
+  return { bin: fullPath, prefix: [], fullPath };
+}
+
+// ── Spawn diagnostics output channel ────────────────────────────────────────
+
+let _agentOutputChannel: vscode.OutputChannel | null = null;
+function agentOutputChannel(): vscode.OutputChannel {
+  if (!_agentOutputChannel) {
+    _agentOutputChannel = vscode.window.createOutputChannel('Event Horizon — Agents');
+  }
+  return _agentOutputChannel;
+}
+
+/** Redact long free-form strings (prompts) in argv for safe logging. */
+function redactArgsForLog(args: readonly string[]): string[] {
+  const REDACT_AFTER = new Set(['-p', '--prompt', '--append-system-prompt']);
+  return args.map((a, i) => {
+    const prev = i > 0 ? args[i - 1] : undefined;
+    if (prev && REDACT_AFTER.has(prev)) return `<${a.length} chars redacted>`;
+    return a;
+  });
+}
+
+function logSpawn(
+  agentId: string,
+  resolved: ResolvedCommand,
+  args: readonly string[],
+  cwd: string | undefined,
+): void {
+  const ch = agentOutputChannel();
+  ch.appendLine(`[${new Date().toISOString()}] spawn ${agentId}`);
+  ch.appendLine(`  fullPath: ${resolved.fullPath}`);
+  if (resolved.prefix.length > 0) ch.appendLine(`  shimPrefix: ${JSON.stringify(resolved.prefix)}`);
+  ch.appendLine(`  args: ${JSON.stringify(redactArgsForLog(args))}`);
+  ch.appendLine(`  cwd: ${cwd ?? '(undefined)'}`);
 }
 
 // ── Helper: spawn a child process wired to a VS Code pseudoterminal ─────────
@@ -120,30 +152,39 @@ export interface SpawnedTerminalHandle {
 }
 
 /**
- * Spawn a shell command and pipe its stdout/stderr into a VS Code terminal
- * via a Pseudoterminal. Returns the terminal AND the underlying ChildProcess
- * so the spawn registry can kill the real PID (not just dispose the terminal).
+ * Spawn a binary with an argv array (no shell) and pipe its stdout/stderr into
+ * a VS Code terminal via a Pseudoterminal. Returns the terminal AND the underlying
+ * ChildProcess so the spawn registry can kill the real PID (not just dispose the
+ * terminal).
  *
- * The command is passed to a shell (sh -c on Unix, cmd.exe /c on Windows) so
- * existing escaping conventions (temp prompt files, `$(cat ...)`, PowerShell
- * `[System.IO.File]::ReadAllText(...)`) keep working.
+ * Using `shell: false` means the binary is executed directly via `execve` (or the
+ * Windows equivalent) and args flow as literal strings — no shell escaping, no
+ * temp files, no cross-shell parse differences. Use `resolveCommand()` first to
+ * get a `ResolvedCommand` that handles Windows shim files.
+ *
+ * stderr is duplicated to the `Event Horizon — Agents` output channel so a
+ * terminal that dies instantly still leaves a debuggable trail.
  */
 export function spawnWithTerminal(
-  shellCommand: string,
+  bin: string,
+  args: readonly string[],
   opts: {
     cwd?: string;
     env: NodeJS.ProcessEnv;
     name: string;
+    agentId?: string;
     onExit?: (code: number | null) => void;
   },
 ): SpawnedTerminalHandle {
   const writeEmitter = new vscode.EventEmitter<string>();
   const closeEmitter = new vscode.EventEmitter<number | void>();
+  const ch = agentOutputChannel();
+  const logPrefix = opts.agentId ? `[${opts.agentId}]` : `[${opts.name}]`;
 
-  const child = cp.spawn(shellCommand, {
+  const child = cp.spawn(bin, args as string[], {
     cwd: opts.cwd,
     env: opts.env,
-    shell: true,
+    shell: false,
     windowsHide: true,
   });
 
@@ -154,14 +195,21 @@ export function spawnWithTerminal(
   };
 
   child.stdout?.on('data', (d) => writeEmitter.fire(toTerm(d)));
-  child.stderr?.on('data', (d) => writeEmitter.fire(toTerm(d)));
+  child.stderr?.on('data', (d) => {
+    writeEmitter.fire(toTerm(d));
+    // Mirror stderr to the output channel — survives terminal disposal
+    ch.append(`${logPrefix} stderr: ${typeof d === 'string' ? d : d.toString('utf8')}`);
+  });
 
   child.on('error', (err) => {
-    writeEmitter.fire(`\r\n\u001b[31m[spawn error] ${err.message}\u001b[0m\r\n`);
+    const msg = `[spawn error] ${err.message}`;
+    writeEmitter.fire(`\r\n\u001b[31m${msg}\u001b[0m\r\n`);
+    ch.appendLine(`${logPrefix} ${msg}`);
   });
 
   child.on('exit', (code) => {
     writeEmitter.fire(`\r\n\u001b[90m[process exited with code ${code ?? 'null'}]\u001b[0m\r\n`);
+    ch.appendLine(`${logPrefix} process exited with code ${code ?? 'null'}`);
     closeEmitter.fire(code ?? 0);
     opts.onExit?.(code);
   });
@@ -416,7 +464,27 @@ export class ClaudeCodeSpawner implements SpawnBackend {
   }
 
   async isAvailable(): Promise<boolean> {
-    return commandExists('claude');
+    return (await resolveCommand('claude')) !== null;
+  }
+
+  /** Assemble the Claude CLI argv for a spawn (without any shim prefix). Exposed for tests. */
+  static buildArgs(opts: SpawnOpts, mode: 'batch' | 'interactive'): string[] {
+    const args: string[] = [];
+    if (mode === 'interactive') {
+      // Claude's interactive mode seeds the conversation from a positional prompt.
+      args.push(opts.prompt);
+    } else {
+      args.push('-p', opts.prompt, '--verbose', '--output-format', 'stream-json');
+    }
+    args.push('--allowedTools', 'Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*');
+    if (opts.model) args.push('--model', opts.model);
+    if (opts.role) {
+      args.push(
+        '--append-system-prompt',
+        `You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon.`,
+      );
+    }
+    return args;
   }
 
   async spawn(opts: SpawnOpts): Promise<SpawnResult> {
@@ -424,27 +492,13 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     const suffix = opts.interactive ? 'Interactive' : (opts.taskId ?? 'general');
     const terminalName = `\u2600\uFE0F Claude \u2014 ${opts.role ?? 'Worker'} (${suffix})`;
 
-    // Write prompt to temp file to avoid shell escaping issues
-    const pf = await writePromptFile(opts.prompt, agentId);
-
-    // Interactive mode: omit -p / --output-format so the CLI drops into its
-    // interactive REPL. The user can then type follow-up prompts in the
-    // terminal and the agent responds.
-    const parts: string[] = ['claude'];
-    if (opts.interactive) {
-      // Pass the initial prompt as a positional arg — Claude's interactive
-      // mode seeds the conversation with it and then keeps the REPL open.
-      parts.push(pf.readFragment);
-    } else {
-      parts.push('-p', pf.readFragment, '--verbose', '--output-format', 'stream-json');
-    }
-    // Pre-authorize tools so spawned agents can actually edit files without permission prompts.
-    parts.push('--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*'));
-    if (opts.model) parts.push('--model', opts.model);
-    if (opts.role) {
-      parts.push('--append-system-prompt', shellQuote(`You are assigned the ${opts.role} role. Follow role-specific instructions from Event Horizon.`));
+    const resolved = await resolveCommand('claude');
+    if (!resolved) {
+      return { agentId, type: this.type, status: 'unavailable', message: 'claude CLI is not available in PATH' };
     }
 
+    const args = ClaudeCodeSpawner.buildArgs(opts, opts.interactive ? 'interactive' : 'batch');
+    const cwd = opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const token = this.getAuthToken();
     const env: Record<string, string> = {
       EH_AGENT_ID: agentId,
@@ -455,16 +509,18 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       ...opts.envVars,
     };
 
-    // Interactive mode uses vscode.window.createTerminal so the terminal
-    // accepts user input naturally. We can't track the real PID in that
-    // path, but interactive users can Ctrl+C or close the terminal.
+    logSpawn(agentId, resolved, args, cwd);
+
+    // Interactive mode: let VS Code run the CLI as the terminal's root process.
+    // `shellPath` + `shellArgs` avoids any user-shell layer entirely.
     if (opts.interactive) {
       const terminal = vscode.window.createTerminal({
         name: terminalName,
-        cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-        env,
+        cwd,
+        env: { ...process.env, ...env } as { [key: string]: string },
+        shellPath: resolved.bin,
+        shellArgs: [...resolved.prefix, ...args],
       });
-      terminal.sendText(parts.join(' ') + pf.cleanup);
       terminal.show();
       this.registry.trackAgent(agentId, {
         type: this.type,
@@ -485,11 +541,11 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     }
 
     const registry = this.registry;
-    const command = parts.join(' ') + pf.cleanup;
-    const { terminal, process: child, pid } = spawnWithTerminal(command, {
-      cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    const { terminal, process: child, pid } = spawnWithTerminal(resolved.bin, [...resolved.prefix, ...args], {
+      cwd,
       env: { ...process.env, ...env },
       name: terminalName,
+      agentId,
       onExit: () => {
         // Auto-remove from registry on natural exit (success or failure)
         if (registry.getSpawnedAgent(agentId)) {
@@ -532,9 +588,17 @@ export class ClaudeCodeSpawner implements SpawnBackend {
 
   async resume(agentId: string, sessionId: string, prompt: string): Promise<SpawnResult> {
     const terminalName = `\u2600\uFE0F Claude \u2014 Resume (${sessionId.slice(0, 8)})`;
-    const pf = await writePromptFile(prompt, agentId);
-    const parts = ['claude', '--resume', sessionId, '-p', pf.readFragment, '--verbose', '--output-format', 'stream-json',
-      '--allowedTools', shellQuote('Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*')];
+    const resolved = await resolveCommand('claude');
+    if (!resolved) {
+      return { agentId, type: this.type, status: 'unavailable', message: 'claude CLI is not available in PATH' };
+    }
+
+    const args: string[] = [
+      '--resume', sessionId,
+      '-p', prompt,
+      '--verbose', '--output-format', 'stream-json',
+      '--allowedTools', 'Edit,Write,Read,Grep,Glob,Bash,NotebookEdit,Skill,mcp__event-horizon__*',
+    ];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -543,11 +607,13 @@ export class ClaudeCodeSpawner implements SpawnBackend {
       ...(token ? { EH_AUTH_TOKEN: token } : {}),
     };
 
+    logSpawn(agentId, resolved, args, undefined);
+
     const registry = this.registry;
-    const command = parts.join(' ') + pf.cleanup;
-    const { terminal, process: child, pid } = spawnWithTerminal(command, {
+    const { terminal, process: child, pid } = spawnWithTerminal(resolved.bin, [...resolved.prefix, ...args], {
       env: { ...process.env, ...env },
       name: terminalName,
+      agentId,
       onExit: () => {
         if (registry.getSpawnedAgent(agentId)) {
           registry.untrackAgent(agentId);
@@ -592,20 +658,21 @@ export class OpenCodeSpawner implements SpawnBackend {
   }
 
   async isAvailable(): Promise<boolean> {
-    const hasOpenCode = await commandExists('opencode');
-    if (hasOpenCode) return true;
-    return commandExists('crush');
+    if ((await resolveCommand('opencode')) !== null) return true;
+    return (await resolveCommand('crush')) !== null;
   }
 
   async spawn(opts: SpawnOpts): Promise<SpawnResult> {
     const agentId = `opencode-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const terminalName = `\uD83C\uDF3F OpenCode \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
 
-    const hasOpenCode = await commandExists('opencode');
-    const cmd = hasOpenCode ? 'opencode' : 'crush';
+    // Prefer `opencode`, fall back to `crush` — resolve whichever is on PATH.
+    const resolved = (await resolveCommand('opencode')) ?? (await resolveCommand('crush'));
+    if (!resolved) {
+      return { agentId, type: this.type, status: 'unavailable', message: 'opencode/crush CLI is not available in PATH' };
+    }
 
-    const pf = await writePromptFile(opts.prompt, agentId);
-    const parts = [cmd, '-p', pf.readFragment, '-f', 'json', '-q'];
+    const args: string[] = ['-p', opts.prompt, '-f', 'json', '-q'];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -616,13 +683,16 @@ export class OpenCodeSpawner implements SpawnBackend {
       ...(opts.taskId ? { EH_TASK_ID: opts.taskId } : {}),
       ...opts.envVars,
     };
+    const cwd = opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    logSpawn(agentId, resolved, args, cwd);
 
     const registry = this.registry;
-    const command = parts.join(' ') + pf.cleanup;
-    const { terminal, process: child, pid } = spawnWithTerminal(command, {
-      cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    const { terminal, process: child, pid } = spawnWithTerminal(resolved.bin, [...resolved.prefix, ...args], {
+      cwd,
       env: { ...process.env, ...env },
       name: terminalName,
+      agentId,
       onExit: () => {
         if (registry.getSpawnedAgent(agentId)) {
           registry.untrackAgent(agentId);
@@ -676,7 +746,7 @@ export class CursorSpawner implements SpawnBackend {
   }
 
   async isAvailable(): Promise<boolean> {
-    return commandExists('cursor');
+    return (await resolveCommand('cursor')) !== null;
   }
 
   async spawn(opts: SpawnOpts): Promise<SpawnResult> {
@@ -693,8 +763,12 @@ export class CursorSpawner implements SpawnBackend {
     const agentId = `cursor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const terminalName = `\uD83D\uDC8E Cursor \u2014 ${opts.role ?? 'Worker'} (${opts.taskId ?? 'general'})`;
 
-    const pf = await writePromptFile(opts.prompt, agentId);
-    const parts = ['cursor', '--cli', '-p', pf.readFragment];
+    const resolved = await resolveCommand('cursor');
+    if (!resolved) {
+      return { agentId, type: this.type, status: 'unavailable', message: 'cursor CLI is not available in PATH' };
+    }
+
+    const args: string[] = ['--cli', '-p', opts.prompt];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
@@ -705,13 +779,16 @@ export class CursorSpawner implements SpawnBackend {
       ...(opts.taskId ? { EH_TASK_ID: opts.taskId } : {}),
       ...opts.envVars,
     };
+    const cwd = opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    logSpawn(agentId, resolved, args, cwd);
 
     const registry = this.registry;
-    const command = parts.join(' ') + pf.cleanup;
-    const { terminal, process: child, pid } = spawnWithTerminal(command, {
-      cwd: opts.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    const { terminal, process: child, pid } = spawnWithTerminal(resolved.bin, [...resolved.prefix, ...args], {
+      cwd,
       env: { ...process.env, ...env },
       name: terminalName,
+      agentId,
       onExit: () => {
         if (registry.getSpawnedAgent(agentId)) {
           registry.untrackAgent(agentId);

@@ -211,109 +211,81 @@ export function activate(context: vscode.ExtensionContext): void {
     })();
   }
 
-  // Auto-seed workspace knowledge from project instruction files on first activation.
-  // Scans all workspace folders + immediate subdirectories for CLAUDE.md, .cursorrules, AGENTS.md, etc.
-  // Only seeds entries that don't already exist — never overwrites user edits.
-  void (async () => {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) return;
+  // Auto-discover workspace instruction files (CLAUDE.md, AGENTS.md, .cursorrules,
+  // copilot-instructions.md, .claude/rules/**/*.md). Scanned on activation, refreshed
+  // via FileSystemWatcher on create/change/delete, and re-run on workspace folder changes.
+  // Gated by the eventHorizon.knowledge.autoDiscover setting (default true).
+  // Uses writeIfNotUserAuthored so user- and agent-authored entries are never overwritten.
+  {
+    const knowledgeConfig = vscode.workspace.getConfiguration('eventHorizon.knowledge');
+    const autoDiscover = knowledgeConfig.get<boolean>('autoDiscover', true);
 
-    // Instruction file basenames to look for
-    const INSTRUCTION_BASENAMES = new Set(['claude.md', 'agents.md', '.cursorrules', 'copilot-instructions.md', '.copilot-instructions.md']);
-    const SKIP_DIRS = new Set(['node_modules', 'dist', 'out', '.git', '.next', 'build', 'coverage', '__pycache__', '.venv', 'venv']);
-    const MAX_DEPTH = 4;
+    if (autoDiscover) {
+      void import('./instructionFileScanner').then(async ({
+        scanInstructionFiles,
+        writeEntriesToStore,
+        scanFileUri,
+        keyForScannedFile,
+        deleteScannedEntry,
+        INCLUDE_GLOB,
+        EXCLUDE_GLOB,
+      }) => {
+        const rescanAll = async () => {
+          const folders = vscode.workspace.workspaceFolders ?? [];
+          const files = await scanInstructionFiles(folders);
+          writeEntriesToStore(sharedKnowledge, files);
+        };
 
-    // Recursively scan for instruction files
-    const candidatePaths: Array<{ filePath: string; label: string }> = [];
+        await rescanAll();
 
-    async function scanDir(dir: string, rootPath: string, depth: number): Promise<void> {
-      if (depth > MAX_DEPTH) return;
-      try {
-        const entries = await fsp.readdir(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isFile()) {
-            if (INSTRUCTION_BASENAMES.has(entry.name.toLowerCase())) {
-              const rel = path.relative(rootPath, fullPath).replace(/\\/g, '/');
-              candidatePaths.push({ filePath: fullPath, label: rel });
-            }
-          } else if (entry.isDirectory() && !SKIP_DIRS.has(entry.name)) {
-            // Allow dotdirs like .claude, .github but skip .git
-            await scanDir(fullPath, rootPath, depth + 1);
+        // File system watcher — refresh individual entries on file changes.
+        const watcher = vscode.workspace.createFileSystemWatcher(INCLUDE_GLOB, false, false, false);
+
+        const refreshFile = async (uri: vscode.Uri) => {
+          const folders = vscode.workspace.workspaceFolders ?? [];
+          const folderIdx = folders.findIndex((f) => uri.fsPath.startsWith(f.uri.fsPath));
+          if (folderIdx === -1) return;
+          const file = await scanFileUri(uri, folderIdx, folders[folderIdx].uri.fsPath);
+          if (file) {
+            writeEntriesToStore(sharedKnowledge, [file]);
+          } else {
+            // File became empty — remove it like a delete
+            const folderRoot = folders[folderIdx].uri.fsPath.replace(/\\/g, '/').replace(/\/+$/, '');
+            const rel = uri.fsPath.replace(/\\/g, '/');
+            const relLabel = rel.startsWith(folderRoot + '/') ? rel.slice(folderRoot.length + 1) : rel;
+            deleteScannedEntry(sharedKnowledge, relLabel);
           }
-        }
-      } catch { /* permission error or similar — skip */ }
+        };
+
+        const removeFile = (uri: vscode.Uri) => {
+          const folders = vscode.workspace.workspaceFolders ?? [];
+          const folderIdx = folders.findIndex((f) => uri.fsPath.startsWith(f.uri.fsPath));
+          if (folderIdx === -1) return;
+          const folderRoot = folders[folderIdx].uri.fsPath.replace(/\\/g, '/').replace(/\/+$/, '');
+          const rel = uri.fsPath.replace(/\\/g, '/');
+          const relLabel = rel.startsWith(folderRoot + '/') ? rel.slice(folderRoot.length + 1) : rel;
+          deleteScannedEntry(sharedKnowledge, relLabel);
+        };
+
+        watcher.onDidCreate(refreshFile);
+        watcher.onDidChange(refreshFile);
+        watcher.onDidDelete(removeFile);
+        context.subscriptions.push(watcher);
+
+        // Re-scan when workspace folders change (multi-root add/remove).
+        context.subscriptions.push(
+          vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            void rescanAll();
+          }),
+        );
+
+        // Suppress unused-var warning: EXCLUDE_GLOB is referenced via findFiles inside scanInstructionFiles.
+        void EXCLUDE_GLOB;
+        // Suppress unused-var warning: keyForScannedFile exported for tests.
+        void keyForScannedFile;
+      });
     }
-
-    for (const folder of folders) {
-      await scanDir(folder.uri.fsPath, folder.uri.fsPath, 0);
-    }
-
-    // Read all found files and seed knowledge
-    const foundFiles: Array<{ label: string; content: string }> = [];
-    for (const { filePath, label } of candidatePaths) {
-      try {
-        const content = await fsp.readFile(filePath, 'utf8');
-        if (content.trim()) foundFiles.push({ label, content });
-      } catch { /* not found */ }
-    }
-
-    if (foundFiles.length === 0) return;
-
-    // Extract sections from each file
-    const allSections: string[] = [];
-    for (const { label, content } of foundFiles) {
-      const lines = content.split(/\r?\n/);
-      let currentSection = '';
-      let currentBody: string[] = [];
-      let fileSectionCount = 0;
-
-      for (const line of lines) {
-        const heading = line.match(/^#{1,3}\s+(.+)/);
-        if (heading) {
-          if (currentSection && currentBody.length > 0) {
-            allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
-            fileSectionCount++;
-          }
-          currentSection = heading[1].trim();
-          currentBody = [];
-        } else if (line.trim() && !line.startsWith('```') && !line.startsWith('<!--')) {
-          currentBody.push(line.trim());
-        }
-      }
-      if (currentSection && currentBody.length > 0) {
-        allSections.push(`**${currentSection}** (${label}): ${currentBody.join(' ').slice(0, 250)}`);
-        fileSectionCount++;
-      }
-      // For files without headings (like .cursorrules, copilot-instructions.md), seed the whole content
-      if (fileSectionCount === 0 && content.trim()) {
-        allSections.push(`**${label}**: ${content.trim().slice(0, 400)}`);
-      }
-    }
-
-    if (allSections.length > 0) {
-      sharedKnowledge.write(
-        'project-instructions',
-        `Auto-imported from ${foundFiles.length} instruction file${foundFiles.length > 1 ? 's' : ''} (${foundFiles.map((f) => f.label).join(', ')}):\n${allSections.slice(0, 20).join('\n')}`,
-        'workspace',
-        'Event Horizon',
-        'system',
-      );
-    }
-
-    // Extract commands sections from any CLAUDE.md
-    for (const { label, content } of foundFiles) {
-      if (!label.includes('CLAUDE')) continue;
-      const commandsMatch = content.match(/## Commands\n([\s\S]*?)(?=\n## |\n$)/);
-      if (commandsMatch && sharedKnowledge.read('project-commands').length === 0) {
-        sharedKnowledge.write('project-commands', commandsMatch[1].trim().slice(0, 500), 'workspace', 'Event Horizon', 'system');
-      }
-      const archMatch = content.match(/## Architecture\n([\s\S]*?)(?=\n## |\n$)/);
-      if (archMatch && sharedKnowledge.read('project-architecture').length === 0) {
-        sharedKnowledge.write('project-architecture', archMatch[1].trim().slice(0, 500), 'workspace', 'Event Horizon', 'system');
-      }
-    }
-  })();
+  }
 
   // Persist shared knowledge on change
   sharedKnowledge.onChange(() => {

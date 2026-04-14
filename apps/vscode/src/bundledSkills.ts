@@ -639,10 +639,10 @@ You are an orchestrator agent. Your job is to MANAGE a plan — spawn worker age
 
 2. **Get the plan** — Call \`eh_get_plan\` to load the current plan. If the user specified a plan name or ID, use it. Otherwise use the most recent active plan.
 
-3. **Determine worker agent type** — Decide which agent CLI to use when spawning workers, in this priority order:
-   a. **User specified \`--agent\`** in the arguments (e.g. \`--agent opencode\`) → use that for all spawns
-   b. **Task specifies agent type** in plan metadata (e.g. \`[agent: opencode]\`) → use per-task
-   c. **Same as orchestrator** — if you (the orchestrator) are running as \`claude-code\`, spawn \`claude-code\` workers. If you're \`opencode\`, spawn \`opencode\`. This is the default.
+3. **Determine worker agent type** — The server defaults worker type to YOUR OWN runtime (if you are OpenCode, workers default to OpenCode). You only need to pass \`agent_type\` to override that default. Priority:
+   a. **User specified \`--agent opencode\`** (or similar) in the arguments → pass \`agent_type: "opencode"\` to \`eh_spawn_agent\` for all spawns
+   b. **Task specifies agent type** in plan metadata (e.g. \`[agent: opencode]\`) → pass \`agent_type\` per-task
+   c. **Neither** → **OMIT \`agent_type\` entirely**. The server will fill in your own runtime as the default. Do NOT guess or hardcode your own type — let the server do it.
 
    Common reason to override: the user's organization requires authentication per session for one agent type but not another (e.g. claude-code needs auth but opencode doesn't).
 
@@ -659,7 +659,7 @@ For each batch of ready tasks:
 
 1. **Spawn agents** — For each ready task, call \`eh_spawn_agent\` with:
    - \`agent_id\`: your agent ID
-   - \`agent_type\`: the resolved agent type from step 3 (user override → task metadata → same as you)
+   - \`agent_type\`: **OMIT** unless (a) the user passed \`--agent X\` or (b) a task has \`[agent: X]\` metadata. The server defaults to your own runtime when this param is omitted, which is the behavior you want in 90% of cases
    - \`role\`: the role from the task (e.g. \`implementer\`, \`tester\`, \`reviewer\`)
    - \`model\`: the model from the task metadata (e.g. \`haiku\`, \`sonnet\`, \`opus\`)
    - \`plan_id\`: the plan ID

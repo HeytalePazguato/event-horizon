@@ -295,7 +295,7 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan, onViewExecution, taskExecu
 
           {/* Task cards — row 2, one column per status */}
           {visibleColumns.map((col) => (
-            <div key={`c-${col.status}`} style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
+            <div key={`c-${col.status}`} style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs, minWidth: 0 }}>
               {col.tasks.map((task) => (
                 <TaskCard key={task.id} task={task} onViewExecution={onViewExecution} />
               ))}
@@ -460,13 +460,16 @@ const TaskCard: FC<{ task: PlanTaskView; onViewExecution?: PlanPanelProps['onVie
       borderLeft: `3px solid ${statusCol}`,
       borderRadius: sizes.radius.sm,
       fontSize: sizes.text.sm,
+      minWidth: 0,
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word',
     }}>
       {/* Task ID + title */}
-      <div style={{ display: 'flex', gap: sizes.spacing.xs, marginBottom: 2 }}>
-        <span style={{ color: colors.text.dim, fontSize: sizes.text.xs, flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: sizes.spacing.xs, marginBottom: 2, minWidth: 0, flexWrap: 'wrap' }}>
+        <span style={{ color: colors.text.dim, fontSize: sizes.text.xs, wordBreak: 'break-all', minWidth: 0 }}>
           {task.id}
         </span>
-        <span style={{ color: colors.text.primary, fontSize: sizes.text.sm }}>
+        <span style={{ color: colors.text.primary, fontSize: sizes.text.sm, minWidth: 0, flex: '1 1 auto' }}>
           {task.title}
         </span>
       </div>

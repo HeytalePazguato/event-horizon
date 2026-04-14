@@ -2,6 +2,23 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [2.0.1] — 2026-04-14
+
+### Fixed
+- **Extension crash on activation: `ENOENT ... out/sql-wasm.wasm`**: the shipped 2.0.0 VSIX was missing sql.js's WASM binary. `esbuild --bundle` inlines JavaScript but cannot embed binary assets, and `vsce package --no-dependencies` strips `node_modules/` — so the WASM had nowhere to live at install time. Added `scripts/copy-sql-wasm.mjs` that copies `node_modules/sql.js/dist/sql-wasm.wasm` into `out/` as part of every build path (tsc dev, esbuild prod, VSIX packaging). `persistence.ts` now passes an explicit `locateFile` callback to `initSqlJs` that resolves via `__dirname` in prod and falls back to `require.resolve('sql.js/dist/sql-wasm.wasm')` for tests, so the WASM is always found regardless of how the extension was installed
+- **Agent spawn failing with "terminal process terminated with exit code 1" on Windows**: spawners built a single shell command string using PowerShell-only syntax (`[System.IO.File]::ReadAllText(...)`) and then passed it to `cp.spawn({ shell: true })`, which on Windows defaults to `cmd.exe` via `COMSPEC`. `cmd.exe` could not parse the PowerShell syntax and exited 1 before the CLI ever ran — no output, no logs, no recourse. Rewrote every spawn path to argv-style `cp.spawn(bin, [...args], { shell: false })`: no shell between us and the CLI, no escaping, no temp files. Windows shim files (`.cmd` / `.bat` / `.ps1`) are detected and wrapped correctly. Interactive mode now uses `createTerminal({ shellPath, shellArgs })` so VS Code runs the CLI directly as the terminal's root process
+- **Silent spawn failures**: added an `Event Horizon — Agents` output channel that logs every spawn (resolved path, args with prompts redacted, cwd) and mirrors stderr — so the next time a child process dies the user actually has something to read
+- **OpenCode orchestrator spawning Claude workers (and vice-versa)**: `eh_spawn_agent` required `agent_type` and did nothing server-side when it was omitted, so worker runtime was entirely at the mercy of the orchestrator LLM remembering (and correctly stating) its own type. The server now defaults worker `agent_type` to the orchestrator's registered runtime — OpenCode orchestrator → OpenCode workers, Claude orchestrator → Claude workers — without the LLM having to pass anything. `agent_type` is now optional in the tool schema; explicit values still override (for `--agent` flags and `[agent: X]` task metadata). Orchestrate skill updated to instruct agents to omit the param unless overriding
+- **Knowledge tab empty on extension open**: the auto-seed pass for workspace instruction files fired before the webview existed, so its `knowledge-update` broadcast was dropped and the tab stayed empty forever. `hydrateWebview` now re-broadcasts current knowledge when the webview signals `ready`, so entries show up whether they were written before or after the panel mounted
+- **Kanban task cards overflowing their columns**: long auto-generated task IDs pushed cards past their grid cell width on narrow panels. Grid cells and `TaskCard` now have `minWidth: 0` + `overflowWrap: anywhere`, and the ID span no longer refuses to shrink
+
+### Added
+- **Workspace instruction file auto-discovery**: the extension now globs `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `copilot-instructions.md`, `.github/copilot-instructions.md`, and `.claude/rules/**/*.md` across every workspace folder via `vscode.workspace.findFiles`. Each file becomes its own workspace knowledge entry (no more 20-section merge) with a stable `auto:<relPath>` key, tier assignment (root instructions → L1, `.claude/rules/*` → L2), and `source: auto` tag
+- **Live sync via `FileSystemWatcher`**: creating, editing, or deleting an instruction file updates the corresponding Knowledge entry within ~1s without a VS Code reload. Workspace folder add/remove triggers a full re-scan
+- **`source` field on `KnowledgeEntry`**: `auto` (scanned), `user` (typed in the UI), or `agent` (written via `eh_write_shared`). `writeIfNotUserAuthored` helper ensures re-scans never overwrite user- or agent-authored entries
+- **Tier grouping + auto pill in Knowledge tab**: the Workspace section now groups entries by tier with L0 / L1 / L2 sub-headers and counts. Auto-discovered entries show a dashed "auto" pill with a tooltip explaining they came from an instruction file
+- **`eventHorizon.knowledge.autoDiscover` setting** (boolean, default `true`): disable to opt out of auto-scanning instruction files — useful if you only want knowledge that was explicitly written by agents or via the UI
+
 ## [2.0.0] — 2026-04-13
 
 ### Added
