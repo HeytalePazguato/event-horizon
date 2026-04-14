@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [2.0.1] — 2026-04-13
+## [2.0.1] — 2026-04-14
 
 ### Fixed
 - **Extension crash on activation: `ENOENT ... out/sql-wasm.wasm`**: the shipped 2.0.0 VSIX was missing sql.js's WASM binary. `esbuild --bundle` inlines JavaScript but cannot embed binary assets, and `vsce package --no-dependencies` strips `node_modules/` — so the WASM had nowhere to live at install time. Added `scripts/copy-sql-wasm.mjs` that copies `node_modules/sql.js/dist/sql-wasm.wasm` into `out/` as part of every build path (tsc dev, esbuild prod, VSIX packaging). `persistence.ts` now passes an explicit `locateFile` callback to `initSqlJs` that resolves via `__dirname` in prod and falls back to `require.resolve('sql.js/dist/sql-wasm.wasm')` for tests, so the WASM is always found regardless of how the extension was installed
