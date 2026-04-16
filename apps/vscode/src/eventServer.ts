@@ -121,6 +121,16 @@ export const sessionStore = new SessionStore();
 export const heartbeatManager = new HeartbeatManager();
 export const worktreeManager = new WorktreeManager();
 export const budgetManager = new BudgetManager();
+
+/**
+ * Track which plan ID the webview is currently viewing. Used by knowledge
+ * broadcasts so `getAllEntries()` pulls the correct plan's entries rather
+ * than falling back to `_default`.
+ */
+export let webviewSelectedPlanId: string | null = null;
+export function setWebviewSelectedPlanId(id: string | null): void {
+  webviewSelectedPlanId = id;
+}
 export const traceStore = new TraceStore();
 export const modelTierManager = new ModelTierManager();
 export const tokenAnalyzer = new TokenAnalyzer();

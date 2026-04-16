@@ -4,8 +4,15 @@
  * that happened when PowerShell-only command strings were passed to cmd.exe.
  */
 
-import { describe, it, expect } from 'vitest';
-import { ClaudeCodeSpawner, type SpawnOpts } from '../spawnRegistry.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { ClaudeCodeSpawner, resolveCommand, type SpawnOpts } from '../spawnRegistry.js';
+
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  return { ...actual, execFile: vi.fn(actual.execFile) };
+});
+
+import { execFile } from 'child_process';
 
 function baseOpts(overrides: Partial<SpawnOpts> = {}): SpawnOpts {
   return {
@@ -81,6 +88,69 @@ describe('ClaudeCodeSpawner.buildArgs — interactive mode', () => {
   it('still pre-authorizes tools so the interactive agent can edit without prompts', () => {
     const args = ClaudeCodeSpawner.buildArgs(baseOpts(), 'interactive');
     expect(args).toContain('--allowedTools');
+  });
+});
+
+describe('resolveCommand — Windows shim preference', () => {
+  const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('prefers .cmd over extensionless file when where returns both', async () => {
+    // Simulate Windows
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32' as NodeJS.Platform);
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+      cb(null, 'C:\\Program Files\\nodejs\\opencode\r\nC:\\Program Files\\nodejs\\opencode.cmd\r\n', '');
+      return {} as any;
+    });
+
+    const result = await resolveCommand('opencode');
+    expect(result).not.toBeNull();
+    expect(result!.fullPath).toBe('C:\\Program Files\\nodejs\\opencode.cmd');
+    expect(result!.bin).toBe('cmd.exe');
+    expect(result!.prefix).toContain('C:\\Program Files\\nodejs\\opencode.cmd');
+  });
+
+  it('prefers .exe over extensionless file on Windows', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32' as NodeJS.Platform);
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+      cb(null, 'C:\\tools\\mytool\r\nC:\\tools\\mytool.exe\r\n', '');
+      return {} as any;
+    });
+
+    const result = await resolveCommand('mytool');
+    expect(result).not.toBeNull();
+    expect(result!.fullPath).toBe('C:\\tools\\mytool.exe');
+    // .exe is not a shim — no wrapping
+    expect(result!.bin).toBe('C:\\tools\\mytool.exe');
+    expect(result!.prefix).toEqual([]);
+  });
+
+  it('falls back to extensionless file if no Windows-executable extension found', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32' as NodeJS.Platform);
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+      cb(null, 'C:\\tools\\mytool\r\n', '');
+      return {} as any;
+    });
+
+    const result = await resolveCommand('mytool');
+    expect(result).not.toBeNull();
+    expect(result!.fullPath).toBe('C:\\tools\\mytool');
+    expect(result!.bin).toBe('C:\\tools\\mytool');
+  });
+
+  it('does not apply Windows preference logic on non-Windows platforms', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux' as NodeJS.Platform);
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+      cb(null, '/usr/bin/opencode\n', '');
+      return {} as any;
+    });
+
+    const result = await resolveCommand('opencode');
+    expect(result).not.toBeNull();
+    expect(result!.fullPath).toBe('/usr/bin/opencode');
+    expect(result!.bin).toBe('/usr/bin/opencode');
+    expect(result!.prefix).toEqual([]);
   });
 });
 

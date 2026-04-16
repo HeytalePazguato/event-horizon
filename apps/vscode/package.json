@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
@@ -461,7 +461,7 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^25.5.2",
+    "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/sql.js": "^1.4.11",
@@ -470,8 +470,8 @@
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.0",
     "ovsx": "^0.10.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "typescript": "^5.9.3"
   }
 }

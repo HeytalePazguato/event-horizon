@@ -1,228 +1,143 @@
 # Event Horizon
 
-**Tell one AI agent to build a feature. It creates the plan, spawns the team, and manages the entire project.**
-
-You open three terminals. Claude Code is building the API. OpenCode is writing tests. Copilot is updating the docs. They're all editing the same project. One overwrites the other's work. You don't notice until the build breaks.
-
-Event Horizon fixes this. It turns any AI agent into a team lead that can spawn workers, assign roles, share knowledge, track budgets, and coordinate work across your entire codebase.
+**Turn any AI coding agent into a project manager.** One command creates a plan, spawns a team of AI agents, assigns roles, and manages the entire project -- while you watch it happen live in a cosmic visualization.
 
 ![Event Horizon Demo](https://raw.githubusercontent.com/HeytalePazguato/event-horizon/master/assets/demo2.gif)
 
+## Get started in 30 seconds
+
+1. Click the rocket icon (top-right of any editor tab) or press `Ctrl+Shift+E H`
+2. Click **Connect** and choose your agent
+3. Start coding -- your agent appears as a planet
+
+No accounts. No config files. No API keys. Everything runs on your machine.
+
+> No agent running? Click **Demo** to see the universe in action with simulated agents.
+
 ---
 
-## How It Works
+## What happens when you use Event Horizon
 
-### 1. Create a plan
+### Before: you manage every agent manually
+
+You open three terminals. Claude Code builds the API. OpenCode writes tests. Copilot updates docs. They all edit the same project. Claude overwrites OpenCode's changes to `server.ts`. Nobody notices. The build breaks. You spend 20 minutes untangling.
+
+### After: your agent manages the team for you
 
 ```
 /eh:create-plan Build a REST API with auth, database layer, and tests
 ```
 
-Event Horizon generates a plan with parallel tracks, dependency annotations, and verify steps. The agent that creates the plan automatically becomes the **orchestrator**.
-
-### 2. The orchestrator spawns the team
-
-The orchestrator agent spawns workers in visible VS Code terminals. Each worker gets a role, a task assignment, and access to the shared knowledge base. You can see every terminal, every agent, everything they're doing.
-
-```
-Orchestrator → spawns Claude Code (implementer) → claims database tasks
-Orchestrator → spawns OpenCode (tester) → claims test tasks
-Orchestrator → spawns Copilot (reviewer) → reviews completed work
-```
-
-### 3. Agents coordinate themselves
-
-Workers claim tasks atomically. Dependencies are enforced. File locks prevent collisions. If a task fails, cascade failure propagates cleanly and retry recovers automatically. The Kanban board and Universe visualization update live.
+Your agent becomes the orchestrator. It analyzes the work, breaks it into parallel tasks, spawns worker agents in visible terminals, assigns roles, enforces file locks, tracks the budget, retries failures, and reports back when everything is done. You watch it happen on a live Kanban board and a cosmic visualization where every agent is a planet.
 
 ---
 
-## What It Does
+## Works with every major AI coding agent
 
-### Orchestrator Role
+| Agent | Hooks | MCP Tools | File Locking | Spawnable | Token Tracking |
+|-------|:-----:|:---------:|:------------:|:---------:|:--------------:|
+| **Claude Code** | Yes | Yes | Yes | Yes | Yes |
+| **OpenCode** | Yes | Yes | Yes | Yes | Yes |
+| **GitHub Copilot** | Yes | Yes | -- | -- | Partial |
+| **Cursor** | Yes | Yes | -- | Yes | Yes |
 
-The agent that creates a plan auto-becomes the orchestrator. It gains elevated MCP tools to spawn agents, assign tasks, monitor the team, and control budgets. Any agent type can be the orchestrator. Creating the plan IS the promotion.
+One-click connect. MCP server auto-registered. Hooks auto-updated on every activation. Mix and match agents freely -- Claude orchestrating OpenCode workers is a first-class workflow.
 
-### Agent Spawning
+---
 
-Agents spawn in **visible VS Code terminals**, not hidden background processes. You can see what every agent is doing at any moment. Click a planet in the Universe to focus its terminal. Terminals stay open on completion so you can review output.
+## Core capabilities
 
-### Shared Knowledge
+### Multi-agent orchestration
 
-A live knowledge base where both humans and agents contribute context. Two scopes:
-- **Workspace knowledge** (persistent) — tech stack, conventions, constraints. Survives across plans and sessions.
-- **Plan knowledge** (scoped) — discoveries, corrections, and decisions during execution. Lives and dies with the plan.
+The agent that creates a plan auto-becomes the orchestrator with elevated MCP tools to spawn agents, assign tasks, monitor the team, and control budgets. Spawned agents run in **visible VS Code terminals** -- full transparency, click any planet to focus its terminal.
 
-Different from CLAUDE.md: shared knowledge is real-time, team-wide, and agents contribute too.
+### Plan coordination
 
-### Plan Coordination
+Atomic task claiming (no duplicate work), dependency resolution (blocked tasks auto-unblock), cascade failure with auto-retry and model escalation (haiku fails, sonnet retries, opus escalates). Smart task recommendations score agents by role match, historical performance, and current load.
 
-- **Atomic task claiming** — no race conditions, no duplicate work
-- **Dependency resolution** — blocked tasks auto-unblock when dependencies complete
-- **Cascade failure** — when a task fails, all transitive dependents fail cleanly with root cause
-- **Auto-retry** — failed tasks retry with exponential backoff, cascade-failed dependents auto-recover
-- **Smart recommendations** — agents ask "what should I work on next?" and get scored suggestions
-- **Scheduling strategies** — round-robin, least-busy, capability-match, or dependency-first auto-assignment
-- **Multi-plan support** — run multiple plans simultaneously, each with its own orchestrator
+### File locking and worktree isolation
 
-### File Locking
+When Agent A edits a file, Agent B is **hard-blocked** -- the tool call doesn't execute. Locks refresh on writes and release on agent termination. For full isolation, agents can work in their own git worktrees with auto-merge on completion.
 
-When Agent A is editing `src/server.ts`, Agent B is **hard-blocked** from touching it. Not a warning — the tool call doesn't execute. When A finishes, the lock releases automatically. Zero interleaved writes.
+### Shared knowledge
 
-### Git Worktree Isolation
+A live knowledge base where humans and agents contribute context in real-time. Workspace knowledge persists across sessions. Plan knowledge lives with the plan. Auto-discovers CLAUDE.md, .cursorrules, copilot-instructions.md, and other instruction files.
 
-For full isolation, agents can work in their own git worktrees. The orchestrator creates a worktree per agent, each with its own branch. Completed work merges back automatically. Complements file locking — use locks for shared work, worktrees for isolated tracks.
+### Budget and cost controls
 
-### Budget Controls
+Per-plan spending limits with warning at 80% and hard stop at 100%. Tiered model selection tries the cheapest model first per task complexity. Failed verification auto-escalates (haiku to sonnet to opus). Cost Insights panel shows cache efficiency, duplicate reads, and actionable recommendations.
 
-Set a per-plan budget in USD. Event Horizon tracks cumulative cost across all agents. Warning at 80%, hard stop at 100%. Agents can check remaining budget before expensive operations. Per-agent cost breakdowns in the dashboard.
+### Agent roles and profiling
 
-### Session Resume
+Eight built-in roles (researcher, planner, implementer, reviewer, tester, debugger, orchestrator, context-optimizer) plus custom roles. The profiler tracks success rate, speed, and cost per agent type per role -- so you know which agent is best at what.
 
-When an agent picks up a task it previously worked on, it resumes the prior conversation instead of cold-starting. No lost context, no wasted tokens re-reading the codebase.
+---
 
-### Agent Roles
-
-Six built-in roles (researcher, planner, implementer, reviewer, tester, debugger) plus custom roles. When an agent claims a task tagged with a role, it automatically receives the role's instructions and recommended skills. The profiler tracks success rate, speed, and cost per agent type per role — so you know which agent is best at what.
-
-### Heartbeat System
-
-Know if an agent is alive or just silent. Configurable heartbeat intervals with stale/lost detection. Dead agents show a fading planet in the Universe view.
-
-### Live Visualization
+## Live visualization
 
 Every agent is a planet. The cosmic metaphor encodes real information:
 
 | Visual | Meaning |
 |--------|---------|
 | Planet type (gas, rocky, icy, volcanic) | Agent type (Claude, OpenCode, Copilot, Cursor) |
-| Orchestrator star (bright, emission rays) | The agent managing the plan |
+| Golden star with emission rays | Orchestrator managing the plan |
 | Pulsing ring | Agent is thinking |
-| Amber breathing ring | Waiting for user input |
+| Amber breathing ring | Waiting for your input |
 | Red glow | Error state |
 | Orbiting moons | Active subagents |
-| Ships between planets | Data transfers / cooperation |
-| Lightning arcs | File collision (same file, two agents) |
-| Asteroid belt | Workspace group (shared directory) |
-| Orbital debris | Plan tasks (shape/color = status, glow = role) |
+| Ships between planets | Data transfers between cooperating agents |
+| Lightning arcs | File collision -- two agents editing the same file |
+| Asteroid belt | Workspace group (agents sharing a directory) |
+| Orbital debris | Plan tasks (shape and color encode status) |
 
-### Operations Dashboard
+## Operations dashboard
 
-Full-screen dashboard (`Ctrl+Shift+E O`) with:
-
-- **Agents / Plans sidebar** — agents grouped by workspace, plans grouped by status
-- **Overview** — metrics grid, tool breakdowns, agent summary table
-- **Files** — sortable heatmap of file activity across all agents
-- **Logs** — searchable event log with type filters
-- **Timeline** — horizontal swimlane of agent activity over time
-- **Plan** — Kanban board with sticky headers, progress bar, dependency annotations
-- **Dependencies** — DAG visualization with critical path highlighting and cascade failure animation
-- **Roles** — role definitions, agent assignments, per-role performance profiles
-- **Knowledge** — workspace and plan knowledge entries, add/edit/delete, real-time updates
+Full-screen dashboard (`Ctrl+Shift+E O`) with agents/plans sidebar, metrics overview, file activity heatmap, searchable event logs, timeline swimlanes, Kanban board with dependency DAG, role assignments with performance profiles, cost insights, and a shared knowledge panel.
 
 ---
 
-## Get Started (30 seconds)
+## 40+ MCP tools
 
-1. **Open the universe**: Click the rocket icon (top-right of any editor tab) or `Ctrl+Shift+E H`
-2. **Connect an agent**: Click **Connect** → choose your agent → **Install**
-3. **Start coding**: Launch an agent session. Your planet appears.
+All agents access coordination tools via the MCP server (auto-registered on connect):
 
-No tokens. No config files. No API keys. Everything runs locally.
+`eh_load_plan` `eh_get_plan` `eh_list_plans` `eh_claim_task` `eh_update_task` `eh_retry_task` `eh_recommend_task` `eh_verify_task` `eh_archive_plan` `eh_delete_plan` `eh_send_message` `eh_get_messages` `eh_check_lock` `eh_acquire_lock` `eh_release_lock` `eh_wait_for_unlock` `eh_list_agents` `eh_file_activity` `eh_write_shared` `eh_read_shared` `eh_get_shared_summary` `eh_delete_shared` `eh_list_roles` `eh_assign_role` `eh_get_agent_profile` `eh_recommend_agent` `eh_heartbeat` `eh_get_budget` `eh_get_session` `eh_get_cost_insights` `eh_spawn_agent` `eh_stop_agent` `eh_reassign_task` `eh_get_team_status` `eh_auto_assign` `eh_create_worktree` `eh_remove_worktree` `eh_request_budget_increase` `eh_sync_skills` `eh_search_events`
 
-> No agent running? Click **Demo** to see the universe in action.
+Nine bundled skills handle common workflows so agents don't need to memorize tool names:
 
----
-
-## MCP Coordination Tools
-
-30+ MCP tools power the coordination, grouped by access level:
-
-**Worker tools** (all agents):
-
-| Tool | Purpose |
-|------|---------|
-| `eh_load_plan` / `eh_get_plan` / `eh_list_plans` | Load, view, and list plans |
-| `eh_claim_task` / `eh_update_task` / `eh_retry_task` | Claim, update, and retry tasks |
-| `eh_recommend_task` | Get scored task suggestions |
-| `eh_archive_plan` / `eh_delete_plan` | Manage plan lifecycle |
-| `eh_send_message` / `eh_get_messages` | Agent-to-agent messaging |
-| `eh_check_lock` / `eh_acquire_lock` / `eh_release_lock` / `eh_wait_for_unlock` | File lock management |
-| `eh_list_agents` / `eh_file_activity` | Discovery and monitoring |
-| `eh_write_shared` / `eh_read_shared` / `eh_get_shared_summary` / `eh_delete_shared` | Shared knowledge |
-| `eh_list_roles` / `eh_assign_role` | Role management |
-| `eh_get_agent_profile` / `eh_recommend_agent` | Performance profiling |
-| `eh_heartbeat` / `eh_get_budget` / `eh_get_session` | Status and session management |
-
-**Orchestrator tools** (auto-granted when an agent creates a plan):
-
-| Tool | Purpose |
-|------|---------|
-| `eh_spawn_agent` / `eh_stop_agent` | Spawn and terminate agents |
-| `eh_reassign_task` | Move tasks between agents |
-| `eh_get_team_status` | Full team overview |
-| `eh_auto_assign` | Run scheduling strategy on unassigned tasks |
-| `eh_create_worktree` / `eh_remove_worktree` | Git worktree isolation |
-| `eh_request_budget_increase` | Request more budget (user approves) |
-| `eh_sync_skills` | Push skills to spawned agents |
-
-Agents don't need to know these tool names — the bundled skills handle everything.
+| Skill | What it does |
+|-------|-------------|
+| `/eh:create-plan` | Generate a plan with parallel tracks, dependencies, acceptance criteria, and verify steps |
+| `/eh:work-on-plan` | Claim tasks, implement, self-verify against acceptance criteria, mark progress |
+| `/eh:orchestrate` | Manage a plan as orchestrator -- spawn workers, assign tasks, monitor, handle failures |
+| `/eh:verify-task` | Batch-verify completed tasks by running their verify commands |
+| `/eh:optimize-context` | Reduce token costs by analyzing and splitting instruction files |
+| `/eh:plan-status` | View progress, blocked tasks, active agents, available work |
+| `/eh:research` | Explore codebase and output structured findings |
+| `/eh:review` | Code review with severity levels and verification pipeline |
+| `/eh:test` | Write tests following project conventions |
+| `/eh:debug` | Diagnose bugs, trace root cause, apply minimal fix |
 
 ---
 
-## Bundled Skills
+## 28 achievements
 
-Seven coordination skills ship with the extension, auto-installed so all agents discover them:
-
-| Skill | Role | What it does |
-|-------|------|-------------|
-| `/eh:create-plan` | Planner | Generate a plan with parallel tracks, dependencies, and verify steps |
-| `/eh:work-on-plan` | Implementer | Claim tasks, implement, mark progress, broadcast breaking changes |
-| `/eh:plan-status` | Any | View progress, blocked tasks, active agents, available work |
-| `/eh:research` | Researcher | Explore codebase, gather context, output structured findings |
-| `/eh:review` | Reviewer | Code review with severity levels, run tests if available |
-| `/eh:test` | Tester | Write tests following project conventions, report coverage |
-| `/eh:debug` | Debugger | Diagnose bugs, trace root cause, apply minimal fix, verify |
+Milestones that track your multi-agent journey -- from spawning your first agent to surviving file collisions, catching UFOs, and diving astronauts into black holes. Some are secret. Some have tiers. All persist across sessions.
 
 ---
 
-## Supported Agents
+## Privacy
 
-| Agent | Hooks | MCP Tools | File Locking | Spawnable | Token Tracking |
-|-------|:-----:|:---------:|:------------:|:---------:|:--------------:|
-| **Claude Code** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **OpenCode** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **GitHub Copilot** | ✅ | ✅ | — | — | Partial |
-| **Cursor** | ✅ | ✅ | — | ✅ | — |
-
-All MCP server registrations happen automatically when you connect an agent. No manual config.
-
----
-
-## Why Event Horizon
-
-- **Zero infrastructure** — install the extension and you're done. No Docker, no databases, no accounts.
-- **Agent-agnostic** — works with any coding agent. Claude Code, OpenCode, Copilot, Cursor. They all share the same plan board, file locks, and message bus.
-- **MCP-native** — agents use the standard MCP protocol. No custom APIs, no vendor lock-in.
-- **Markdown plans** — portable, version-controllable, readable. Your plans are just markdown files.
-- **100% local** — server runs on `127.0.0.1:28765`. Nothing leaves your machine. No telemetry.
-- **VS Code native** — no context switching. Agents, visualization, and dashboard all live where you code.
-- **Visible agents** — spawned agents run in real VS Code terminals. You can see everything they do.
-
----
-
-## Privacy & Performance
-
-- **100% local** — server runs on `127.0.0.1:28765`. Nothing leaves your machine.
-- **Zero agent overhead** — hooks use `--connect-timeout 2` with silent fallback. If Event Horizon is closed, your agents run identically.
-- **No telemetry** — no analytics, no tracking, no data collection.
+- **100% local** -- server on `127.0.0.1:28765`, nothing leaves your machine
+- **Zero agent overhead** -- if Event Horizon is closed, agents run identically
+- **No telemetry** -- no analytics, no tracking, no data collection
 
 ---
 
 ## Links
 
-- [Full documentation & source code](https://github.com/HeytalePazguato/event-horizon)
+- [Source code and documentation](https://github.com/HeytalePazguato/event-horizon)
 - [Changelog](https://github.com/HeytalePazguato/event-horizon/blob/master/apps/vscode/CHANGELOG.md)
 - [Report an issue](https://github.com/HeytalePazguato/event-horizon/issues)
 - [Rate this extension](https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode&ssr=false#review-details)
 
-MIT License with Commons Clause — see [LICENSE](https://github.com/HeytalePazguato/event-horizon/blob/master/LICENSE).
+MIT License with Commons Clause -- see [LICENSE](https://github.com/HeytalePazguato/event-horizon/blob/master/LICENSE).
