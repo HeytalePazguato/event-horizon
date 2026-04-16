@@ -2,6 +2,21 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [2.0.2] — 2026-04-15
+
+### Fixed
+- **Agent spawn ENOENT on Windows for npm-installed CLIs**: `resolveCommand()` used `where` to locate binaries, but on Windows `where opencode` returns both the extensionless Unix shell script (`C:\Program Files\nodejs\opencode`) and the `.cmd` shim (`C:\Program Files\nodejs\opencode.cmd`). The function picked the first result — the extensionless file — which Node cannot execute with `shell: false`, causing `spawn ENOENT`. Now prefers entries with Windows-executable extensions (`.cmd`, `.bat`, `.exe`, `.ps1`) over extensionless files, so the `.cmd` shim is selected and properly wrapped via `cmd.exe /d /s /c`. Affects all agent spawners (Claude Code, OpenCode, Cursor)
+- **Orchestrator role and role badges not showing in UI**: when an agent claimed the orchestrator role via `eh_claim_orchestrator`, the role assignment was stored in `RoleManager` with an `agentId`, but the `agentRoleMap` broadcast to the webview was built exclusively from `spawnRegistry.getAgentRoleMap()` — which only knows about agents spawned through the spawn registry. Hook-connected agents (the common case) were invisible. The role map is now built from both sources. The Roles panel's Agent Assignments section also only matched roles by `agentType`, skipping `agentId`-based assignments entirely — now checks both
+- **OpenCode agents showing "/" as working directory**: OpenCode's VS Code extension plugin can send `cwd="/"` when the project path resolves to the filesystem root (e.g. `URL.pathname` from `file:///`). This truthy value bypassed the workspace folder fallback injection. Root-only paths (`/`, `C:\`) are now treated as missing, so the primary workspace folder is injected instead
+- **Knowledge tab Plan section showing stale entries from old plans**: all knowledge broadcasts used `getAllEntries()` without a plan ID, so plan-scoped entries were always read from the `_default` bucket — entries from whichever plan happened to not pass a `plan_id` to `eh_write_shared`. Now tracks the webview's selected plan ID and passes it through to all knowledge queries. Switching plans in the sidebar immediately refreshes the Plan knowledge section. Plan changes (load, task update, completion) also trigger a knowledge re-broadcast
+
+### Dependencies
+- `react` 19.2.4 → 19.2.5
+- `react-dom` 19.2.4 → 19.2.5
+- `vitest` 4.1.2 → 4.1.4
+- `@types/node` 25.5.2 → 25.6.0
+- `globals` 17.4.0 → 17.5.0
+
 ## [2.0.1] — 2026-04-14
 
 ### Fixed

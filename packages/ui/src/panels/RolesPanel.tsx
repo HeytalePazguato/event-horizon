@@ -159,10 +159,16 @@ export const RolesPanel: FC<RolesPanelProps> = ({ roles, assignments, profiles, 
     setEditingRoleId(null); setShowCreateForm(false);
   };
 
-  // Build assignment lookup: roleId → agentType
+  // Build assignment lookup: roleId → display label (agentType or agent name)
   const assignmentMap = new Map<string, string>();
   for (const a of assignments) {
-    if (a.agentType) assignmentMap.set(a.roleId, a.agentType);
+    if (a.agentType) {
+      assignmentMap.set(a.roleId, a.agentType);
+    } else if (a.agentId) {
+      // agentType may be null for hook-connected agents — resolve agent name from the agents list
+      const agent = agents.find((ag) => ag.id === a.agentId);
+      assignmentMap.set(a.roleId, agent?.name ?? a.agentId);
+    }
   }
 
   const selectedRole = selectedRoleId ? roles.find((r) => r.id === selectedRoleId) : null;
@@ -416,20 +422,33 @@ export const RolesPanel: FC<RolesPanelProps> = ({ roles, assignments, profiles, 
       {/* ── Agent Role Summary ──────────────────────────────────────────── */}
       {(() => {
         const selectedAgentId = useCommandCenterStore.getState().selectedAgentId;
-        // Build reverse lookup: agentType → roleIds[]
+        // Build reverse lookup: agentType → roleIds[] AND agentId → roleIds[]
         const typeToRoles = new Map<string, string[]>();
+        const idToRoles = new Map<string, string[]>();
         for (const a of assignments) {
-          if (!a.agentType) continue;
-          const list = typeToRoles.get(a.agentType) ?? [];
-          list.push(a.roleId);
-          typeToRoles.set(a.agentType, list);
+          if (a.agentType) {
+            const list = typeToRoles.get(a.agentType) ?? [];
+            list.push(a.roleId);
+            typeToRoles.set(a.agentType, list);
+          }
+          if (a.agentId) {
+            const list = idToRoles.get(a.agentId) ?? [];
+            list.push(a.roleId);
+            idToRoles.set(a.agentId, list);
+          }
         }
+        // Helper: get all roles for a given agent (by ID first, then by type)
+        const getRolesForAgent = (agent: AgentSummary): string[] => {
+          const byId = idToRoles.get(agent.id) ?? [];
+          const byType = typeToRoles.get(agent.type) ?? [];
+          return [...new Set([...byId, ...byType])];
+        };
 
         if (selectedAgentId) {
           // Show roles for selected agent
           const agent = agents.find((a) => a.id === selectedAgentId);
           if (agent) {
-            const agentRoles = typeToRoles.get(agent.type) ?? [];
+            const agentRoles = getRolesForAgent(agent);
             return (
               <div style={{ padding: `${sizes.spacing.sm}px ${sizes.spacing.md}px`, background: 'rgba(15,30,20,0.6)', border: `1px solid ${colors.border.primary}`, borderRadius: sizes.radius.sm }}>
                 <div style={{ fontSize: sizes.text.sm, color: colors.text.secondary, marginBottom: 4 }}>
@@ -467,8 +486,8 @@ export const RolesPanel: FC<RolesPanelProps> = ({ roles, assignments, profiles, 
           );
         }
 
-        const agentsWithRoles = agents.filter((a) => (typeToRoles.get(a.type)?.length ?? 0) > 0);
-        const agentsWithoutRoles = agents.filter((a) => (typeToRoles.get(a.type)?.length ?? 0) === 0);
+        const agentsWithRoles = agents.filter((a) => getRolesForAgent(a).length > 0);
+        const agentsWithoutRoles = agents.filter((a) => getRolesForAgent(a).length === 0);
 
         return (
           <div style={{ padding: `${sizes.spacing.sm}px ${sizes.spacing.md}px`, background: 'rgba(15,30,20,0.6)', border: `1px solid ${colors.border.primary}`, borderRadius: sizes.radius.sm }}>
@@ -480,7 +499,7 @@ export const RolesPanel: FC<RolesPanelProps> = ({ roles, assignments, profiles, 
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {agentsWithRoles.map((agent) => {
-                  const agentRoles = typeToRoles.get(agent.type) ?? [];
+                  const agentRoles = getRolesForAgent(agent);
                   return (
                     <div key={agent.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: sizes.text.xs }}>
                       <span style={{ color: colors.text.primary, minWidth: 80 }}>{agent.name}</span>

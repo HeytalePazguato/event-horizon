@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -287,12 +287,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  /** Get the effective plan ID for knowledge queries — selected plan, active plan, or null. */
+  function getEffectivePlanId(): string | undefined {
+    if (webviewSelectedPlanId) return webviewSelectedPlanId;
+    return planBoardManager.getPlan()?.id ?? undefined;
+  }
+
+  /** Broadcast current knowledge to the webview using the effective plan ID. */
+  function broadcastKnowledge(): void {
+    if (!webviewRef.current) return;
+    const entries = sharedKnowledge.getAllEntries(getEffectivePlanId());
+    webviewRef.current.postMessage({ type: 'knowledge-update', workspace: entries.workspace, plan: entries.plan });
+  }
+
   // Persist shared knowledge on change
   sharedKnowledge.onChange(() => {
     void context.globalState.update('sharedKnowledge', sharedKnowledge.serializeWorkspace());
-    // Broadcast knowledge to webview
-    const entries = sharedKnowledge.getAllEntries();
-    webviewRef.current?.postMessage({ type: 'knowledge-update', workspace: entries.workspace, plan: entries.plan });
+    broadcastKnowledge();
   });
 
   /** Serialize a PlanBoard to the webview plan-update format. */
@@ -364,6 +375,10 @@ export function activate(context: vscode.ExtensionContext): void {
       // Send the changed plan in full so the Kanban updates
       activePlan: changedPlanId ? planToView(planBoardManager.getPlan(changedPlanId)!) : undefined,
     });
+
+    // Re-broadcast knowledge when the active/viewed plan changes so the
+    // Knowledge tab shows entries scoped to the correct plan.
+    broadcastKnowledge();
 
     // Detect plan completion transition → send synthesis beams
     if (changedPlanId) {
@@ -447,6 +462,12 @@ export function activate(context: vscode.ExtensionContext): void {
     messageQueue.send('event-horizon', 'Event Horizon', task.assignee, parts.join('\n\n'));
   });
 
+  // Build a merged agentId→role map from both the spawn registry (spawned agents)
+  // and the role manager (hook-connected agents that claimed roles via MCP).
+  function buildAgentRoleMap(): Record<string, string> {
+    return { ...roleManager.getAgentIdToRoleMap(), ...spawnRegistry.getAgentRoleMap() };
+  }
+
   // Persist role changes
   roleManager.onChange(() => {
     void context.globalState.update('agentRoles', roleManager.serialize());
@@ -457,7 +478,7 @@ export function activate(context: vscode.ExtensionContext): void {
         roles: roleManager.getAllRoles(),
         assignments: roleManager.getAllAssignments(),
         profiles: agentProfiler.getAllProfiles(),
-        agentRoleMap: spawnRegistry.getAgentRoleMap(),
+        agentRoleMap: buildAgentRoleMap(),
       });
     }
   });
@@ -470,7 +491,7 @@ export function activate(context: vscode.ExtensionContext): void {
         roles: roleManager.getAllRoles(),
         assignments: roleManager.getAllAssignments(),
         profiles: agentProfiler.getAllProfiles(),
-        agentRoleMap: spawnRegistry.getAgentRoleMap(),
+        agentRoleMap: buildAgentRoleMap(),
       });
     }
   });
@@ -718,8 +739,13 @@ export function activate(context: vscode.ExtensionContext): void {
       } catch { /* persistence failure should never block event processing */ }
     }
 
-    // Inject workspace cwd if the agent/event doesn't provide one
-    if (!event.payload?.cwd) {
+    // Inject workspace cwd if the agent/event doesn't provide a meaningful one.
+    // OpenCode's VS Code extension can send cwd="/" when the project path resolves
+    // to the filesystem root (e.g. URL pathname from file:///). Treat root-only
+    // paths as missing so the workspace folder fallback kicks in.
+    const rawCwd = event.payload?.cwd as string | undefined;
+    const isMeaninglessCwd = !rawCwd || rawCwd === '/' || /^[A-Z]:\\?$/i.test(rawCwd);
+    if (isMeaninglessCwd) {
       const primaryFolder = vscode.workspace.workspaceFolders?.[0];
       if (primaryFolder) {
         event = { ...event, payload: { ...event.payload, cwd: primaryFolder.uri.fsPath } };

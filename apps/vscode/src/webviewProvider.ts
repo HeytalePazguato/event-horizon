@@ -12,7 +12,7 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId } from './eventServer.js';
 import { getDatabase } from './extension.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
@@ -375,7 +375,9 @@ function wireUniverseWebview(
     // sharedKnowledge.onChange() broadcasts via webviewRef.current?.postMessage, but on initial
     // activation that ref is still null. Without this line, any entries written before the
     // webview mounts (including auto-seeded instruction files) never reach the UI.
-    const knowledgeEntries = sharedKnowledge.getAllEntries();
+    // Use the active plan ID so the correct plan's knowledge entries are shown.
+    const activePlanForKnowledge = planBoardManager.getPlan()?.id;
+    const knowledgeEntries = sharedKnowledge.getAllEntries(activePlanForKnowledge);
     void webview.postMessage({
       type: 'knowledge-update',
       workspace: knowledgeEntries.workspace,
@@ -411,7 +413,7 @@ function wireUniverseWebview(
       roles: roleManager.getAllRoles(),
       assignments: roleManager.getAllAssignments(),
       profiles: agentProfiler.getAllProfiles(),
-      agentRoleMap: spawnRegistry.getAgentRoleMap(),
+      agentRoleMap: { ...roleManager.getAgentIdToRoleMap(), ...spawnRegistry.getAgentRoleMap() },
     });
 
     // Hydrate all plans from persisted state
@@ -451,6 +453,8 @@ function wireUniverseWebview(
     }
     if (msg?.type === 'request-plan') {
       const planId = msg.planId as string;
+      // Track which plan the webview is viewing so knowledge broadcasts use the right plan ID
+      setWebviewSelectedPlanId(planId);
       const board = planBoardManager.getPlan(planId);
       if (board) {
         void webview.postMessage({
@@ -472,6 +476,13 @@ function wireUniverseWebview(
           },
         });
       }
+      // Also send knowledge for the selected plan
+      const knowledgeEntries = sharedKnowledge.getAllEntries(planId);
+      void webview.postMessage({
+        type: 'knowledge-update',
+        workspace: knowledgeEntries.workspace,
+        plan: knowledgeEntries.plan,
+      });
       return;
     }
     if (msg?.type === 'persist-medals') {
@@ -610,7 +621,7 @@ function wireUniverseWebview(
         roles: roleManager.getAllRoles(),
         assignments: roleManager.getAllAssignments(),
         profiles: agentProfiler.getAllProfiles(),
-        agentRoleMap: spawnRegistry.getAgentRoleMap(),
+        agentRoleMap: { ...roleManager.getAgentIdToRoleMap(), ...spawnRegistry.getAgentRoleMap() },
       });
     } else if (msg?.type === 'assign-role') {
       const { roleId, agentType } = msg as { roleId: string; agentType: string };

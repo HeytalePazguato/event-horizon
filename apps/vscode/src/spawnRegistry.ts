@@ -84,14 +84,26 @@ export interface ResolvedCommand {
  */
 export async function resolveCommand(cmd: string): Promise<ResolvedCommand | null> {
   const finder = process.platform === 'win32' ? 'where' : 'which';
-  const fullPath = await new Promise<string | null>((resolve) => {
+  const lines = await new Promise<string[]>((resolve) => {
     cp.execFile(finder, [cmd], (err, stdout) => {
-      if (err) return resolve(null);
-      const first = String(stdout).split(/\r?\n/).map((s) => s.trim()).find((s) => s.length > 0);
-      resolve(first ?? null);
+      if (err) return resolve([]);
+      resolve(String(stdout).split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0));
     });
   });
-  if (!fullPath) return null;
+  if (lines.length === 0) return null;
+
+  // On Windows, `where` returns multiple matches (e.g. `opencode` and
+  // `opencode.cmd`). The extensionless entry is a Unix shell script that
+  // Node cannot execute with `shell: false`. Prefer the .cmd/.bat/.exe
+  // entry so the shim-wrapping logic below can kick in.
+  let fullPath = lines[0];
+  if (process.platform === 'win32' && lines.length > 1) {
+    const winExec = lines.find((l) => {
+      const lo = l.toLowerCase();
+      return lo.endsWith('.cmd') || lo.endsWith('.bat') || lo.endsWith('.exe') || lo.endsWith('.ps1');
+    });
+    if (winExec) fullPath = winExec;
+  }
 
   if (process.platform === 'win32') {
     const lower = fullPath.toLowerCase();

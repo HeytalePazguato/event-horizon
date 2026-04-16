@@ -224,6 +224,18 @@ export class RoleManager {
     return result;
   }
 
+  /**
+   * Build a map of agentId → roleId from all assignments that have an agentId.
+   * Used alongside spawnRegistry.getAgentRoleMap() to cover hook-connected agents.
+   */
+  getAgentIdToRoleMap(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const a of this.assignments.values()) {
+      if (a.agentId) result[a.agentId] = a.roleId;
+    }
+    return result;
+  }
+
   getInstructionsForRole(roleId: string): string | null {
     return this.roles.get(roleId)?.instructions ?? null;
   }
