@@ -1,4 +1,4 @@
-# Event Horizon
+# Event Horizon — Multi-agent orchestration for AI coding agents
 
 **Turn any AI coding agent into a project manager.** One command creates a plan, spawns a team of AI agents, assigns roles, and manages the entire project -- while you watch it happen live in a cosmic visualization.
 
