@@ -76,6 +76,12 @@ export interface ResolvedCommand {
   prefix: string[];
   /** Underlying resolved path (for diagnostics). Same as `bin` when no wrapping is needed. */
   fullPath: string;
+  /**
+   * When true, the command needs cmd.exe wrapping and the caller must use
+   * `buildFinalArgs()` to combine fullPath + user args into a single /c
+   * command string with correct quoting (paths with spaces, etc.).
+   */
+  wrapForCmd?: boolean;
 }
 
 /**
@@ -108,7 +114,7 @@ export async function resolveCommand(cmd: string): Promise<ResolvedCommand | nul
   if (process.platform === 'win32') {
     const lower = fullPath.toLowerCase();
     if (lower.endsWith('.cmd') || lower.endsWith('.bat')) {
-      return { bin: 'cmd.exe', prefix: ['/d', '/s', '/c', fullPath], fullPath };
+      return { bin: 'cmd.exe', prefix: ['/d', '/s', '/c'], fullPath, wrapForCmd: true };
     }
     if (lower.endsWith('.ps1')) {
       return {
@@ -119,6 +125,83 @@ export async function resolveCommand(cmd: string): Promise<ResolvedCommand | nul
     }
   }
   return { bin: fullPath, prefix: [], fullPath };
+}
+
+// ── Stream-JSON failure parsing ─────────────────────────────────────────────
+
+interface StreamJsonFailure {
+  authFailed: boolean;
+  errorMessage: string | null;
+  apiStatus: number | null;
+}
+
+/**
+ * Parse the tail of a Claude Code stream-json stdout for common failure modes.
+ * Returns structured info so callers can show actionable notifications.
+ */
+function parseStreamJsonFailure(stdoutTail: string): StreamJsonFailure {
+  const result: StreamJsonFailure = { authFailed: false, errorMessage: null, apiStatus: null };
+  // Each line is a JSON object — scan for error indicators
+  for (const line of stdoutTail.split(/\r?\n/)) {
+    if (!line.startsWith('{')) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj.error === 'authentication_failed' || obj.api_error_status === 401) {
+        result.authFailed = true;
+      }
+      if (obj.type === 'result' && obj.is_error) {
+        result.errorMessage = obj.result ?? null;
+        result.apiStatus = obj.api_error_status ?? null;
+      }
+    } catch { /* not valid JSON, skip */ }
+  }
+  return result;
+}
+
+// ── cmd.exe argument escaping ───────────────────────────────────────────────
+
+/**
+ * Escape a single argument for use inside a `cmd.exe /s /c "..."` command string.
+ * Handles both C-runtime argv parsing (target program) and cmd.exe `%` expansion.
+ */
+function escapeArgForCmd(arg: string): string {
+  if (arg === '') return '""';
+  // 1. Escape for C runtime: double backslashes before `"`, escape `"` → `\"`
+  let s = arg.replace(/(\\*)"/g, '$1$1\\"');
+  // Double trailing backslashes (they'd escape the closing quote)
+  s = s.replace(/(\\+)$/, '$1$1');
+  // 2. Wrap in double quotes
+  s = `"${s}"`;
+  // 3. Escape `%` for cmd.exe (the only metachar active inside double quotes)
+  s = s.replace(/%/g, '%%');
+  return s;
+}
+
+/**
+ * Build the final args array for `cp.spawn` from a resolved command + user args.
+ *
+ * For cmd.exe-wrapped `.cmd`/`.bat` shims, combines `fullPath + userArgs` into a
+ * single `/c` command string with correct quoting so **paths containing spaces**
+ * work correctly. Returns `verbatimArgs: true` so the caller passes
+ * `windowsVerbatimArguments: true` to `cp.spawn` (prevents Node from adding a
+ * second layer of quotes that cmd.exe would mis-parse).
+ *
+ * For all other commands, simply spreads `[...prefix, ...userArgs]` unchanged.
+ */
+export function buildFinalArgs(
+  resolved: ResolvedCommand,
+  userArgs: readonly string[],
+): { args: string[]; verbatimArgs?: boolean } {
+  if (!resolved.wrapForCmd) {
+    return { args: [...resolved.prefix, ...userArgs] };
+  }
+  // Build: cmd.exe /d /s /c ""fullPath" "arg1" "arg2 with spaces" ..."
+  // `/s /c` strips the outer quotes, leaving the inner quoting intact.
+  const parts = [resolved.fullPath, ...userArgs].map(escapeArgForCmd);
+  return {
+    args: ['/d', '/s', '/c', `"${parts.join(' ')}"`],
+    verbatimArgs: true,
+  };
 }
 
 // ── Spawn diagnostics output channel ────────────────────────────────────────
@@ -161,6 +244,8 @@ export interface SpawnedTerminalHandle {
   terminal: vscode.Terminal;
   process: cp.ChildProcess;
   pid?: number;
+  /** Returns the last ≤8 KB of stdout captured from the child process. */
+  getStdoutTail(): string;
 }
 
 /**
@@ -186,6 +271,8 @@ export function spawnWithTerminal(
     name: string;
     agentId?: string;
     onExit?: (code: number | null) => void;
+    /** When true, pass `windowsVerbatimArguments: true` to `cp.spawn` (for cmd.exe wrapping). */
+    verbatimArgs?: boolean;
   },
 ): SpawnedTerminalHandle {
   const writeEmitter = new vscode.EventEmitter<string>();
@@ -198,7 +285,13 @@ export function spawnWithTerminal(
     env: opts.env,
     shell: false,
     windowsHide: true,
+    ...(opts.verbatimArgs ? { windowsVerbatimArguments: true } : {}),
   });
+
+  // Close stdin immediately — batch-mode agents receive their prompt via argv,
+  // not stdin. Leaving stdin open causes some CLIs (e.g. Claude Code) to wait
+  // for data that never arrives, printing a noisy warning before proceeding.
+  child.stdin?.end();
 
   const toTerm = (buf: Buffer | string): string => {
     // VS Code pseudoterminal expects \r\n line endings
@@ -206,7 +299,18 @@ export function spawnWithTerminal(
     return s.replace(/\r?\n/g, '\r\n');
   };
 
-  child.stdout?.on('data', (d) => writeEmitter.fire(toTerm(d)));
+  // Buffer the tail of stdout so we can dump it to the output channel on failure.
+  // Stream-json CLIs (Claude Code) send errors to stdout, not stderr — without
+  // this, a fast-failing process leaves zero diagnostics because the pseudoterminal
+  // is disposed before the user can read it.
+  const TAIL_LIMIT = 8192;
+  let stdoutTail = '';
+
+  child.stdout?.on('data', (d) => {
+    writeEmitter.fire(toTerm(d));
+    const chunk = typeof d === 'string' ? d : d.toString('utf8');
+    stdoutTail = (stdoutTail + chunk).slice(-TAIL_LIMIT);
+  });
   child.stderr?.on('data', (d) => {
     writeEmitter.fire(toTerm(d));
     // Mirror stderr to the output channel — survives terminal disposal
@@ -222,6 +326,13 @@ export function spawnWithTerminal(
   child.on('exit', (code) => {
     writeEmitter.fire(`\r\n\u001b[90m[process exited with code ${code ?? 'null'}]\u001b[0m\r\n`);
     ch.appendLine(`${logPrefix} process exited with code ${code ?? 'null'}`);
+    // On non-zero exit, dump the last chunk of stdout to the output channel.
+    // This is the only way to capture stream-json errors from fast-failing agents.
+    if (code !== 0 && stdoutTail.length > 0) {
+      ch.appendLine(`${logPrefix} stdout (last ${stdoutTail.length} chars before exit):`);
+      ch.append(stdoutTail);
+      ch.appendLine('');
+    }
     closeEmitter.fire(code ?? 0);
     opts.onExit?.(code);
   });
@@ -240,7 +351,7 @@ export function spawnWithTerminal(
 
   const terminal = vscode.window.createTerminal({ name: opts.name, pty });
 
-  return { terminal, process: child, pid: child.pid };
+  return { terminal, process: child, pid: child.pid, getStdoutTail: () => stdoutTail };
 }
 
 /**
@@ -280,6 +391,12 @@ export class SpawnRegistry {
   private spawnedAgents = new Map<string, SpawnedAgentInfo>();
   private disposables: vscode.Disposable[] = [];
   private changeListeners: Array<() => void> = [];
+  /**
+   * Called when a spawned agent exits (process exit or terminal closed).
+   * The extension host uses this to inject synthetic `agent.terminate` events
+   * into the event pipeline so AgentStateManager/SQLite/webview stay in sync.
+   */
+  private exitCallback: ((agentId: string, info: SpawnedAgentInfo, reason: string) => void) | null = null;
 
   constructor() {
     // Track terminal close events — also kill the process if the user closed
@@ -294,11 +411,17 @@ export class SpawnRegistry {
             }
             this.spawnedAgents.delete(agentId);
             this.notifyChange();
+            this.exitCallback?.(agentId, info, 'terminal-closed');
             break;
           }
         }
       }),
     );
+  }
+
+  /** Register a callback for when any spawned agent exits. */
+  onAgentExit(cb: (agentId: string, info: SpawnedAgentInfo, reason: string) => void): void {
+    this.exitCallback = cb;
   }
 
   onChange(listener: () => void): void {
@@ -431,8 +554,10 @@ export class SpawnRegistry {
 
   /** Remove an agent from the registry (used by natural-exit handlers). */
   untrackAgent(agentId: string): void {
-    if (this.spawnedAgents.delete(agentId)) {
+    const info = this.spawnedAgents.get(agentId);
+    if (info && this.spawnedAgents.delete(agentId)) {
       this.notifyChange();
+      this.exitCallback?.(agentId, info, 'process-exit');
     }
   }
 
@@ -526,12 +651,13 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     // Interactive mode: let VS Code run the CLI as the terminal's root process.
     // `shellPath` + `shellArgs` avoids any user-shell layer entirely.
     if (opts.interactive) {
+      const { args: shellArgs } = buildFinalArgs(resolved, args);
       const terminal = vscode.window.createTerminal({
         name: terminalName,
         cwd,
         env: { ...process.env, ...env } as { [key: string]: string },
         shellPath: resolved.bin,
-        shellArgs: [...resolved.prefix, ...args],
+        shellArgs,
       });
       terminal.show();
       this.registry.trackAgent(agentId, {
@@ -553,18 +679,44 @@ export class ClaudeCodeSpawner implements SpawnBackend {
     }
 
     const registry = this.registry;
-    const { terminal, process: child, pid } = spawnWithTerminal(resolved.bin, [...resolved.prefix, ...args], {
+    const { args: finalArgs, verbatimArgs } = buildFinalArgs(resolved, args);
+    const handle = spawnWithTerminal(resolved.bin, finalArgs, {
       cwd,
       env: { ...process.env, ...env },
       name: terminalName,
       agentId,
-      onExit: () => {
+      verbatimArgs,
+      onExit: (code) => {
         // Auto-remove from registry on natural exit (success or failure)
         if (registry.getSpawnedAgent(agentId)) {
           registry.untrackAgent(agentId);
         }
+
+        // On failure, parse stream-json stdout for actionable errors
+        if (code !== 0 && code !== null) {
+          const failure = parseStreamJsonFailure(handle.getStdoutTail());
+          const ch = agentOutputChannel();
+          ch.appendLine(`[${agentId}] failure analysis: auth=${failure.authFailed}, apiStatus=${failure.apiStatus}, msg=${failure.errorMessage}`);
+
+          if (failure.authFailed) {
+            const msg = 'Claude Code authentication expired. Re-authenticate in a terminal, then retry the spawn.';
+            vscode.window.showWarningMessage(msg, 'Open Claude Terminal').then((choice) => {
+              if (choice === 'Open Claude Terminal') {
+                // Open an interactive terminal so the user can re-authenticate
+                const authTerminal = vscode.window.createTerminal({ name: '\u{1F511} Claude Auth', cwd });
+                authTerminal.sendText(`"${resolved.fullPath}" --version`);
+                authTerminal.show();
+              }
+            });
+          } else if (failure.errorMessage) {
+            vscode.window.showErrorMessage(`Claude Code agent failed: ${failure.errorMessage}`);
+          } else {
+            vscode.window.showErrorMessage(`Claude Code agent exited with code ${code}. Check "Event Horizon — Agents" output for details.`);
+          }
+        }
       },
     });
+    const { terminal, process: child, pid } = handle;
 
     // Apply focus setting
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
@@ -700,17 +852,26 @@ export class OpenCodeSpawner implements SpawnBackend {
     logSpawn(agentId, resolved, args, cwd);
 
     const registry = this.registry;
-    const { terminal, process: child, pid } = spawnWithTerminal(resolved.bin, [...resolved.prefix, ...args], {
+    const { args: finalArgs, verbatimArgs } = buildFinalArgs(resolved, args);
+    const handle = spawnWithTerminal(resolved.bin, finalArgs, {
       cwd,
       env: { ...process.env, ...env },
       name: terminalName,
       agentId,
-      onExit: () => {
+      verbatimArgs,
+      onExit: (code) => {
         if (registry.getSpawnedAgent(agentId)) {
           registry.untrackAgent(agentId);
         }
+        if (code !== 0 && code !== null) {
+          const tail = handle.getStdoutTail();
+          const ch = agentOutputChannel();
+          ch.appendLine(`[${agentId}] exited ${code}, stdout tail: ${tail.slice(-500)}`);
+          vscode.window.showErrorMessage(`OpenCode agent exited with code ${code}. Check "Event Horizon — Agents" output for details.`);
+        }
       },
     });
+    const { terminal, process: child, pid } = handle;
 
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
     if (focusSetting === 'focus') {
@@ -796,17 +957,26 @@ export class CursorSpawner implements SpawnBackend {
     logSpawn(agentId, resolved, args, cwd);
 
     const registry = this.registry;
-    const { terminal, process: child, pid } = spawnWithTerminal(resolved.bin, [...resolved.prefix, ...args], {
+    const { args: finalArgs, verbatimArgs } = buildFinalArgs(resolved, args);
+    const handle = spawnWithTerminal(resolved.bin, finalArgs, {
       cwd,
       env: { ...process.env, ...env },
       name: terminalName,
       agentId,
-      onExit: () => {
+      verbatimArgs,
+      onExit: (code) => {
         if (registry.getSpawnedAgent(agentId)) {
           registry.untrackAgent(agentId);
         }
+        if (code !== 0 && code !== null) {
+          const tail = handle.getStdoutTail();
+          const ch = agentOutputChannel();
+          ch.appendLine(`[${agentId}] exited ${code}, stdout tail: ${tail.slice(-500)}`);
+          vscode.window.showErrorMessage(`Cursor agent exited with code ${code}. Check "Event Horizon — Agents" output for details.`);
+        }
       },
     });
+    const { terminal, process: child, pid } = handle;
 
     const focusSetting = vscode.workspace.getConfiguration('eventHorizon').get<string>('spawnTerminalFocus', 'focus-on-interaction');
     if (focusSetting === 'focus') {

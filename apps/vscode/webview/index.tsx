@@ -575,7 +575,7 @@ function App() {
       </div>
 
       {settingsHydrated && viewMode === 'operations' && (
-        <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates}
+        <OperationsView agents={agents} agentMap={agentMap} metricsMap={metricsMap} agentStates={agentStates} heartbeatStatuses={heartbeatStatuses}
           plan={planTasksWithRecommendations} plans={plans} selectedPlanId={selectedPlanId}
           orchestratorMap={orchestratorMap} agentRoleMap={agentRoleMap}
           roles={roles} roleAssignments={roleAssignments} agentProfiles={agentProfiles}

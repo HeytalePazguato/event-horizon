@@ -69,6 +69,10 @@
         "title": "Event Horizon: Focus Waiting Agent"
       },
       {
+        "command": "eventHorizon.purgeStaleAgents",
+        "title": "Event Horizon: Clear Stale Agents"
+      },
+      {
         "command": "eventHorizon.exportData",
         "title": "Event Horizon: Export Data...",
         "icon": "$(export)"

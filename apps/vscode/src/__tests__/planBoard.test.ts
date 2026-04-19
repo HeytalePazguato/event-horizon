@@ -386,7 +386,7 @@ describe('Plan MCP tools', () => {
     expect(names).toContain('eh_get_plan');
     expect(names).toContain('eh_claim_task');
     expect(names).toContain('eh_update_task');
-    expect(result.tools).toHaveLength(42); // 6 lock + 7 plan + 1 verify + 2 messaging + 4 roles + 6 phase1 + 8 phase2 + 5 phase3 + 1 phase4 (traces) + 1 eh_search_events (CIP phase 4)
+    expect(result.tools).toHaveLength(43); // 6 lock + 7 plan + 1 verify + 2 messaging + 4 roles + 6 phase1 + 8 phase2 + 5 phase3 + 1 phase4 (traces) + 1 eh_search_events (CIP phase 4) + 1 eh_purge_stale_agents
   });
 
   describe('eh_load_plan', () => {

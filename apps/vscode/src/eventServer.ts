@@ -185,6 +185,10 @@ export function setEventSearchEngine(eventSearch: { search: (query: string, opts
   if (mcpServer) mcpServer.setEventSearch(eventSearch);
 }
 
+export function setMcpOnEvent(onEvent: (event: import('@event-horizon/core').AgentEvent) => void): void {
+  if (mcpServer) mcpServer.setOnEvent(onEvent);
+}
+
 // Backward-compat exports used by extension.ts
 export function setFileLockingEnabled(enabled: boolean): void { lockManager.setEnabled(enabled); }
 export function isFileLockingEnabled(): boolean { return lockManager.isEnabled(); }
