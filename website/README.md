@@ -18,42 +18,13 @@ Then open <http://localhost:8000>.
 
 ## Deploying to GitHub Pages
 
-The folder is ready to serve as-is. Pick one:
+Workflow already exists at [`.github/workflows/pages.yml`](../.github/workflows/pages.yml). One-time setup:
 
-**Option A — Pages from `master` branch, `/website` folder (simplest):**
+1. **Enable Pages**: Repo → **Settings → Pages → Source: GitHub Actions**
+2. **Trigger**: automatic on any push to `master` that touches `website/**` or the workflow file itself. Also supports manual runs via **Actions → Deploy landing page → Run workflow**
+3. **URL**: `https://heytalepazguato.github.io/event-horizon/` once the first deploy completes
 
-GitHub Pages only serves from the repo root or `/docs`. To serve from `/website`, add a tiny GitHub Actions workflow that publishes the folder to the `gh-pages` branch on each push to `master`:
-
-```yaml
-# .github/workflows/pages.yml
-name: Deploy landing page
-on:
-  push:
-    branches: [master]
-    paths: ['website/**']
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./website
-      - id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-Then in **Settings → Pages**, set the source to **GitHub Actions**.
-
-**Option B — Manual copy to `/docs`:** If you don't want Actions, rename the folder to `/docs` and set Pages source to "Deploy from a branch → master → /docs". But `/docs` is already used for engineering documentation, so Option A is cleaner.
+The workflow triggers on `master` only (not `develop`), so the live site always reflects shipped state. To deploy sooner without waiting for a release merge, use the `workflow_dispatch` manual trigger from the Actions tab.
 
 ## Custom domain (later)
 
