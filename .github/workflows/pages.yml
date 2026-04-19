@@ -2,7 +2,9 @@ name: Deploy landing page
 
 on:
   push:
-    branches: [master]
+    # TEMP: develop added for landing-page preview before release.
+    # Remove `develop` once master reflects the intended copy/assets.
+    branches: [master, develop]
     paths:
       - 'website/**'
       - '.github/workflows/pages.yml'
