@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [2.0.3] — 2026-04-17
+## [2.0.3] — 2026-04-19
 
 ### Fixed
 - **OpenCode spawn crash on Windows paths with spaces**: `cmd.exe /s /c` strips outer quotes from the command string, breaking paths like `C:\Program Files\nodejs\opencode.cmd`. `buildFinalArgs()` now wraps the full command in an outer quote layer with `windowsVerbatimArguments: true`, matching the canonical `cross-spawn` pattern. Error was `'C:\Program' is not recognized as an internal or external command`

@@ -127,7 +127,7 @@ a:hover {
 }
 
 .hero-inner {
-  padding: 80px 0 96px;
+  padding: 40px 0 40px;
   max-width: 780px;
 }
 
@@ -321,7 +321,7 @@ h1 {
 .features,
 .agents,
 .install {
-  padding-top: 80px;
+  padding-top: 40px;
   padding-bottom: 40px;
 }
 
@@ -489,7 +489,7 @@ h1 {
 
 @media (max-width: 640px) {
   .hero-inner {
-    padding: 56px 0 64px;
+    padding: 40px 0 40px;
   }
 
   .features,
