@@ -477,9 +477,9 @@
     "@types/sql.js": "^1.4.11",
     "@types/vscode": "^1.100.0",
     "@types/ws": "^8.18.1",
-    "@vscode/vsce": "^3.7.1",
+    "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.28.0",
-    "ovsx": "^0.10.0",
+    "ovsx": "^0.10.11",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "typescript": "^5.9.3"
