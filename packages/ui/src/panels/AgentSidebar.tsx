@@ -29,6 +29,8 @@ const planStatusColors: Record<string, string> = {
 export interface AgentSidebarProps {
   agents: Array<{ id: string; name: string; agentType: string; cwd?: string }>;
   agentStates: Record<string, string>;
+  /** Map of agentId → heartbeat status ('alive' | 'stale' | 'lost'). */
+  heartbeatStatuses?: Record<string, string>;
   plans?: PlanSummary[];
   selectedPlanId?: string | null;
   onSelectPlan?: (id: string) => void;
@@ -40,6 +42,7 @@ export interface AgentSidebarProps {
 
 // ── Role badge colors (matches Roles tab conventions) ──
 const roleColors: Record<string, { bg: string; fg: string }> = {
+  orchestrator: { bg: '#2a4a20', fg: '#f0d890' },
   implementer: { bg: '#1e4030', fg: '#90d898' },
   reviewer:    { bg: '#3a2a4a', fg: '#c8a4e8' },
   tester:      { bg: '#2a3a4a', fg: '#a4c8e8' },
@@ -52,7 +55,7 @@ function roleBadgeStyle(role: string): { bg: string; fg: string } {
   return roleColors[role.toLowerCase()] ?? { bg: '#2a3a2a', fg: '#a0b8a8' };
 }
 
-export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, plans = [], selectedPlanId, onSelectPlan, orchestratorMap = {}, agentRoleMap = {} }) => {
+export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, heartbeatStatuses = {}, plans = [], selectedPlanId, onSelectPlan, orchestratorMap = {}, agentRoleMap = {} }) => {
   const selectedAgentId = useCommandCenterStore((s) => s.selectedAgentId);
   const singularitySelected = useCommandCenterStore((s) => s.singularitySelected);
   const setSelectedAgent = useCommandCenterStore((s) => s.setSelectedAgent);
@@ -241,7 +244,9 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, plans
                         width: 7,
                         height: 7,
                         borderRadius: '50%',
-                        background: stateColors[a.state] ?? '#4a8a5a',
+                        background: heartbeatStatuses[a.id] === 'lost' ? '#555555'
+                          : heartbeatStatuses[a.id] === 'stale' ? '#d4944a'
+                          : stateColors[a.state] ?? '#4a8a5a',
                         flexShrink: 0,
                       }} />
                     </div>

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ClaudeCodeSpawner, resolveCommand, type SpawnOpts } from '../spawnRegistry.js';
+import { ClaudeCodeSpawner, resolveCommand, buildFinalArgs, type SpawnOpts } from '../spawnRegistry.js';
 
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>();
@@ -108,7 +108,9 @@ describe('resolveCommand — Windows shim preference', () => {
     expect(result).not.toBeNull();
     expect(result!.fullPath).toBe('C:\\Program Files\\nodejs\\opencode.cmd');
     expect(result!.bin).toBe('cmd.exe');
-    expect(result!.prefix).toContain('C:\\Program Files\\nodejs\\opencode.cmd');
+    expect(result!.wrapForCmd).toBe(true);
+    // prefix no longer carries fullPath — it's combined via buildFinalArgs()
+    expect(result!.prefix).toEqual(['/d', '/s', '/c']);
   });
 
   it('prefers .exe over extensionless file on Windows', async () => {
@@ -151,6 +153,62 @@ describe('resolveCommand — Windows shim preference', () => {
     expect(result!.fullPath).toBe('/usr/bin/opencode');
     expect(result!.bin).toBe('/usr/bin/opencode');
     expect(result!.prefix).toEqual([]);
+  });
+});
+
+describe('buildFinalArgs — cmd.exe wrapping for paths with spaces', () => {
+  it('wraps .cmd fullPath + args into a single /c command string', () => {
+    const resolved = {
+      bin: 'cmd.exe',
+      prefix: ['/d', '/s', '/c'],
+      fullPath: 'C:\\Program Files\\nodejs\\opencode.cmd',
+      wrapForCmd: true,
+    };
+    const { args, verbatimArgs } = buildFinalArgs(resolved, ['-p', 'hello world', '-f', 'json']);
+    expect(verbatimArgs).toBe(true);
+    expect(args[0]).toBe('/d');
+    expect(args[1]).toBe('/s');
+    expect(args[2]).toBe('/c');
+    // The /c argument should be wrapped in outer quotes with inner quoting
+    expect(args[3]).toMatch(/^".*"$/);
+    // Inner quoting must preserve the full path
+    expect(args[3]).toContain('"C:\\Program Files\\nodejs\\opencode.cmd"');
+    // Args with spaces must be quoted
+    expect(args[3]).toContain('"hello world"');
+  });
+
+  it('passes args unchanged for non-cmd resolvedCommands', () => {
+    const resolved = {
+      bin: '/usr/bin/opencode',
+      prefix: [],
+      fullPath: '/usr/bin/opencode',
+    };
+    const { args, verbatimArgs } = buildFinalArgs(resolved, ['-p', 'test']);
+    expect(verbatimArgs).toBeUndefined();
+    expect(args).toEqual(['-p', 'test']);
+  });
+
+  it('escapes percent signs for cmd.exe variable expansion', () => {
+    const resolved = {
+      bin: 'cmd.exe',
+      prefix: ['/d', '/s', '/c'],
+      fullPath: 'C:\\cli\\tool.cmd',
+      wrapForCmd: true,
+    };
+    const { args } = buildFinalArgs(resolved, ['-p', 'use 100% effort']);
+    expect(args[3]).toContain('100%%');
+  });
+
+  it('escapes double quotes in arguments', () => {
+    const resolved = {
+      bin: 'cmd.exe',
+      prefix: ['/d', '/s', '/c'],
+      fullPath: 'C:\\cli\\tool.cmd',
+      wrapForCmd: true,
+    };
+    const { args } = buildFinalArgs(resolved, ['-p', 'say "hello"']);
+    // Inner quotes must be escaped as \"
+    expect(args[3]).toContain('\\"hello\\"');
   });
 });
 

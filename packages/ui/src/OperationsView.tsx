@@ -45,6 +45,8 @@ export interface OperationsViewProps {
   agentMap: Record<string, AgentState>;
   metricsMap: Record<string, AgentMetrics>;
   agentStates: Record<string, string>;
+  /** Map of agentId → heartbeat status ('alive' | 'stale' | 'lost'). */
+  heartbeatStatuses?: Record<string, string>;
   plan?: PlanView;
   plans?: PlanSummary[];
   selectedPlanId?: string | null;
@@ -106,7 +108,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, heartbeatStatuses = {}, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -160,7 +162,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* Left sidebar */}
-        <AgentSidebar agents={agents} agentStates={agentStates} plans={plans} selectedPlanId={selectedPlanId} onSelectPlan={(id) => { onSelectPlan?.(id); setActiveTab('plan'); }} orchestratorMap={orchestratorMap} agentRoleMap={agentRoleMap} />
+        <AgentSidebar agents={agents} agentStates={agentStates} heartbeatStatuses={heartbeatStatuses} plans={plans} selectedPlanId={selectedPlanId} onSelectPlan={(id) => { onSelectPlan?.(id); setActiveTab('plan'); }} orchestratorMap={orchestratorMap} agentRoleMap={agentRoleMap} />
 
         {/* Right: tabs + content */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>

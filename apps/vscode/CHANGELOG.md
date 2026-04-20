@@ -2,6 +2,24 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [2.0.3] — 2026-04-19
+
+### Fixed
+- **OpenCode spawn crash on Windows paths with spaces**: `cmd.exe /s /c` strips outer quotes from the command string, breaking paths like `C:\Program Files\nodejs\opencode.cmd`. `buildFinalArgs()` now wraps the full command in an outer quote layer with `windowsVerbatimArguments: true`, matching the canonical `cross-spawn` pattern. Error was `'C:\Program' is not recognized as an internal or external command`
+- **Claude Code "no stdin data" warning on spawn**: batch-mode agents (`-p`) receive their prompt via argv, not stdin. The open stdin pipe caused Claude Code to wait 3 seconds printing a noisy warning before proceeding. `child.stdin.end()` now closes it immediately
+- **Claude Code silent exit code 1 on expired auth**: batch mode cannot do interactive re-authentication. When OAuth tokens expire (e.g. 12-hour corporate rotations), spawned agents fail silently with exit code 1. `parseStreamJsonFailure()` now detects `authentication_failed` / `api_error_status: 401` from stream-json stdout and shows a VS Code notification with an "Open Claude Terminal" button for re-auth
+- **Stale agents persist in UI indefinitely (P0)**: agents whose processes ended without sending `agent.terminate` (terminal killed, crash, VS Code restart) were reconstructed as "alive" from SQLite event history. Two fixes: (1) `spawnRegistry.onAgentExit()` callback injects synthetic `agent.terminate` events through the full pipeline (AgentStateManager → SQLite → webview) when a process exits or terminal closes; (2) the 30-second heartbeat check auto-evicts agents with `lost` status (>5 min silence) that aren't in the spawn registry
+- **Session table row explosion**: `agent_sessions` table created ~965 rows per agent instead of 1 because each `agent.spawn` event used a new timestamp as part of the `(agent_id, session_start)` primary key. Now checks for an existing open session before inserting
+- **Green status dots on dead agents**: the Agents sidebar showed green for all idle agents regardless of heartbeat status. Now uses heartbeat data: green (alive), amber (stale), gray (lost)
+- **API/UI agent list inconsistency**: `eh_list_agents` (in-memory) and the UI (SQLite replay) returned different agent counts after restarts. Addressed by heartbeat auto-eviction and spawn-exit terminate events keeping both in sync
+- **Orchestrator role badge never showing (4th report)**: hook-connected agents (not spawned by EH) don't know their own `session_id`. When calling MCP tools like `eh_claim_orchestrator`, the AI model guesses an `agent_id` (e.g. `"claude-code"`) that doesn't match the `session_id` from hook events (e.g. `"a1b2c3d4-e5f6-..."`). Added `resolveAgentId()` to the MCP server that fuzzy-matches against known agents by ID prefix, type, or heartbeat status. Applied to `eh_claim_orchestrator`, `eh_spawn_agent`, `eh_stop_agent`, and `eh_reassign_task`
+
+### Added
+- **`Event Horizon: Clear Stale Agents` command**: command palette action that purges all stale/lost agents with no running process. Emits synthetic terminate events so cleanup propagates to SQLite and webview
+- **`eh_purge_stale_agents` MCP tool**: agents can programmatically purge stale agents from the dashboard
+- **Stdout capture on spawn failure**: last 8 KB of stdout is buffered and dumped to the "Event Horizon — Agents" output channel on non-zero exit. No more silent failures from stream-json CLIs
+- **Error notifications on spawn failure**: all spawners (Claude, OpenCode, Cursor) now show VS Code error notifications when agents exit non-zero, directing users to the output channel for details
+
 ## [2.0.2] — 2026-04-15
 
 ### Fixed

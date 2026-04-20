@@ -6,7 +6,7 @@
  * Mounted at POST /mcp on the existing event server.
  */
 
-import type { AgentStateManager, AgentMetrics } from '@event-horizon/core';
+import type { AgentStateManager, AgentMetrics, AgentEvent } from '@event-horizon/core';
 import type { LockManager } from './lockManager.js';
 import type { PlanBoardManager } from './planBoard.js';
 import type { MessageQueue } from './messageQueue.js';
@@ -439,6 +439,17 @@ export const MCP_TOOLS: McpToolDef[] = [
     },
   },
   {
+    name: 'eh_purge_stale_agents',
+    description: 'Remove stale/lost agents from the dashboard. Agents with no heartbeat for >5 minutes (and no running process) are terminated. Returns the list of purged agent IDs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (for context)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
     name: 'eh_reassign_task',
     description: 'Reassign a task to a different agent. Resets the task to pending and claims it for the new agent. Orchestrator-only tool.',
     inputSchema: {
@@ -679,6 +690,8 @@ export interface McpServerDeps {
   modelTierManager?: ModelTierManager;
   tokenAnalyzer?: TokenAnalyzer;
   eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
+  /** Callback to inject events into the main event pipeline (for synthetic terminate, etc.). */
+  onEvent?: (event: AgentEvent) => void;
 }
 
 export class McpServer {
@@ -691,6 +704,51 @@ export class McpServer {
   /** Wire the event search engine after the DB is initialized (called from extension.ts). */
   setEventSearch(eventSearch: McpServerDeps['eventSearch']): void {
     this.deps.eventSearch = eventSearch;
+  }
+
+  setOnEvent(onEvent: (event: AgentEvent) => void): void {
+    this.deps.onEvent = onEvent;
+  }
+
+  /**
+   * Resolve an agent_id from an MCP tool call to a known agent in AgentStateManager.
+   *
+   * MCP tools ask the AI model to supply `agent_id`, but hook-connected agents
+   * (not spawned by EH) don't know their own session_id. The model typically
+   * guesses something like "claude-code" or a random string. This helper:
+   *   1. Returns the ID as-is if it matches a known agent.
+   *   2. Tries to find a known agent whose ID starts with the given prefix
+   *      (e.g. "claude" matches "claude-code-abc123").
+   *   3. Falls back to the original ID if no match.
+   */
+  private resolveAgentId(rawId: string): string {
+    // Exact match
+    if (this.deps.agentStateManager.getAgent(rawId)) return rawId;
+
+    // Prefix / substring match — pick the most recently active agent
+    const agents = this.deps.agentStateManager.getAllAgents();
+    const lower = rawId.toLowerCase().replace(/[-_\s]/g, '');
+
+    // Try prefix match on agent ID or type
+    const candidates = agents.filter((a) => {
+      const idNorm = a.id.toLowerCase().replace(/[-_\s]/g, '');
+      const typeNorm = a.type.toLowerCase().replace(/[-_\s]/g, '');
+      return idNorm.startsWith(lower) || typeNorm.startsWith(lower) || lower.startsWith(typeNorm);
+    });
+
+    if (candidates.length === 1) return candidates[0].id;
+    if (candidates.length > 1) {
+      // Multiple matches — prefer the one with a heartbeat
+      const hb = this.deps.heartbeatManager;
+      if (hb) {
+        const alive = candidates.filter((a) => hb.getStatus(a.id) === 'alive');
+        if (alive.length === 1) return alive[0].id;
+      }
+      // Just pick the first one
+      return candidates[0].id;
+    }
+
+    return rawId; // No match — return as-is
   }
 
   /** Handle a JSON-RPC request and return a response. */
@@ -1381,7 +1439,8 @@ export class McpServer {
       // ── Phase 2: Orchestrator & spawn tools ──────────────────────────────
 
       case 'eh_claim_orchestrator': {
-        const agentId = args.agent_id as string;
+        const rawAgentId = args.agent_id as string;
+        const agentId = this.resolveAgentId(rawAgentId);
         const planId = args.plan_id as string | undefined;
         const connectedIds = new Set(this.deps.agentStateManager.getAllAgents().map((a) => a.id));
         const result = planBoardManager.claimOrchestrator(agentId, planId, connectedIds);
@@ -1392,11 +1451,11 @@ export class McpServer {
         const agent = this.deps.agentStateManager.getAgent(agentId);
         const agentType = agent?.type ?? null;
         try { this.deps.roleManager.assignRole('orchestrator', agentType, agentId); } catch { /* role may not exist */ }
-        return { claimed: true, agent_id: agentId };
+        return { claimed: true, agent_id: agentId, resolved_from: rawAgentId !== agentId ? rawAgentId : undefined };
       }
 
       case 'eh_spawn_agent': {
-        const agentId = args.agent_id as string;
+        const agentId = this.resolveAgentId(args.agent_id as string);
         if (!planBoardManager.isOrchestrator(agentId)) {
           // Include diagnostic info to help debug orchestrator mismatches
           const activePlan = planBoardManager.getPlan();
@@ -1444,7 +1503,7 @@ export class McpServer {
       }
 
       case 'eh_stop_agent': {
-        const agentId = args.agent_id as string;
+        const agentId = this.resolveAgentId(args.agent_id as string);
         if (!planBoardManager.isOrchestrator(agentId)) {
           return { error: 'Only the orchestrator can stop agents.' };
         }
@@ -1457,8 +1516,37 @@ export class McpServer {
         return result;
       }
 
+      case 'eh_purge_stale_agents': {
+        const { agentStateManager, heartbeatManager, spawnRegistry, onEvent } = this.deps;
+        if (!agentStateManager || !heartbeatManager) {
+          return { error: 'Agent state manager or heartbeat manager not available' };
+        }
+        const agents = agentStateManager.getAllAgents();
+        const purged: string[] = [];
+        for (const agent of agents) {
+          if (spawnRegistry?.getSpawnedAgent(agent.id)) continue;
+          const hb = heartbeatManager.getStatus(agent.id);
+          if (hb === 'stale' || hb === 'lost') {
+            if (onEvent) {
+              onEvent({
+                id: `synth-purge-${agent.id}-${Date.now()}`,
+                agentId: agent.id,
+                agentName: agent.name,
+                agentType: agent.type as import('@event-horizon/core').AgentType,
+                type: 'agent.terminate',
+                timestamp: Date.now(),
+                payload: { reason: 'mcp-purge', synthetic: true },
+              });
+            }
+            heartbeatManager.remove(agent.id);
+            purged.push(agent.id);
+          }
+        }
+        return { purged, count: purged.length };
+      }
+
       case 'eh_reassign_task': {
-        const agentId = args.agent_id as string;
+        const agentId = this.resolveAgentId(args.agent_id as string);
         if (!planBoardManager.isOrchestrator(agentId)) {
           return { error: 'Only the orchestrator can reassign tasks.' };
         }

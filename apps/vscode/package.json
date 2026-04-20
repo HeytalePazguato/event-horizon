@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
@@ -28,6 +28,12 @@
     "claude-code",
     "opencode",
     "copilot",
+    "cursor",
+    "vscodium",
+    "windsurf",
+    "gitpod",
+    "theia",
+    "coder",
     "mcp",
     "mcp-tools",
     "ai-coordination",
@@ -67,6 +73,10 @@
       {
         "command": "eventHorizon.focusWaitingAgent",
         "title": "Event Horizon: Focus Waiting Agent"
+      },
+      {
+        "command": "eventHorizon.purgeStaleAgents",
+        "title": "Event Horizon: Clear Stale Agents"
       },
       {
         "command": "eventHorizon.exportData",
@@ -467,9 +477,9 @@
     "@types/sql.js": "^1.4.11",
     "@types/vscode": "^1.100.0",
     "@types/ws": "^8.18.1",
-    "@vscode/vsce": "^3.7.1",
+    "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.28.0",
-    "ovsx": "^0.10.0",
+    "ovsx": "^0.10.11",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "typescript": "^5.9.3"

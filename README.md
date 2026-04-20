@@ -1,4 +1,4 @@
-# Event Horizon
+# Event Horizon — Multi-agent orchestration for AI coding agents
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/HeytalePazguato.event-horizon-vscode?label=VS%20Code%20Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode)
 [![Open VSX](https://img.shields.io/open-vsx/v/HeytalePazguato/event-horizon-vscode?label=Open%20VSX)](https://open-vsx.org/extension/HeytalePazguato/event-horizon-vscode)

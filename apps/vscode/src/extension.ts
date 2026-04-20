@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -203,6 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // Wire event search engine into MCP server now that DB is ready
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
         setEventSearchEngine(eventSearchEngine);
+        setMcpOnEvent(onAgentEvent);
 
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {
@@ -483,6 +484,24 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // When a spawned agent exits (process or terminal), inject a synthetic
+  // agent.terminate event so AgentStateManager, SQLite, and the webview all
+  // learn the agent is gone — preventing stale-agent persistence.
+  spawnRegistry.onAgentExit((agentId, info, reason) => {
+    const agent = agentStateManager.getAgent(agentId);
+    const syntheticEvent: AgentEvent = {
+      id: `synth-terminate-${agentId}-${Date.now()}`,
+      agentId,
+      agentName: agent?.name ?? info.terminalName,
+      agentType: (agent?.type ?? info.type) as import('@event-horizon/core').AgentType,
+      type: 'agent.terminate',
+      timestamp: Date.now(),
+      payload: { reason, synthetic: true },
+    };
+    onAgentEvent(syntheticEvent);
+    heartbeatManager.remove(agentId);
+  });
+
   // Rebroadcast role map whenever the spawn registry changes (spawn/stop)
   spawnRegistry.onChange(() => {
     if (webviewRef.current) {
@@ -549,6 +568,28 @@ export function activate(context: vscode.ExtensionContext): void {
           (current as { heartbeatStatus: string }).heartbeatStatus = beat.status;
         }
       }
+    }
+
+    // Auto-evict agents whose heartbeat is 'lost' (>5 min silence).
+    // Skip agents that are still tracked in the spawn registry — their process
+    // exit handler will emit the terminate event when the process actually dies.
+    for (const beat of allBeats) {
+      if (beat.status !== 'lost') continue;
+      const agent = agentStateManager.getAgent(beat.agentId);
+      if (!agent) continue;
+      if (spawnRegistry.getSpawnedAgent(beat.agentId)) continue; // process still alive
+
+      const syntheticEvent: AgentEvent = {
+        id: `synth-heartbeat-${beat.agentId}-${Date.now()}`,
+        agentId: beat.agentId,
+        agentName: agent.name,
+        agentType: agent.type as import('@event-horizon/core').AgentType,
+        type: 'agent.terminate',
+        timestamp: Date.now(),
+        payload: { reason: 'heartbeat-lost', synthetic: true },
+      };
+      onAgentEvent(syntheticEvent);
+      heartbeatManager.remove(beat.agentId);
     }
 
     // Forward heartbeat statuses to webview
@@ -713,14 +754,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
         // Track agent sessions
         if (event.type === 'agent.spawn') {
-          ehDatabase.upsertSession({
-            agentId: event.agentId,
-            agentName: event.agentName,
-            agentType: event.agentType,
-            sessionStart: event.timestamp,
-            cwd: (event.payload?.cwd as string) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-            totalTokensIn: 0, totalTokensOut: 0, totalCostUsd: 0, eventCount: 1,
-          });
+          // Reuse an existing open session if one exists (prevents row explosion
+          // when agent.spawn fires multiple times for the same agent, since the
+          // primary key is (agent_id, session_start)).
+          const existingSessions = ehDatabase.getSessions();
+          const openSession = existingSessions.find((s) => s.agentId === event.agentId && !s.sessionEnd);
+          if (!openSession) {
+            ehDatabase.upsertSession({
+              agentId: event.agentId,
+              agentName: event.agentName,
+              agentType: event.agentType,
+              sessionStart: event.timestamp,
+              cwd: (event.payload?.cwd as string) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+              totalTokensIn: 0, totalTokensOut: 0, totalCostUsd: 0, eventCount: 1,
+            });
+          }
         } else if (event.type === 'agent.terminate' || event.type === 'agent.idle') {
           // Update session end + stats on terminate/idle
           const sessions = ehDatabase.getSessions();
@@ -1479,6 +1527,37 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Focus-on-interaction is handled in onAgentEvent when agent enters waiting state.
 
+  // ── Purge stale agents ──────────────────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('eventHorizon.purgeStaleAgents', () => {
+      const agents = agentStateManager.getAllAgents();
+      let purged = 0;
+      for (const agent of agents) {
+        // Skip agents that are still tracked in the spawn registry (process alive)
+        if (spawnRegistry.getSpawnedAgent(agent.id)) continue;
+        const hb = heartbeatManager.getStatus(agent.id);
+        if (hb === 'stale' || hb === 'lost') {
+          const syntheticEvent: AgentEvent = {
+            id: `synth-purge-${agent.id}-${Date.now()}`,
+            agentId: agent.id,
+            agentName: agent.name,
+            agentType: agent.type as import('@event-horizon/core').AgentType,
+            type: 'agent.terminate',
+            timestamp: Date.now(),
+            payload: { reason: 'manual-purge', synthetic: true },
+          };
+          onAgentEvent(syntheticEvent);
+          heartbeatManager.remove(agent.id);
+          purged++;
+        }
+      }
+      if (purged > 0) {
+        vscode.window.showInformationMessage(`Event Horizon: purged ${purged} stale agent(s).`);
+      } else {
+        vscode.window.showInformationMessage('Event Horizon: no stale agents to purge.');
+      }
+    })
+  );
 
   // Show one-time welcome notification on first install
   const hasShownWelcome = context.globalState.get<boolean>('welcomeShown');
