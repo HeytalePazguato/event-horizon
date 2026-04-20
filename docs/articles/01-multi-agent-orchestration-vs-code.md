@@ -7,6 +7,16 @@ cover_image: https://raw.githubusercontent.com/HeytalePazguato/event-horizon/mas
 canonical_url: https://github.com/HeytalePazguato/event-horizon
 ---
 
+## The question that started it
+
+A few months ago I asked Claude a genuinely idle question: if it could pick a visual for itself — for how it works, how it thinks, how it collaborates with other AI agents — what would it choose?
+
+Its answer:
+
+> *Each agent is a planet — a massive entity that consumes energy, emits output, and exerts gravitational influence. Tasks orbit as moons. Data flows as ships. At the center, a black hole where completed work collapses. One agent is a lonely planet. Five agents become a solar system.*
+
+So I built it. A VS Code extension that rendered every AI coding agent as a planet, data transfers as ships, completed work spiraling into a black hole. It was pretty. It was cosmetic. It did not save me from the thing that happened next.
+
 ## The moment it broke
 
 Three Claude Code sessions, same repo. One was building the REST API, one was writing tests, one was updating docs. I was pleased with myself — look at me, parallelizing AI.

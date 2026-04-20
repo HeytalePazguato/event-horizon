@@ -6,6 +6,8 @@ tags: ai, vscode, productivity, opensource
 canonical_url: https://github.com/HeytalePazguato/event-horizon
 ---
 
+Event Horizon started with Claude itself describing how it saw other AI agents — planets in a cosmic system, tasks orbiting as moons, completed work collapsing into a black hole. I built the visual first. Then the agents had to actually coordinate on real work, and the pretty visualization forced a boring architectural choice: where does the shared task state live?
+
 When you tell someone you're coordinating a team of AI coding agents, the first design they reach for is a task database. Postgres, an issues table, a REST API, a web dashboard. It's the obvious answer — tasks are structured, dependencies are relational, queries need to be fast, multiple workers need consistent views.
 
 I reached for a **markdown file** instead. Here's why it keeps winning.

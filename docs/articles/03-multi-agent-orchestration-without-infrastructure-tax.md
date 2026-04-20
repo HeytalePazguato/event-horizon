@@ -6,7 +6,9 @@ tags: ai, architecture, vscode, opensource
 canonical_url: https://github.com/HeytalePazguato/event-horizon
 ---
 
-Every popular multi-agent coordination tool I looked at shipped with the same stack:
+Event Horizon exists because of a conversation with Claude. I asked it how it would visualize itself and other AI agents working together; the answer was a cosmic system where each agent is a planet, tasks orbit as moons, completed work collapses into a black hole. I built that. What came next — making those agents actually coordinate on real work without torching each other's output — is the part this post is about.
+
+Every popular multi-agent coordination tool I looked at when it was time to solve the coordination problem shipped with the same stack:
 
 - Docker to run the services
 - Postgres for tasks and state

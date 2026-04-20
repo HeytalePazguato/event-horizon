@@ -169,6 +169,34 @@ h1 {
   max-width: 640px;
 }
 
+.attribution-lede {
+  font-size: 20px;
+  color: var(--accent);
+  margin: 0 0 32px;
+  font-weight: 500;
+}
+
+.hero-quote {
+  margin: 0 0 32px;
+  padding: 24px 28px;
+  border-left: 2px solid rgba(136, 170, 255, 0.4);
+  background: linear-gradient(90deg, rgba(136, 170, 255, 0.06), transparent);
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--text);
+  font-style: italic;
+  max-width: 720px;
+  border-radius: 0 6px 6px 0;
+}
+
+.hero-quote .q-mark {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 20px;
+  margin: 0 3px;
+}
+
 .cta-row {
   display: flex;
   flex-wrap: wrap;
