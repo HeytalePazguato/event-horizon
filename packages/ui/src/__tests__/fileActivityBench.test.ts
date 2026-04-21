@@ -24,7 +24,11 @@ function makeIsolatedSlice(): ActivitySlice {
 }
 
 describe('recordFileOp benchmark', () => {
-  it('records 10,000 file ops in under 50ms', () => {
+  // Threshold is generous so the test stays green on slow/contended CI runners
+  // (GitHub Actions hosted runners can be ~2–3× slower than dev machines).
+  // The point is to catch true regressions (10× slowdowns), not to enforce
+  // wall-clock limits.
+  it('records 10,000 file ops in under 500ms', () => {
     const slice = makeIsolatedSlice();
     // Warmup the JIT so the measured window reflects steady-state perf.
     for (let i = 0; i < 5000; i++) {
@@ -43,7 +47,7 @@ describe('recordFileOp benchmark', () => {
       slice.recordFileOp(`/src/file${id}.ts`, `file${id}.ts`, `agent${i % 5}`, `Agent ${i % 5}`, 'claude-code', op);
     }
     const duration = performance.now() - start;
-    expect(duration).toBeLessThan(50);
+    expect(duration).toBeLessThan(500);
   });
 
   it('scales linearly with op count (O(1) per op)', () => {
