@@ -3,7 +3,7 @@
  * Extracted from index.tsx (Phase D — Webview Decomposition).
  */
 
-import { useEffect, useRef, type MutableRefObject } from 'react';
+import { useEffect, useRef, startTransition, type MutableRefObject } from 'react';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
 import { useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
 import type { AgentState, AgentRuntimeState, AgentMetrics } from '@event-horizon/core';
@@ -79,9 +79,39 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
   const depsRef = useRef(deps);
   depsRef.current = deps;
 
+  // Debounce refs for singularity stats: max 1 update/sec, skip if values unchanged
+  const singularityDebounceTimerRef = useRef<number | null>(null);
+  const lastSingularityStatsRef = useRef<{ totalTokens: number; totalCostUsd: number } | null>(null);
+
   useEffect(() => {
-    const handler = (e: MessageEvent<EventPayload>) => {
-      const msg = e.data;
+    const flushSingularityStats = () => {
+      const currentMetrics = Object.values(metricsMapRef.current);
+      let totalTokens = 0;
+      let totalCost = 0;
+      let hasTokenData = false;
+      let hasCostData = false;
+      for (const am of currentMetrics) {
+        const input = am.inputTokens ?? -1;
+        const output = am.outputTokens ?? -1;
+        const cost = am.estimatedCostUsd ?? -1;
+        if (input >= 0) { totalTokens += input; hasTokenData = true; }
+        if (output >= 0) { totalTokens += output; hasTokenData = true; }
+        if (cost >= 0) { totalCost += cost; hasCostData = true; }
+      }
+      if (!hasTokenData) totalTokens = -1;
+      if (!hasCostData) totalCost = -1;
+
+      const newStats = { totalTokens, totalCostUsd: totalCost };
+      const oldStats = lastSingularityStatsRef.current;
+      if (!oldStats || oldStats.totalTokens !== newStats.totalTokens || oldStats.totalCostUsd !== newStats.totalCostUsd) {
+        const s = useCommandCenterStore.getState();
+        s.setSingularityStats({ ...s.singularityStats, ...newStats });
+        lastSingularityStatsRef.current = newStats;
+      }
+      singularityDebounceTimerRef.current = null;
+    };
+
+    const processEvent = (msg: EventPayload) => {
 
       // ── Dispatch map for non-event messages ──
       if (msg?.type === 'toggle-view') {
@@ -156,12 +186,13 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         // Synthesis beams: all workers beam results back to orchestrator
         const data = msg as unknown as { orchestratorAgentId: string; workerAgentIds: string[] };
         if (data.orchestratorAgentId && data.workerAgentIds && depsRef.current.setSpawnBeams) {
-          const now = performance.now() / 1000; // approximate tick time
+          const now = Date.now(); // wall-clock; BeamSystem uses Date.now() too
           const beams = data.workerAgentIds.map((wId: string) => ({
             fromAgentId: wId,
             toAgentId: data.orchestratorAgentId,
             color: 0x40a060, // green for synthesis
             startTime: now,
+            createdAtMs: now,
           }));
           depsRef.current.setSpawnBeams((prev) => [...prev, ...beams]);
         }
@@ -207,19 +238,23 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       if (msg?.type === 'knowledge-update') {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = msg as any;
-        if (data.workspace) depsRef.current.setKnowledgeWorkspace(data.workspace);
-        if (data.plan) depsRef.current.setKnowledgePlan(data.plan);
+        startTransition(() => {
+          if (data.workspace) depsRef.current.setKnowledgeWorkspace(data.workspace);
+          if (data.plan) depsRef.current.setKnowledgePlan(data.plan);
+        });
         return;
       }
       if (msg?.type === 'traces-update') {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = msg as any;
-        if (data.spans && depsRef.current.setTraceSpans) {
-          depsRef.current.setTraceSpans(data.spans);
-        }
-        if (data.aggregate && depsRef.current.setTraceAggregate) {
-          depsRef.current.setTraceAggregate(data.aggregate);
-        }
+        startTransition(() => {
+          if (data.spans && depsRef.current.setTraceSpans) {
+            depsRef.current.setTraceSpans(data.spans);
+          }
+          if (data.aggregate && depsRef.current.setTraceAggregate) {
+            depsRef.current.setTraceAggregate(data.aggregate);
+          }
+        });
         return;
       }
       if (msg?.type === 'cost-insights-update') {
@@ -257,7 +292,13 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         const data = msg as any;
         const ws = (data.data?.wormholes ?? data.wormholes ?? []) as Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>;
         if (depsRef.current.setWormholes) {
-          depsRef.current.setWormholes(ws);
+          // Preserve any wormholes whose id starts with "demo-" (seeded by the
+          // demo simulation) so the periodic extension-host broadcast doesn't
+          // wipe them. Replace only the non-demo entries with the broadcast.
+          depsRef.current.setWormholes((prev) => {
+            const demoOnly = prev.filter((w) => w.id.startsWith('demo-'));
+            return [...demoOnly, ...ws];
+          });
         }
         return;
       }
@@ -283,27 +324,27 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         const preTokens = data.preTokens as number | undefined;
         const postTokens = data.postTokens as number | undefined;
 
-        // Add compaction log entry
+        // Add compaction log entry + timeline (non-urgent — wrapped in startTransition)
         const store = useCommandCenterStore.getState();
-        store.addLog({
-          id: `compaction-${Date.now()}-${agentId}`,
-          ts: new Date().toLocaleTimeString(),
-          agentId,
-          agentName: agentId.slice(0, 12),
-          type: 'compaction',
-        });
-
-        // Add compaction timeline entry
         const agentState = depsRef.current.agentMapRef.current[agentId];
-        store.addTimelineEntry({
-          ts: Date.now(),
-          agentId,
-          agentName: agentState?.name ?? agentId,
-          agentType: agentState?.type ?? 'unknown',
-          kind: 'compaction',
-          label: preTokens && postTokens
-            ? `Context compacted: ${preTokens} -> ${postTokens} tokens`
-            : 'Context compacted',
+        startTransition(() => {
+          store.addLog({
+            id: `compaction-${Date.now()}-${agentId}`,
+            ts: new Date().toLocaleTimeString(),
+            agentId,
+            agentName: agentId.slice(0, 12),
+            type: 'compaction',
+          });
+          store.addTimelineEntry({
+            ts: Date.now(),
+            agentId,
+            agentName: agentState?.name ?? agentId,
+            agentType: agentState?.type ?? 'unknown',
+            kind: 'compaction',
+            label: preTokens && postTokens
+              ? `Context compacted: ${preTokens} -> ${postTokens} tokens`
+              : 'Context compacted',
+          });
         });
 
         // Trigger compaction visual on planet
@@ -356,15 +397,23 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
           sessionStart: number; sessionEnd?: number; cwd?: string;
         }>;
 
-        // Replay historical agents from sessions
+        // Replay historical agents from sessions — skip sessions that already ended.
+        // A terminated session (sessionEnd set) represents a dead agent; replaying
+        // it as a planet creates phantom agents that pile up across reloads.
+        // Also skip sessions older than 10 minutes — workers that died without
+        // sending agent.terminate leave sessionEnd=null forever, so they'd otherwise
+        // resurrect on every reload.
+        const sessionStaleCutoffMs = Date.now() - 10 * 60 * 1000;
         for (const session of sessions) {
+          if (session.sessionEnd) continue;
+          if (session.sessionStart < sessionStaleCutoffMs) continue;
           const existing = agentMapRef.current[session.agentId];
           if (!existing) {
             const state: AgentState = {
               id: session.agentId,
               name: session.agentName ?? session.agentId,
               type: session.agentType as AgentRuntimeState,
-              state: session.sessionEnd ? 'idle' : 'idle',
+              state: 'idle',
               cwd: session.cwd,
             } as AgentState;
             setAgentMap((prev) => ({ ...prev, [session.agentId]: state }));
@@ -375,17 +424,19 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
           }
         }
 
-        // Replay historical log entries (most recent first → reverse for chronological add)
-        for (const evt of [...events].reverse()) {
-          addLog({
-            id: `hist-${evt.timestamp}-${evt.agentId}`,
-            ts: new Date(evt.timestamp).toLocaleTimeString(),
-            agentId: evt.agentId,
-            agentName: evt.agentName ?? evt.agentId,
-            type: evt.type,
-            skillName: evt.payload?.isSkill ? (evt.payload.skillName as string | undefined) : undefined,
-          });
-        }
+        // Replay historical log entries (non-urgent — wrapped in startTransition)
+        startTransition(() => {
+          for (const evt of [...events].reverse()) {
+            addLog({
+              id: `hist-${evt.timestamp}-${evt.agentId}`,
+              ts: new Date(evt.timestamp).toLocaleTimeString(),
+              agentId: evt.agentId,
+              agentName: evt.agentName ?? evt.agentId,
+              type: evt.type,
+              skillName: evt.payload?.isSkill ? (evt.payload.skillName as string | undefined) : undefined,
+            });
+          }
+        });
         return;
       }
 
@@ -405,7 +456,9 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       const type = raw.type ?? 'agent.spawn';
 
       const logSkillName = raw.payload?.isSkill ? (raw.payload.skillName as string | undefined) : undefined;
-      addLog({ id: `${Date.now()}-${agentId}`, ts: new Date().toLocaleTimeString(), agentId, agentName, type, skillName: logSkillName });
+      startTransition(() => {
+        addLog({ id: `${Date.now()}-${agentId}`, ts: new Date().toLocaleTimeString(), agentId, agentName, type, skillName: logSkillName });
+      });
 
       // ── Singularity stats tracking ──
       const store = useCommandCenterStore.getState();
@@ -422,19 +475,21 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         }
       }
 
-      // ── Timeline recording ──
+      // ── Timeline recording (non-urgent — wrapped in startTransition) ──
       const tlBase = { ts: Date.now(), agentId, agentName, agentType };
-      if (type === 'agent.spawn') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'spawned' });
-      else if (type === 'agent.terminate') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'terminated' });
-      else if (type === 'agent.error') store.addTimelineEntry({ ...tlBase, kind: 'error', label: (raw.payload?.message as string)?.slice(0, 60) ?? 'error' });
-      else if (type === 'tool.call') {
-        const toolName = (raw.payload?.toolName as string) ?? 'unknown';
-        store.addTimelineEntry({ ...tlBase, kind: 'tool', label: toolName });
-      } else if (type === 'file.read' || type === 'file.write') {
-        const fp = (raw.payload?.filePath as string) ?? '';
-        const fn = fp.split(/[/\\]/).pop() ?? fp;
-        store.addTimelineEntry({ ...tlBase, kind: 'file', label: `${type === 'file.write' ? 'W' : 'R'} ${fn}` });
-      }
+      startTransition(() => {
+        if (type === 'agent.spawn') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'spawned' });
+        else if (type === 'agent.terminate') store.addTimelineEntry({ ...tlBase, kind: 'state', label: 'terminated' });
+        else if (type === 'agent.error') store.addTimelineEntry({ ...tlBase, kind: 'error', label: (raw.payload?.message as string)?.slice(0, 60) ?? 'error' });
+        else if (type === 'tool.call') {
+          const toolName = (raw.payload?.toolName as string) ?? 'unknown';
+          store.addTimelineEntry({ ...tlBase, kind: 'tool', label: toolName });
+        } else if (type === 'file.read' || type === 'file.write') {
+          const fp = (raw.payload?.filePath as string) ?? '';
+          const fn = fp.split(/[/\\]/).pop() ?? fp;
+          store.addTimelineEntry({ ...tlBase, kind: 'file', label: `${type === 'file.write' ? 'W' : 'R'} ${fn}` });
+        }
+      });
 
       // Spawn beam: when an agent spawns with a spawner (orchestrator context), fire a beam
       if (type === 'agent.spawn' && raw.payload?.spawnedBy && depsRef.current.setSpawnBeams) {
@@ -446,12 +501,13 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
           'cursor': 0x44ddcc,
         };
         const beamColor = AGENT_TYPE_BEAM_COLORS[agentType] ?? 0xffcc44;
-        const now = performance.now() / 1000;
+        const now = Date.now(); // wall-clock; BeamSystem uses Date.now() too
         depsRef.current.setSpawnBeams((prev) => [...prev, {
           fromAgentId: spawnerId,
           toAgentId: agentId,
           color: beamColor,
           startTime: now,
+          createdAtMs: now,
         }]);
       }
 
@@ -558,27 +614,11 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         };
       });
 
-      // Singularity token/cost totals
+      // Singularity token/cost totals — debounced to max 1/sec, skip if unchanged
       if (typeof raw.payload?.inputTokens === 'number' || typeof raw.payload?.outputTokens === 'number' || typeof raw.payload?.costUsd === 'number') {
-        queueMicrotask(() => {
-          const currentMetrics = Object.values(metricsMapRef.current);
-          let totalTokens = 0;
-          let totalCost = 0;
-          let hasTokenData = false;
-          let hasCostData = false;
-          for (const am of currentMetrics) {
-            const input = am.inputTokens ?? -1;
-            const output = am.outputTokens ?? -1;
-            const cost = am.estimatedCostUsd ?? -1;
-            if (input >= 0) { totalTokens += input; hasTokenData = true; }
-            if (output >= 0) { totalTokens += output; hasTokenData = true; }
-            if (cost >= 0) { totalCost += cost; hasCostData = true; }
-          }
-          if (!hasTokenData) totalTokens = -1;
-          if (!hasCostData) totalCost = -1;
-          const s = useCommandCenterStore.getState();
-          s.setSingularityStats({ ...s.singularityStats, totalTokens, totalCostUsd: totalCost });
-        });
+        if (singularityDebounceTimerRef.current === null) {
+          singularityDebounceTimerRef.current = setTimeout(flushSingularityStats, 1000) as unknown as number;
+        }
       }
 
       // Active skill tracking
@@ -657,9 +697,28 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         }
       }
     };
+
+    const handler = (ev: MessageEvent<EventPayload>) => {
+      const msg = ev.data;
+      if (msg?.type === 'events-batch' && Array.isArray((msg as unknown as { events: unknown }).events)) {
+        for (const batchedEvent of (msg as unknown as { events: unknown[] }).events) {
+          processEvent({ type: 'event', payload: batchedEvent });
+        }
+        return;
+      }
+      processEvent(msg);
+    };
+
     window.addEventListener('message', handler);
     vscodeApi?.postMessage({ type: 'ready' });
     vscodeApi?.postMessage({ type: 'request-roles' });
-    return () => window.removeEventListener('message', handler);
+    return () => {
+      window.removeEventListener('message', handler);
+      // Flush any pending singularity stats update on cleanup
+      if (singularityDebounceTimerRef.current !== null) {
+        clearTimeout(singularityDebounceTimerRef.current);
+        flushSingularityStats();
+      }
+    };
   }, [addLog]);
 }

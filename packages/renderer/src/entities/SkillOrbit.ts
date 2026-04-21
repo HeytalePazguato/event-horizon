@@ -57,7 +57,7 @@ export function createSkillOrbit(props: SkillOrbitProps): ExtendedSkillOrbit {
   // Skill name label (hidden by default, shown when active)
   const label = new Text({
     text: '',
-    style: { fontSize: 9, fill: '#44ddff', fontFamily: 'Consolas, monospace' },
+    style: { fontFamily: 'Consolas, Courier New, monospace', fontSize: 9, fill: 0x44ddff },
   });
   label.anchor.set(0.5, 1);
   label.x = 0;

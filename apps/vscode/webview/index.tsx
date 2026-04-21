@@ -3,6 +3,16 @@
  * Logic is delegated to extracted hooks (Phase D — Webview Decomposition).
  */
 
+// Unconditional boot marker so we can tell from the webview devtools whether
+// this script even started executing (survives minification + dev builds).
+console.log('[EH boot] webview main.js top-of-file executing');
+window.addEventListener('error', (e) => {
+  console.error('[EH boot] window error:', e.message, e.filename, e.lineno, e.error);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[EH boot] unhandled rejection:', e.reason);
+});
+
 import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
@@ -15,10 +25,25 @@ import { useWebviewMessages } from './hooks/useWebviewMessages';
 import { useAchievementTriggers } from './hooks/useAchievementTriggers';
 import { useDemoSimulation } from './hooks/useDemoSimulation';
 import { useSettingsPersistence } from './hooks/useSettingsPersistence';
+import { useSpawnBeamPruner } from './hooks/useSpawnBeamPruner';
 import { OnboardingCard } from './components/OnboardingCard';
 import { InfoOverlay } from './components/InfoOverlay';
 import { ConnectModal } from './components/ConnectModal';
 import { SpawnModal } from './components/SpawnModal';
+
+// Shape passed to <Universe planTasks={...} /> — stable reference across
+// renders when plan content hasn't changed (see planDebris cache).
+type PlanDebrisShape = {
+  tasks: Array<{
+    id: string;
+    status: 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked';
+    assigneeId: string | null;
+    role: string | null;
+    retryCount: number | undefined;
+    failedReason: string | null | undefined;
+    blockedBy: string[];
+  }>;
+};
 
 // acquireVsCodeApi() may only be called once per webview lifetime
 const vscodeApi = ((): { postMessage: (msg: unknown) => void } | null => {
@@ -247,9 +272,11 @@ function App() {
     setHeartbeatStatuses,
     setOrchestratorAgentIds,
     setMcpServers,
+    setWormholes,
   });
 
   useSettingsPersistence(vscodeApi);
+  useSpawnBeamPruner(spawnBeams, setSpawnBeams);
 
   // ── Sync selected agent data ──
   useEffect(() => {
@@ -390,7 +417,7 @@ function App() {
   const hasAgents = agents.length > 0;
   const hasInstalledHooks = connectedAgentTypes.length > 0;
   const showOnboarding = !hasAgents && !hasInstalledHooks && !onboardingDismissed && !demoSimRunning;
-  const agentStates = Object.fromEntries(Object.entries(agentMap).map(([k, v]) => [k, v.state ?? 'idle']));
+  const agentStates = useMemo(() => Object.fromEntries(Object.entries(agentMap).map(([k, v]) => [k, v.state ?? 'idle'])), [agentMap]);
   const metricsView = useMemo(() => Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, { load: v.load }])), [metricsMap]);
   const activeSubagentsView = useMemo(() => Object.fromEntries(Object.entries(metricsMap).map(([k, v]) => [k, v.activeSubagents ?? 0])), [metricsMap]);
   const skills = useCommandCenterStore((s) => s.skills);
@@ -402,9 +429,29 @@ function App() {
     })),
     [agents, skills],
   );
-  const planDebris = useMemo(() => {
-    if (!plan.loaded || !plan.tasks) return null;
-    return {
+  // Stable-ref cache: only rebuild planDebris when plan content actually changes
+  // (R-CRIT-1). `plan.lastUpdatedAt` is bumped server-side on every plan
+  // mutation, so it's the primary key; the per-task suffix is defensive.
+  const planDebrisCacheRef = useRef<{ fingerprint: string; result: PlanDebrisShape | null }>({
+    fingerprint: '',
+    result: null,
+  });
+  const planDebris = useMemo<PlanDebrisShape | null>(() => {
+    if (!plan.loaded || !plan.tasks) {
+      if (planDebrisCacheRef.current.result !== null) {
+        planDebrisCacheRef.current = { fingerprint: '', result: null };
+      }
+      return null;
+    }
+    let perTaskFP = '';
+    for (const t of plan.tasks) {
+      perTaskFP += `${t.status[0]}${t.role ?? '-'}|`;
+    }
+    const fingerprint = `${plan.lastUpdatedAt ?? 0}:${plan.tasks.length}:${perTaskFP}`;
+    if (fingerprint === planDebrisCacheRef.current.fingerprint && planDebrisCacheRef.current.result) {
+      return planDebrisCacheRef.current.result;
+    }
+    const result: PlanDebrisShape = {
       tasks: plan.tasks.map((t) => ({
         id: t.id,
         status: t.status as 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked',
@@ -415,6 +462,8 @@ function App() {
         blockedBy: t.blockedBy,
       })),
     };
+    planDebrisCacheRef.current = { fingerprint, result };
+    return result;
   }, [plan]);
   const selectedAgentRole = useMemo(() => {
     if (!plan?.tasks || !selectedAgentId) return null;
@@ -422,9 +471,29 @@ function App() {
     return task?.role ?? null;
   }, [plan, selectedAgentId]);
 
-  // Compute recommendedFor for plan tasks based on roleAssignments
+  // Stable-ref cache: return the same wrapper reference across renders when
+  // plan content + roleAssignments are unchanged (R-CRIT-1). `plan.lastUpdatedAt`
+  // is bumped server-side on every plan mutation, so it covers status/assignee/
+  // retryCount/blockedBy/etc. changes. The per-task role suffix is defensive
+  // and `roleAssignments` is folded in via a sorted fingerprint.
+  const planTasksRecCacheRef = useRef<{ fingerprint: string; result: import('@event-horizon/ui').PlanView }>({
+    fingerprint: '',
+    result: plan,
+  });
   const planTasksWithRecommendations = useMemo(() => {
     if (!plan.loaded || !plan.tasks) return plan;
+    const roleAssignFP = roleAssignments
+      .map((ra) => `${ra.roleId}:${ra.agentType ?? ''}`)
+      .sort()
+      .join('|');
+    let taskRolesFP = '';
+    for (const t of plan.tasks) {
+      taskRolesFP += `${t.id}:${t.role ?? ''};`;
+    }
+    const fingerprint = `${plan.lastUpdatedAt ?? 0}:${plan.tasks.length}:${roleAssignFP}__${taskRolesFP}`;
+    if (fingerprint === planTasksRecCacheRef.current.fingerprint) {
+      return planTasksRecCacheRef.current.result;
+    }
     const updated = plan.tasks.map((t) => {
       if (t.role && roleAssignments.length > 0) {
         const assignment = roleAssignments.find((ra) => ra.roleId === t.role);
@@ -434,7 +503,9 @@ function App() {
       }
       return t;
     });
-    return { ...plan, tasks: updated };
+    const result = { ...plan, tasks: updated };
+    planTasksRecCacheRef.current = { fingerprint, result };
+    return result;
   }, [plan, roleAssignments]);
 
   // Knowledge counts and recent entries for AgentIdentity
@@ -444,48 +515,121 @@ function App() {
   }), [knowledgeWorkspace, knowledgePlan]);
 
   const recentKnowledge = useMemo(() => {
-    const all = [...knowledgeWorkspace, ...knowledgePlan]
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, 3)
-      .map((k) => ({ key: k.key, value: k.value, scope: k.scope }));
-    return all;
+    const top: typeof knowledgeWorkspace = [];
+    const tryInsert = (entry: typeof knowledgeWorkspace[number]) => {
+      for (let i = 0; i < top.length; i++) {
+        if (entry.updatedAt > top[i].updatedAt) {
+          top.splice(i, 0, entry);
+          if (top.length > 3) top.pop();
+          return;
+        }
+      }
+      if (top.length < 3) top.push(entry);
+    };
+    for (const e of knowledgeWorkspace) tryInsert(e);
+    for (const e of knowledgePlan) tryInsert(e);
+    return top.map((k) => ({ key: k.key, value: k.value, scope: k.scope }));
   }, [knowledgeWorkspace, knowledgePlan]);
+
+  // Stable-ref cache: only recompute when content actually changes (R-CRIT-3)
+  const knowledgeLinksCacheRef = useRef<{ fingerprint: string; result: KnowledgeLink[] }>({
+    fingerprint: '',
+    result: [],
+  });
 
   // Compute knowledge links for constellation visualization
   const knowledgeLinksComputed = useMemo<KnowledgeLink[]>(() => {
+    const agentFingerprint = agents.map(a => `${a.id}:${a.cwd ?? ''}`).sort().join('|');
+    const entryFingerprint = [...knowledgeWorkspace, ...knowledgePlan]
+      .map(e => `${e.authorId}:${e.scope}:${e.updatedAt}`)
+      .sort()
+      .join('|');
+    const planFingerprint = plan.loaded
+      ? `${plan.id}:${(plan.tasks ?? []).map(t => t.assigneeId ?? '').sort().join(',')}`
+      : '';
+    const fingerprint = `${agentFingerprint}__${entryFingerprint}__${planFingerprint}`;
+
+    if (fingerprint === knowledgeLinksCacheRef.current.fingerprint) {
+      return knowledgeLinksCacheRef.current.result;
+    }
+
     const links: KnowledgeLink[] = [];
     const allEntries = [...knowledgeWorkspace, ...knowledgePlan];
-    // Group by author pairs — each pair of agents that share knowledge gets a link
-    const pairCounts = new Map<string, { fromAgentId: string; toAgentId: string; scope: 'workspace' | 'plan'; authorIsUser: boolean; count: number }>();
     const agentIdSet = new Set(agents.map(a => a.id));
+
+    // Build peer-set per scope:
+    //  - WORKSPACE: agents that share a cwd. A workspace knowledge entry
+    //    is "shared context" within that workspace, so link all members.
+    //  - PLAN: agents currently assigned to any task in the active plan.
+    //    Plan knowledge is shared by everyone working the plan.
+    // This avoids the previous bug where entries linked the author to EVERY
+    // agent in the universe, including unrelated real-agent planets.
+    const cwdToAgents = new Map<string, string[]>();
+    for (const a of agents) {
+      const cwd = a.cwd?.trim();
+      if (!cwd) continue;
+      const list = cwdToAgents.get(cwd) ?? [];
+      list.push(a.id);
+      cwdToAgents.set(cwd, list);
+    }
+    const planAssignees = new Set<string>();
+    if (plan.loaded && plan.tasks) {
+      for (const t of plan.tasks) {
+        if (t.assigneeId && agentIdSet.has(t.assigneeId)) planAssignees.add(t.assigneeId);
+      }
+    }
+
+    const pairCounts = new Map<string, { fromAgentId: string; toAgentId: string; scope: 'workspace' | 'plan'; authorIsUser: boolean; count: number }>();
+    const addLink = (a: string, b: string, scope: 'workspace' | 'plan', authorIsUser: boolean) => {
+      if (a === b) return;
+      const key = [a, b].sort().join('::') + '::' + scope;
+      const existing = pairCounts.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        pairCounts.set(key, { fromAgentId: a, toAgentId: b, scope, authorIsUser, count: 1 });
+      }
+    };
 
     for (const entry of allEntries) {
       const authorId = entry.authorId;
-      if (!authorId) continue;
-      // Create links from author to all other agents
-      for (const agent of agents) {
-        if (agent.id === authorId) continue;
-        const key = [authorId, agent.id].sort().join('::') + '::' + entry.scope;
-        const existing = pairCounts.get(key);
-        const isUser = entry.author === 'user' || !agentIdSet.has(authorId);
-        if (existing) {
-          existing.count++;
-        } else {
-          pairCounts.set(key, {
-            fromAgentId: authorId,
-            toAgentId: agent.id,
-            scope: entry.scope as 'workspace' | 'plan',
-            authorIsUser: isUser,
-            count: 1,
-          });
+      const scope = entry.scope as 'workspace' | 'plan';
+      const isUser = entry.author === 'user' || !authorId || !agentIdSet.has(authorId);
+
+      if (scope === 'plan') {
+        const ids = [...planAssignees];
+        for (let i = 0; i < ids.length; i++) {
+          for (let j = i + 1; j < ids.length; j++) {
+            addLink(ids[i], ids[j], 'plan', isUser);
+          }
+        }
+      } else {
+        // workspace scope — link agents in the same workspace as the author,
+        // or if user-authored, link agents within every workspace
+        if (isUser) {
+          for (const peers of cwdToAgents.values()) {
+            for (let i = 0; i < peers.length; i++) {
+              for (let j = i + 1; j < peers.length; j++) {
+                addLink(peers[i], peers[j], 'workspace', true);
+              }
+            }
+          }
+        } else if (authorId) {
+          const authorCwd = agents.find(a => a.id === authorId)?.cwd?.trim();
+          if (authorCwd) {
+            const peers = cwdToAgents.get(authorCwd) ?? [];
+            for (const p of peers) addLink(authorId, p, 'workspace', false);
+          }
         }
       }
     }
     for (const link of pairCounts.values()) {
       links.push(link);
     }
+
+    knowledgeLinksCacheRef.current = { fingerprint, result: links };
     return links;
-  }, [knowledgeWorkspace, knowledgePlan, agents]);
+  }, [knowledgeWorkspace, knowledgePlan, agents, plan]);
 
   // Compute budget info from plan metadata + cost tracking
   const budgetInfo = useMemo(() => {
@@ -517,6 +661,10 @@ function App() {
     vscodeApi?.postMessage({ type: 'tell-all-prompt' });
   }, [tellAllRequestedAt]);
 
+  const contextUsage = useMemo(() => contextLayers
+    ? Object.fromEntries(Object.entries(contextLayers).map(([id, layer]) => [id, (layer as { usageRatio?: number }).usageRatio ?? 0]))
+    : undefined, [contextLayers]);
+
   const hoveredAgent = hoveredAgentId ? agentMap[hoveredAgentId] : null;
   const hoveredMetrics = hoveredAgentId ? metricsMap[hoveredAgentId] : null;
   const panelSize = usePanelSize();
@@ -526,7 +674,7 @@ function App() {
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 380, flex: 1, background: 'transparent', zoom: fontSize === 'small' ? 0.87 : fontSize === 'large' ? 1.15 : 1 }}>
       {/* Universe view — hidden (not unmounted) when Operations is active to preserve PixiJS state.
            Also hidden until settings have hydrated, so user's defaultView preference wins over the initial default. */}
-      <div style={{ flex: 1, display: settingsHydrated && viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
+      <div style={{ flex: 1, minHeight: 0, display: settingsHydrated && viewMode === 'universe' ? 'flex' : 'none', flexDirection: 'column', position: 'relative' }}>
         <div ref={panelSize.ref} data-tour="universe" style={{ flex: 1, minHeight: 0, position: 'relative', background: 'transparent' }}>
           <RandomStarfield />
           <Universe
@@ -564,9 +712,7 @@ function App() {
             spawnBeams={spawnBeams}
             knowledgeLinks={knowledgeLinksComputed}
             agentTypesMap={agentTypesMap}
-            contextUsage={contextLayers ? Object.fromEntries(
-              Object.entries(contextLayers).map(([id, layer]) => [id, (layer as { usageRatio?: number }).usageRatio ?? 0])
-            ) : undefined}
+            contextUsage={contextUsage}
             wormholes={wormholes}
           />
         </div>

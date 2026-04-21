@@ -18,7 +18,9 @@ export interface ActiveShip {
   progress: number;
   trailG: Graphics;
   routeG: Graphics;
-  trailPoints: Array<{ x: number; y: number }>;
+  trailBuffer: Float32Array; // 64 floats = 32 (x,y) pairs
+  trailHead: number;         // write cursor 0..31
+  trailSize: number;         // valid entries, capped at 32
   trailColor: number;
 }
 
@@ -56,19 +58,24 @@ export function updateShips(ships: ActiveShip[], callbacks: ShipSystemCallbacks)
     );
     s.c.rotation = Math.atan2(ahead.y - pos.y, ahead.x - pos.x);
 
-    // Trail rendering
-    s.trailPoints.push({ x: pos.x, y: pos.y });
-    if (s.trailPoints.length > MAX_TRAIL_POINTS) s.trailPoints.shift();
+    // Trail rendering — ring buffer write
+    s.trailBuffer[s.trailHead * 2]     = pos.x;
+    s.trailBuffer[s.trailHead * 2 + 1] = pos.y;
+    s.trailHead = (s.trailHead + 1) % MAX_TRAIL_POINTS;
+    if (s.trailSize < MAX_TRAIL_POINTS) s.trailSize++;
 
     s.trailG.clear();
-    const pts = s.trailPoints;
-    if (pts.length >= 2) {
-      for (let j = 1; j < pts.length; j++) {
-        const alpha = (j / pts.length) * 0.5;
-        const strokeWidth = 0.8 + (j / pts.length) * 0.6;
+    if (s.trailSize >= 2) {
+      // oldest entry index
+      const startIdx = s.trailSize < MAX_TRAIL_POINTS ? 0 : s.trailHead;
+      for (let j = 1; j < s.trailSize; j++) {
+        const prevIdx = (startIdx + j - 1) % MAX_TRAIL_POINTS;
+        const currIdx = (startIdx + j)     % MAX_TRAIL_POINTS;
+        const alpha = (j / s.trailSize) * 0.5;
+        const strokeWidth = 0.8 + (j / s.trailSize) * 0.6;
         s.trailG
-          .moveTo(pts[j - 1].x, pts[j - 1].y)
-          .lineTo(pts[j].x, pts[j].y)
+          .moveTo(s.trailBuffer[prevIdx * 2], s.trailBuffer[prevIdx * 2 + 1])
+          .lineTo(s.trailBuffer[currIdx * 2], s.trailBuffer[currIdx * 2 + 1])
           .stroke({ width: strokeWidth, color: s.trailColor, alpha });
       }
     }

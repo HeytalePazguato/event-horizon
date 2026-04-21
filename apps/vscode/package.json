@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
@@ -455,6 +455,7 @@
     "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap && node scripts/copy-sql-wasm.mjs",
     "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked && node scripts/copy-sql-wasm.mjs",
     "build:webview": "node webview/esbuild.mjs",
+    "build:webview:dev": "node webview/esbuild.mjs --dev",
     "build:webview:prod": "node webview/esbuild.mjs --minify",
     "package:vsix": "pnpm run build:ext:prod && pnpm run build:webview:prod && vsce package --no-dependencies",
     "test": "vitest run",

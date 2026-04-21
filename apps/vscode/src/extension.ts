@@ -30,6 +30,29 @@ import { CrossAgentCorrelator } from './crossAgentCorrelator';
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
 let ehDatabase: EventHorizonDB | null = null;
+
+// ── Debounce timer for instruction file scanner broadcasts ────────────────────
+let instructionScannerDebounceTimer: NodeJS.Timeout | null = null;
+
+// ── Debounce timer for planBoards globalState writes ─────────────────────────
+let planBoardsPersistTimer: NodeJS.Timeout | null = null;
+let planBoardsPersistFlush: (() => void) | null = null;
+
+// ── Hash-based dedup for periodic broadcasts ─────────────────────────────────
+let lastTracesHash: string | null = null;
+let lastCostInsightsHash: string | null = null;
+let lastHeartbeatHash: string | null = null;
+let lastWormholesHash: string | null = null;
+let lastOrchestratorHash: string | null = null;
+
+/** Reset all broadcast hashes so a freshly-mounted webview receives the next snapshot. */
+export function resetBroadcastHashes(): void {
+  lastTracesHash = null;
+  lastCostInsightsHash = null;
+  lastHeartbeatHash = null;
+  lastWormholesHash = null;
+  lastOrchestratorHash = null;
+}
 const crossAgentCorrelator = new CrossAgentCorrelator();
 
 /** Access the persistence database (if enabled). Used by webviewProvider for event replay. */
@@ -37,9 +60,24 @@ export function getDatabase(): EventHorizonDB | null {
   return ehDatabase;
 }
 
-/** Forward an event to the main webview. */
+// ── Batched postMessage queue (reduces IPC cost on event bursts) ─────────────
+const eventBatchQueue: AgentEvent[] = [];
+let eventBatchTimer: NodeJS.Timeout | null = null;
+const BATCH_FLUSH_MS = 80;
+
+function flushEventBatch(): void {
+  if (eventBatchTimer !== null) { clearTimeout(eventBatchTimer); eventBatchTimer = null; }
+  if (eventBatchQueue.length === 0) return;
+  const batch = eventBatchQueue.splice(0);
+  webviewRef.current?.postMessage({ type: 'events-batch', events: batch });
+}
+
+/** Forward an event to the main webview (batched, flushed every 80 ms). */
 function broadcastEvent(event: AgentEvent): void {
-  webviewRef.current?.postMessage({ type: 'event', payload: event });
+  eventBatchQueue.push(event);
+  if (eventBatchTimer === null) {
+    eventBatchTimer = setTimeout(flushEventBatch, BATCH_FLUSH_MS);
+  }
 }
 
 
@@ -189,9 +227,9 @@ export function activate(context: vscode.ExtensionContext): void {
           console.log(`[Event Horizon] Pruned ${pruned} events older than ${retentionDays} days`);
         }
 
-        // Auto-save DB to disk every 60 seconds
+        // Auto-save DB to disk every 60 seconds (if dirty)
         const dbSaveInterval = setInterval(() => {
-          if (ehDatabase) {
+          if (ehDatabase && ehDatabase.isDirty()) {
             try {
               const data = ehDatabase.save();
               void vscode.workspace.fs.writeFile(vscode.Uri.file(dbPath), data);
@@ -268,9 +306,26 @@ export function activate(context: vscode.ExtensionContext): void {
           deleteScannedEntry(sharedKnowledge, relLabel);
         };
 
-        watcher.onDidCreate(refreshFile);
-        watcher.onDidChange(refreshFile);
-        watcher.onDidDelete(removeFile);
+        // Debounce the watcher event handlers to at most 1 broadcast per 500ms
+        const debouncedRefreshFile = (uri: vscode.Uri) => {
+          if (instructionScannerDebounceTimer) clearTimeout(instructionScannerDebounceTimer);
+          instructionScannerDebounceTimer = setTimeout(() => {
+            void refreshFile(uri);
+            instructionScannerDebounceTimer = null;
+          }, 500);
+        };
+
+        const debouncedRemoveFile = (uri: vscode.Uri) => {
+          if (instructionScannerDebounceTimer) clearTimeout(instructionScannerDebounceTimer);
+          instructionScannerDebounceTimer = setTimeout(() => {
+            removeFile(uri);
+            instructionScannerDebounceTimer = null;
+          }, 500);
+        };
+
+        watcher.onDidCreate(debouncedRefreshFile);
+        watcher.onDidChange(debouncedRefreshFile);
+        watcher.onDidDelete(debouncedRemoveFile);
         context.subscriptions.push(watcher);
 
         // Re-scan when workspace folders change (multi-root add/remove).
@@ -341,11 +396,27 @@ export function activate(context: vscode.ExtensionContext): void {
   // Track plan statuses so we can detect completion transitions
   const prevPlanStatuses = new Map<string, string>();
 
+  function schedulePlanBoardsPersist(): void {
+    if (planBoardsPersistTimer) clearTimeout(planBoardsPersistTimer);
+    planBoardsPersistTimer = setTimeout(() => {
+      void context.globalState.update('planBoards', planBoardManager.serialize());
+      void context.globalState.update('modelTierStats', modelTierManager?.serialize());
+      planBoardsPersistTimer = null;
+    }, 1000);
+  }
+  planBoardsPersistFlush = () => {
+    if (planBoardsPersistTimer) {
+      clearTimeout(planBoardsPersistTimer);
+      planBoardsPersistTimer = null;
+      void context.globalState.update('planBoards', planBoardManager.serialize());
+      void context.globalState.update('modelTierStats', modelTierManager?.serialize());
+    }
+  };
+
   // Forward plan changes to webview + persist to globalState + sync checkboxes to file
   planBoardManager.onChange((_boards, changedPlanId) => {
-    // Persist all plans to globalState
-    void context.globalState.update('planBoards', planBoardManager.serialize());
-    void context.globalState.update('modelTierStats', modelTierManager.serialize());
+    // Debounce globalState persistence to 1 s windows (coalesces rapid task updates)
+    schedulePlanBoardsPersist();
 
     // Write back checkbox status for the changed plan
     if (changedPlanId) {
@@ -406,11 +477,12 @@ export function activate(context: vscode.ExtensionContext): void {
         orchIds[p.orchestratorAgentId] = true;
       }
     }
-    webviewRef.current.postMessage({
-      type: 'orchestrator-update',
-      orchestratorAgentIds: orchIds,
-      orchestratorMap: planBoardManager.getOrchestratorMap(),
-    });
+    const orchPayload = { orchestratorAgentIds: orchIds, orchestratorMap: planBoardManager.getOrchestratorMap() };
+    const orchHash = JSON.stringify(orchPayload);
+    if (orchHash !== lastOrchestratorHash) {
+      lastOrchestratorHash = orchHash;
+      webviewRef.current.postMessage({ type: 'orchestrator-update', ...orchPayload });
+    }
   });
 
   // Record completed tasks for agent profiling
@@ -598,7 +670,11 @@ export function activate(context: vscode.ExtensionContext): void {
       for (const beat of allBeats) {
         heartbeats[beat.agentId] = beat.status;
       }
-      webviewRef.current.postMessage({ type: 'heartbeat-update', heartbeats });
+      const hbHash = JSON.stringify(heartbeats);
+      if (hbHash !== lastHeartbeatHash) {
+        lastHeartbeatHash = hbHash;
+        webviewRef.current.postMessage({ type: 'heartbeat-update', heartbeats });
+      }
     }
   }, 30_000);
   context.subscriptions.push({ dispose: () => clearInterval(heartbeatCheckInterval) });
@@ -609,11 +685,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (traceStore.size === 0) return;
     const spans = traceStore.getSpans(undefined, undefined, 100);
     const aggregate = traceStore.getAggregate();
-    webviewRef.current.postMessage({
-      type: 'traces-update',
-      spans,
-      aggregate,
-    });
+    const trHash = JSON.stringify({ spans, aggregate });
+    if (trHash === lastTracesHash) return;
+    lastTracesHash = trHash;
+    webviewRef.current.postMessage({ type: 'traces-update', spans, aggregate });
   }, 5_000);
   context.subscriptions.push({ dispose: () => clearInterval(traceBroadcastInterval) });
 
@@ -704,7 +779,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (ehDatabase) {
       try {
         const workspace = (event.payload?.cwd as string) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        ehDatabase.insertEvent(event, workspace, deriveEventCategory(event.type));
+        ehDatabase.queueInsert(event, workspace, deriveEventCategory(event.type));
       } catch { /* persistence failure should never block event processing */ }
     }
     metricsEngine.process(event);
@@ -750,15 +825,14 @@ export function activate(context: vscode.ExtensionContext): void {
         const workspace = (event.payload?.cwd as string)
           ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         const category = deriveEventCategory(event.type);
-        ehDatabase.insertEvent(event, workspace, category);
+        ehDatabase.queueInsert(event, workspace, category);
 
         // Track agent sessions
         if (event.type === 'agent.spawn') {
           // Reuse an existing open session if one exists (prevents row explosion
           // when agent.spawn fires multiple times for the same agent, since the
           // primary key is (agent_id, session_start)).
-          const existingSessions = ehDatabase.getSessions();
-          const openSession = existingSessions.find((s) => s.agentId === event.agentId && !s.sessionEnd);
+          const openSession = ehDatabase.getOpenSession(event.agentId);
           if (!openSession) {
             ehDatabase.upsertSession({
               agentId: event.agentId,
@@ -771,8 +845,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         } else if (event.type === 'agent.terminate' || event.type === 'agent.idle') {
           // Update session end + stats on terminate/idle
-          const sessions = ehDatabase.getSessions();
-          const session = sessions.find((s) => s.agentId === event.agentId && !s.sessionEnd);
+          const session = ehDatabase.getOpenSession(event.agentId);
           if (session) {
             ehDatabase.upsertSession({
               ...session,
@@ -1158,7 +1231,11 @@ export function activate(context: vscode.ExtensionContext): void {
     const insights = tokenAnalyzer.getInsights();
     const recommendations = tokenAnalyzer.getRecommendations();
     const contextLayers = tokenAnalyzer.getContextLayers();
-    webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations, contextLayers });
+    const ciHash = JSON.stringify({ insights, recommendations, contextLayers });
+    if (ciHash !== lastCostInsightsHash) {
+      lastCostInsightsHash = ciHash;
+      webviewRef.current?.postMessage({ type: 'cost-insights-update', insights, recommendations, contextLayers });
+    }
 
     // Log duplicate read warnings
     for (const dup of insights.duplicateReads) {
@@ -1173,7 +1250,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const wormholeInterval = setInterval(() => {
     crossAgentCorrelator.prune();
     const activeWormholes = crossAgentCorrelator.getActiveWormholes();
-    webviewRef.current?.postMessage({ type: 'wormhole-update', data: { wormholes: activeWormholes } });
+    const whHash = JSON.stringify(activeWormholes);
+    if (whHash !== lastWormholesHash) {
+      lastWormholesHash = whHash;
+      webviewRef.current?.postMessage({ type: 'wormhole-update', data: { wormholes: activeWormholes } });
+    }
   }, 15_000);
   context.subscriptions.push({ dispose: () => clearInterval(wormholeInterval) });
 
@@ -1677,9 +1758,10 @@ export function activate(context: vscode.ExtensionContext): void {
       openCodeSSEWatchers.clear();
       // Clean up spawn registry
       spawnRegistry.dispose();
-      // Close persistence DB (save handled by deactivate)
+      // Close persistence DB (save handled by deactivate). Flush any queued
+      // inserts first so bursty events at shutdown aren't lost.
       if (ehDatabase) {
-        try { ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
+        try { ehDatabase.flushSync(); ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
       }
       webviewRef.current = null;
     },
@@ -1687,9 +1769,19 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  // Close persistence DB — interval saves already persisted data to disk
+  // Flush any queued broadcast events before shutdown so they aren't lost.
+  flushEventBatch();
+  // Clear instruction scanner debounce timer
+  if (instructionScannerDebounceTimer) {
+    clearTimeout(instructionScannerDebounceTimer);
+    instructionScannerDebounceTimer = null;
+  }
+  // Flush any pending planBoards globalState write so no data is lost on shutdown
+  if (planBoardsPersistFlush) { planBoardsPersistFlush(); planBoardsPersistFlush = null; }
+  // Close persistence DB — interval saves already persisted data to disk.
+  // Flush queued inserts first so shutdown doesn't drop pending events.
   if (ehDatabase) {
-    try { ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
+    try { ehDatabase.flushSync(); ehDatabase.close(); ehDatabase = null; } catch { /* best effort */ }
   }
   stopEventServer();
   webviewRef.current = null;

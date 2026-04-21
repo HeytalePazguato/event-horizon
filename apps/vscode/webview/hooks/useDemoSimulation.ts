@@ -12,6 +12,9 @@ import type { PlanView, PlanSummary, PlanTaskView } from '@event-horizon/ui';
 /** Max visible ships between a given ordered (from→to) pair at once. */
 const MAX_SHIPS_PER_PAIR = 2;
 
+/** Cap on retained trace spans — demo runs indefinitely, so drop oldest to bound memory. */
+const TRACE_SPAN_CAP = 500;
+
 const DEMO_AGENTS = [
   { id: 'demo-claude',   name: '[Demo] Claude',   agentType: 'claude-code', cwd: '/home/user/projects/event-horizon' },
   { id: 'demo-opencode', name: '[Demo] OpenCode', agentType: 'opencode',    cwd: '/home/user/projects/event-horizon' },
@@ -169,6 +172,7 @@ interface DemoSimDeps {
   setHeartbeatStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setOrchestratorAgentIds: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setMcpServers: React.Dispatch<React.SetStateAction<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>>;
+  setWormholes: React.Dispatch<React.SetStateAction<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>>;
 }
 
 export interface DemoSimResult {
@@ -187,10 +191,12 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     setHeartbeatStatuses,
     setOrchestratorAgentIds,
     setMcpServers,
+    setWormholes,
   } = deps;
 
   const [demoSimRunning, setDemoSimRunning] = useState(false);
   const demoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const demoDiagIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const demoAgentTypeMap = Object.fromEntries(DEMO_AGENTS.map((a) => [a.id, a.agentType]));
 
   const runDemoSimulation = useCallback(() => {
@@ -199,6 +205,34 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
       agentTimers[a.id] = { nextTransition: Date.now() + 2000 + Math.random() * 8000, phase: 'idle' };
     }
 
+    // Diagnostic heartbeat — logs state sizes every 2s so we catch even fast crashes.
+    const diagStart = Date.now();
+    if (__EH_DEV__) {
+      console.log('[EH demo-diag] START — demo simulation initialized');
+    }
+    const writeDiag = () => {
+      if (!__EH_DEV__) return;
+      const state = useCommandCenterStore.getState();
+      const perf = performance as Performance & { memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } };
+      const usedMB = perf.memory ? (perf.memory.usedJSHeapSize / 1048576).toFixed(0) : '?';
+      const totalMB = perf.memory ? (perf.memory.totalJSHeapSize / 1048576).toFixed(0) : '?';
+      const limitMB = perf.memory ? (perf.memory.jsHeapSizeLimit / 1048576).toFixed(0) : '?';
+      const sec = Math.floor((Date.now() - diagStart) / 1000);
+      console.log(
+        `[EH demo-diag] t=${sec}s heap=${usedMB}/${totalMB}/${limitMB}MB ` +
+        `timeline=${state.timeline.length} ` +
+        `fileActivity=${Object.keys(state.fileActivity).length} ` +
+        `logs=${state.logs.length} ` +
+        `skills=${state.skills.length} ` +
+        `medals=${state.unlockedAchievements.length} ` +
+        `pendingTimers=${shipTimerIdsRef.current.size}`
+      );
+    };
+    // Fire immediately so we capture the baseline even if the demo crashes fast.
+    writeDiag();
+    if (demoDiagIntervalRef.current) clearInterval(demoDiagIntervalRef.current);
+    demoDiagIntervalRef.current = setInterval(writeDiag, 2_000);
+
     // Set up roles, heartbeats, orchestrator, MCP servers, knowledge, traces on demo start
     setRoles(DEMO_ROLES);
     setRoleAssignments(DEMO_ROLE_ASSIGNMENTS);
@@ -206,7 +240,24 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     setOrchestratorAgentIds({ 'demo-claude': true });
     setMcpServers(DEMO_MCP_SERVERS);
     setKnowledgeWorkspace(DEMO_KNOWLEDGE_WORKSPACE);
-    setKnowledgePlan([]); // Plan knowledge added over time as tasks complete
+    // Seed plan knowledge from multiple authors so the constellation has
+    // visible activity right away — additional entries get appended as tasks
+    // complete (see plan progression block below).
+    const baseTs = Date.now() - 20000;
+    setKnowledgePlan([
+      { key: 'api-style', value: 'REST with JSON, snake_case fields', scope: 'plan', author: '[Demo] Claude', authorId: 'demo-claude', createdAt: baseTs, updatedAt: baseTs },
+      { key: 'test-runner', value: 'Vitest with happy-dom', scope: 'plan', author: '[Demo] Copilot', authorId: 'demo-copilot', createdAt: baseTs + 1000, updatedAt: baseTs + 1000 },
+      { key: 'lint-config', value: 'ESLint flat config, strict TS', scope: 'plan', author: '[Demo] Cursor', authorId: 'demo-cursor', createdAt: baseTs + 2000, updatedAt: baseTs + 2000 },
+      { key: 'ci-target', value: 'Node 20, GitHub Actions', scope: 'plan', author: '[Demo] Gemini', authorId: 'demo-gemini', createdAt: baseTs + 3000, updatedAt: baseTs + 3000 },
+    ]);
+
+    // Seed wormholes between cooperating workspace pairs so the visual
+    // appears immediately. Strength bumps over time as ships flow.
+    setWormholes([
+      { id: 'demo-wh-1', sourceAgentId: 'demo-claude', targetAgentId: 'demo-opencode', strength: 0.6 },
+      { id: 'demo-wh-2', sourceAgentId: 'demo-copilot', targetAgentId: 'demo-cursor', strength: 0.5 },
+      { id: 'demo-wh-3', sourceAgentId: 'demo-cursor', targetAgentId: 'demo-gemini', strength: 0.4 },
+    ]);
 
     // Pre-populate trace spans
     const demoSpans = generateDemoTraceSpans();
@@ -216,11 +267,18 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     // Track which knowledge entries have been added (by task id)
     const addedPlanKnowledge = new Set<string>();
 
-    // Staggered spawns with spawn beams from orchestrator
+    // Sequential spawns with 2s between each agent.
+    // Previously agents landed within a 0-5s window so up to 8 React/Pixi
+    // rebuilds could overlap the same frame; that's the suspected freeze cause.
+    // Spacing them 2000ms apart gives React + the PixiJS ticker time to settle
+    // between each new planet, and logs exactly which agent index the crash
+    // happens on (if it still crashes).
+    const SPAWN_INTERVAL_MS = 2000;
     const shuffled = [...DEMO_AGENTS].sort(() => Math.random() - 0.5);
     shuffled.forEach((a, i) => {
-      const delay = (i / shuffled.length) * (3000 + Math.random() * 2000);
+      const delay = i * SPAWN_INTERVAL_MS;
       const timerId = setTimeout(() => {
+        console.log(`[EH demo-spawn] #${i + 1}/${shuffled.length} spawning ${a.id} at t=${i * SPAWN_INTERVAL_MS}ms`);
         setAgents((prev) => {
           if (prev.some((p) => p.id === a.id)) return prev;
           return [...prev, { id: a.id, name: a.name, agentType: a.agentType, cwd: a.cwd }];
@@ -247,6 +305,7 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
             toAgentId: a.id,
             color: a.agentType === 'opencode' ? 0x00aaff : a.agentType === 'copilot' ? 0x44cc88 : a.agentType === 'cursor' ? 0xffaa00 : 0x8888ff,
             startTime: Date.now(),
+            createdAtMs: Date.now(),
           };
           setSpawnBeams((prev) => [...prev, beam]);
         }
@@ -276,12 +335,18 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     let lastPlanTick = Date.now();
 
     if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+    let tickCount = 0;
     demoIntervalRef.current = setInterval(() => {
+      tickCount++;
+      const traceTick = tickCount <= 5; // Verbose logs for the first 5 ticks only.
+      try {
       const now = Date.now();
+      if (__EH_DEV__ && traceTick) console.log(`[EH demo-diag] tick#${tickCount} enter`);
 
       // Per-agent state transitions
       setAgentMap((prev) => {
         const next = { ...prev };
+        let agentMapChanged = false;
         for (const a of DEMO_AGENTS) {
           const s = next[a.id];
           if (!s) continue;
@@ -334,14 +399,23 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
               timer.nextTransition = now + 3000 + Math.random() * 5000;
               break;
           }
-          next[a.id] = { ...s, state: newState, currentTaskId: newTaskId };
+          if (newState !== s.state || newTaskId !== s.currentTaskId) {
+            next[a.id] = { ...s, state: newState, currentTaskId: newTaskId };
+            agentMapChanged = true;
+          }
         }
-        return next;
+        return agentMapChanged ? next : prev;
       });
+
+      if (__EH_DEV__ && traceTick) console.log(`[EH demo-diag] tick#${tickCount} after state transitions`);
+
+      // Side effects to flush after the pure metrics updater runs.
+      const storeOps: Array<{ norm: string; base: string; id: string; name: string; type: string; op: 'read' | 'write'; cwd?: string; tool: string }> = [];
 
       // Metrics
       setMetricsMap((prev) => {
         const next = { ...prev };
+        let metricsMapChanged = false;
         for (const a of DEMO_AGENTS) {
           const m = prev[a.id];
           if (!m) continue;
@@ -362,43 +436,74 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
             const demoNorm = demoFile.toLowerCase();
             const demoBase = demoFile.split('/').pop() ?? demoFile;
             const demoOp = (t === 'Write' || t === 'Edit') ? 'write' : 'read';
-            useCommandCenterStore.getState().recordFileOp(demoNorm, demoBase, a.id, a.name, a.agentType, demoOp, a.cwd);
-            useCommandCenterStore.getState().addTimelineEntry({ ts: Date.now(), agentId: a.id, agentName: a.name, agentType: a.agentType, kind: 'tool', label: t });
+            storeOps.push({ norm: demoNorm, base: demoBase, id: a.id, name: a.name, type: a.agentType, op: demoOp, cwd: a.cwd, tool: t });
           }
           // Token and cost accumulation during thinking phases
           const isThinking = timer?.phase === 'thinking';
           const inputTokenInc = isThinking ? Math.floor(400 + Math.random() * 200) : 0;
           const outputTokenInc = isThinking ? Math.floor(150 + Math.random() * 100) : 0;
           const costInc = isThinking ? 0.003 + Math.random() * 0.004 : 0;
-          next[a.id] = {
-            ...m, load, toolCalls: m.toolCalls + toolInc,
-            promptsSubmitted: m.promptsSubmitted + (isThinking && Math.random() < 0.1 ? 1 : 0),
-            activeSubagents, toolBreakdown: tb, lastUpdated: now,
-            inputTokens: m.inputTokens + inputTokenInc,
-            outputTokens: m.outputTokens + outputTokenInc,
-            estimatedCostUsd: m.estimatedCostUsd + costInc,
-          };
+          const promptInc = (isThinking && Math.random() < 0.1) ? 1 : 0;
+          const loadChanged = Math.abs(load - m.load) > 0.005;
+          const discreteChanged = toolInc > 0 || promptInc > 0 || activeSubagents !== m.activeSubagents
+            || inputTokenInc > 0 || outputTokenInc > 0 || costInc > 0;
+          if (loadChanged || discreteChanged) {
+            next[a.id] = {
+              ...m, load, toolCalls: m.toolCalls + toolInc,
+              promptsSubmitted: m.promptsSubmitted + promptInc,
+              activeSubagents, toolBreakdown: tb, lastUpdated: now,
+              inputTokens: m.inputTokens + inputTokenInc,
+              outputTokens: m.outputTokens + outputTokenInc,
+              estimatedCostUsd: m.estimatedCostUsd + costInc,
+            };
+            metricsMapChanged = true;
+          }
         }
-        return next;
+        return metricsMapChanged ? next : prev;
       });
 
-      // Live trace spans — add a new tool_call span when an agent is in tool_use
+      if (__EH_DEV__ && traceTick) console.log(`[EH demo-diag] tick#${tickCount} after metrics (${storeOps.length} storeOps)`);
+
+      // Flush store ops outside the pure updater.
+      if (storeOps.length > 0) {
+        const store = useCommandCenterStore.getState();
+        for (const op of storeOps) {
+          store.recordFileOp(op.norm, op.base, op.id, op.name, op.type, op.op, op.cwd);
+          store.addTimelineEntry({ ts: now, agentId: op.id, agentName: op.name, agentType: op.type, kind: 'tool', label: op.tool });
+        }
+      }
+      if (__EH_DEV__ && traceTick) console.log(`[EH demo-diag] tick#${tickCount} after storeOps`);
+
+      // Live trace spans — batch all new spans into ONE setState per tick
+      // instead of 1-8 separate setState calls. Also skip the aggregate update
+      // entirely most ticks; it's decorative and was thrashing renders.
+      const newSpans: Array<{
+        id: string; runId: string; spanType: string; name: string; agentId: string;
+        startMs: number; endMs: number; durationMs: number; metadata: Record<string, unknown>;
+      }> = [];
+      let newSpanDurSum = 0;
       for (const a of DEMO_AGENTS) {
         const timer = agentTimers[a.id];
         if (timer?.phase === 'tool_use' && Math.random() < 0.3) {
           const toolNames = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
           const spanStart = now - Math.floor(200 + Math.random() * 1500);
           const spanDur = Math.floor(200 + Math.random() * 1200);
-          const newSpan = {
+          newSpans.push({
             id: `demo-live-${now}-${a.id}-${Math.random().toString(36).slice(2, 6)}`,
             runId: `demo-run-live`, spanType: 'tool_call',
             name: toolNames[Math.floor(Math.random() * toolNames.length)],
             agentId: a.id, startMs: spanStart, endMs: spanStart + spanDur,
             durationMs: spanDur, metadata: {},
-          };
-          setTraceSpans((prev) => [...prev, newSpan]);
-          setTraceAggregate((prev) => ({ ...prev, tool_call: (prev.tool_call ?? 0) + spanDur }));
+          });
+          newSpanDurSum += spanDur;
         }
+      }
+      if (newSpans.length > 0) {
+        setTraceSpans((prev) => {
+          const next = prev.concat(newSpans);
+          return next.length > TRACE_SPAN_CAP ? next.slice(next.length - TRACE_SPAN_CAP) : next;
+        });
+        setTraceAggregate((prev) => ({ ...prev, tool_call: (prev.tool_call ?? 0) + newSpanDurSum }));
       }
 
       // Skill activation
@@ -541,6 +646,12 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
           ]);
         }
       }
+      if (__EH_DEV__ && traceTick) console.log(`[EH demo-diag] tick#${tickCount} exit OK`);
+      } catch (err) {
+        if (__EH_DEV__) {
+          console.error(`[EH demo-diag] TICK ${tickCount} THREW:`, err);
+        }
+      }
     }, 800);
     setDemoSimRunning(true);
   }, []);
@@ -549,6 +660,10 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     if (demoIntervalRef.current) {
       clearInterval(demoIntervalRef.current);
       demoIntervalRef.current = null;
+    }
+    if (demoDiagIntervalRef.current) {
+      clearInterval(demoDiagIntervalRef.current);
+      demoDiagIntervalRef.current = null;
     }
     setDemoSimRunning(false);
     setAgents((prev) => prev.filter((a) => !a.id.startsWith('demo-')));
@@ -591,6 +706,7 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     setHeartbeatStatuses({});
     setOrchestratorAgentIds({});
     setMcpServers({});
+    setWormholes([]);
 
     useCommandCenterStore.getState().clearFileActivity();
     useCommandCenterStore.getState().clearTimeline();
@@ -608,7 +724,10 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
     }
   }, [demoRequested, demoSimRunning, runDemoSimulation, stopDemoSimulation, unlockAchievement]);
 
-  useEffect(() => () => { if (demoIntervalRef.current) clearInterval(demoIntervalRef.current); }, []);
+  useEffect(() => () => {
+    if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+    if (demoDiagIntervalRef.current) clearInterval(demoDiagIntervalRef.current);
+  }, []);
 
   return { demoSimRunning };
 }

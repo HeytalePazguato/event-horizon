@@ -13,7 +13,7 @@ import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } fro
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
 import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId } from './eventServer.js';
-import { getDatabase } from './extension.js';
+import { getDatabase, resetBroadcastHashes } from './extension.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -324,13 +324,18 @@ function wireUniverseWebview(
     }
 
     // ── Send historical events from persistence for replay ──
+    // Keep this window narrow — the webview replays every session row onto the
+    // main thread, and the only sessions we actually want to resurrect are
+    // agents that might still be alive. Anything older than 10 minutes is
+    // treated as stale by the phantom filter anyway, so there is no reason
+    // to ship it across the postMessage boundary.
     const db = getDatabase();
     if (db) {
       try {
-        const since = Date.now() - 24 * 60 * 60 * 1000; // last 24 hours
-        const historicalEvents = db.queryEvents({ since, limit: 500 });
-        const sessions = db.getSessions(since);
-        if (historicalEvents.length > 0) {
+        const since = Date.now() - 10 * 60 * 1000; // last 10 minutes (was 24h)
+        const historicalEvents = db.queryEvents({ since, limit: 200 });
+        const sessions = db.getSessions(since).slice(0, 50); // hard cap
+        if (historicalEvents.length > 0 || sessions.length > 0) {
           void webview.postMessage({
             type: 'event-history',
             events: historicalEvents,
@@ -751,6 +756,7 @@ export async function openUniversePanel(
 
   universePanel = panel;
   webviewRef.current = panel.webview;
+  resetBroadcastHashes();
 
   const scriptUri = panel.webview.asWebviewUri(
     vscode.Uri.joinPath(context.extensionUri, 'webview-dist', 'main.js'),

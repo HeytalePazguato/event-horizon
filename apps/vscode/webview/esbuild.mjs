@@ -4,7 +4,10 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Minification is opt-in via --minify (keeps dev-host bundle debuggable by default).
+// Dev mode (--dev) enables __EH_DEV__ for in-webview diagnostic logs.
 const minify = process.argv.includes('--minify');
+const isDevBuild = process.argv.includes('--dev');
 
 const pixiSetup = path.resolve(__dirname, 'pixi-setup.ts');
 
@@ -52,6 +55,7 @@ await esbuild.build({
   minify,
   define: {
     'process.env.NODE_ENV': '"production"',
+    '__EH_DEV__': isDevBuild ? 'true' : 'false',
   },
   plugins: [pixiLitePlugin],
 });

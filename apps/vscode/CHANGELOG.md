@@ -2,6 +2,41 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [2.1.0] — 2026-04-20
+
+### Fixed
+- **Demo gray-screen freeze (P0)**: clicking Demo spawned all 8 fake agents within a 0–5s burst, overlapping React + PixiJS subsystem rebuilds and crossing the Chromium watchdog threshold — the renderer process was killed without emitting a JS error. Demo spawns are now sequential with a 2s gap between each agent (`SPAWN_INTERVAL_MS` in `useDemoSimulation.ts`), and an unconditional `[EH demo-spawn]` log marks each addition. Real-agent flows never hit this because real spawns are seconds-to-minutes apart, which is why the bug only ever reproduced under the demo
+- **File-collision lightning never rendered**: `sparksRef.current` was initialized once on mount with the empty initial `sparks` array and never resynced. The renderer ticker called `updateLightning(sparksRef.current, …)` with a permanently-empty array, so cyan arcs and labels for shared-file collisions never drew. Added the missing `sparksRef.current = sparks` sync next to the other prop→ref assignments
+- **Spawn beams drawing to garbage endpoints + never expiring**: `BeamSystem.update` was passed the PixiJS ticker `tickTime` (accumulated seconds since page load) but compared it to `beam.startTime` which was wall-clock ms — `elapsed` came out as roughly `−1.7×10¹²`, so beams never aged past `BEAM_DURATION` and `headProgress` produced wildly off-screen `lineTo` endpoints. `BeamSystem` now uses `Date.now()` internally; all three beam-creation call sites (`useDemoSimulation`, `plan-completed` synthesis, live-event `agent.spawn`) standardised on `Date.now()` for `startTime`
+- **Constellation linked author to every agent in the universe**: a knowledge entry authored by a demo agent created links to every other planet on screen — including unrelated real-agent planets that had nothing to do with the demo plan. Rewrote `knowledgeLinksComputed` to be scope-aware: plan knowledge links only among assignees of the active plan; workspace knowledge links only among agents that share a `cwd`; user-authored workspace entries get the gold tint and link all members within each workspace
+- **Constellation lines didn't follow dragged planets**: `ConstellationSystem.update` was wired to a `useEffect` with `[knowledgeLinks]` deps, so it only redrew on knowledge changes — never on planet movement. Now redraws every ticker frame so lines track drags
+- **Wormholes wiped every 15 seconds**: the extension host's periodic `wormhole-update` broadcast called `setWormholes(ws)` with a full-replace, deleting any wormholes seeded by the demo. The webview handler now preserves entries whose `id` starts with `demo-` and only replaces the non-demo entries
+- **Wormhole portals invisible**: the wormholes container was added before the planets container, so the violet spirals rendered behind the planet sprite. Moved the container above planets/moons in `Universe.tsx`, and offset each portal 24px along the connection line so the spiral sits at the planet edge instead of dead-center
+- **History replay flooded the webview on init**: `webviewProvider.hydrateWebview` queried 24 hours of session history (uncapped) and 500 historical events, replaying every row onto the React main thread. Reduced to a 10-minute window with 200-event and 50-session caps — large enough to resurrect agents that might still be alive, small enough to not blow the postMessage boundary
+- **Phantom agents resurrected on reload**: the session replay treated every row in `agent_sessions` as a live agent, so workers that died without sending `agent.terminate` (terminal killed, crash) reappeared as planets every reload — building up dozens of phantoms over time. The replay now skips sessions with `sessionEnd` set or `sessionStart` older than 10 minutes
+- **`pnpm build:webview -- --dev` silently dropped the `--dev` flag**: pnpm's `--` separator handling stripped the arg before it reached the esbuild script, so dev-mode builds always produced production bundles with `__EH_DEV__ = false` and diagnostic logs disabled. Added a dedicated `pnpm build:webview:dev` script that invokes `node webview/esbuild.mjs --dev` directly
+
+### Performance
+- **Eliminated O(N²) renderer rebuild cascade on agent spawn**: the planet-rebuild useEffect ran fully on every `agents` change, rebuilding asteroid belts, debris fields, planet positions, and station overlays from scratch each time. Added content-fingerprint caches (`knowledgeLinksComputed`, `planDebris`, `planTasksRec`), referential-stability for `agentStates`/`contextUsage`/`achievementCallbacks`, and wrapped `Universe` in `React.memo`. Agent additions now do incremental updates instead of full rebuilds
+- **DebrisSystem cache keyed on content fingerprint**: previously rebuilt the entire debris field on every prop identity change. Now keyed on `(taskCount, lastUpdated)` with persistent `Maps` for incremental updates
+- **Asteroid belt diff instead of full rebuild**: `Universe.tsx:1097-1135` now hashes member positions per workspace group and only rebuilds belts whose contour actually changed
+- **Pixi ticker hot path cleanup**: ring buffer for ship trail points (replaces shift+push), persistent `planetInfos` and `astroCallbacks` refs (no more per-tick allocation), short-circuit wormhole redraw when endpoints unchanged, conditional tether redraw with persistent `Maps` in `DebrisSystem`, throttled lightning bolt count with cached non-random geometry, and a generic `GraphicsPool` backing object pools for jet spray and shooting stars
+- **Stores given hard caps**: ring buffers for `timeline` and `logs` slices in `activitySlice`, O(1) LRU prune for `fileActivity`, debounced `setSingularityStats` (1s), `React.startTransition` for non-urgent state updates
+- **Visibility-pause cleanup**: hidden→visible transitions now clear `activeShipsRef` and `spawnedShipIdsRef` so a long hide doesn't dump a stampede of accumulated work onto the first visible frame
+- **Extension-host work bounded**: indexed `WHERE agent_id=? AND session_end IS NULL` with in-memory open-session cache, batched SQLite inserts via 250ms flush window with `BEGIN/COMMIT`, coalesced webview `postMessage` into 50–100ms `events-batch` packets, dirty-flag DB save (only writes on actual mutations), and hash-based skip when trace/insights/heartbeat/wormhole payloads are unchanged
+- **Trace-span batching**: demo simulation per-tick spans collapse into a single `setTraceSpans` call instead of one per agent; demo trace cap at 500 spans
+
+### Added
+- **Demo now showcases every visualization**: seeded plan knowledge from four authors (Claude, Copilot, Cursor, Gemini) so the constellation lights up with multiple plan + workspace lines from the moment all 8 agents spawn; seeded three wormholes between cooperating workspace pairs (`claude↔opencode`, `copilot↔cursor`, `cursor↔gemini`) so the violet portals and flowing particles are visible without needing real cross-agent file correlation
+- **`eh_stop_all_workers` MCP tool + `/eh:abort-plan` skill**: kills every spawned worker for a plan in one call. Backs the orchestrator-side need to abort a runaway multi-agent run without picking off agents one-by-one
+- **`pnpm build:webview:dev` script**: builds the webview bundle with `__EH_DEV__ = true` so `[EH demo-diag]`/`[EH pixi-tick]` instrumentation logs fire in the webview devtools
+- **`window.error` and `unhandledrejection` listeners in the webview entry**: catch any sync exception or unhandled promise rejection that previously died silently before `[EH boot]` logged
+
+### Changed
+- **`spawnRegistry` linked-session resolution**: heartbeats and task claims now backfill the spawn registry's session map so `eh_stop_agent` can resolve agents by either spawn ID or session ID (fixed a class of "agent shows in UI but `eh_stop_agent` says not found" bugs)
+- **Webview `event-history` replay window**: 24h → 10min, events 500 → 200, sessions uncapped → capped 50
+- **Demo-only wormholes preserved across `wormhole-update` broadcasts**: handler now merges instead of replaces
+
 ## [2.0.3] — 2026-04-19
 
 ### Fixed

@@ -25,6 +25,48 @@ export interface DebrisPlan {
   sourceAgentId?: string;
 }
 
+interface DepCountCache {
+  fingerprint: string;
+  depCountMap: Map<string, number>;
+  maxDeps: number;
+  taskById: Map<string, PlanTaskDebris>;
+}
+
+// Persistent Maps reused across frames to avoid per-frame allocations.
+const _taskMap = new Map<string, PlanTaskDebris>();
+const _debrisPosMap = new Map<string, { x: number; y: number }>();
+// Last-drawn debris positions for dirty detection.
+const _lastDrawnPos = new Map<string, { x: number; y: number }>();
+// Frame counter for forced periodic tether refresh even when not dirty.
+let _frameCounter = 0;
+
+function statusCode(s: DebrisStatus): string {
+  switch (s) {
+    case 'pending': return 'p';
+    case 'claimed': return 'c';
+    case 'in_progress': return 'i';
+    case 'done': return 'd';
+    case 'failed': return 'f';
+    case 'blocked': return 'b';
+  }
+}
+
+function computeDepCacheFingerprint(tasks: PlanTaskDebris[]): string {
+  // Cheap single-pass content fingerprint. Invalidates on any change that
+  // affects depCountMap output (blockedBy) or tether-draw lookups via taskById
+  // (status, retryCount, failedReason). Order is stable across renders since
+  // plan.tasks preserves task insertion order.
+  let statusFP = '';
+  let metaSum = 0;
+  for (const t of tasks) {
+    statusFP += statusCode(t.status);
+    metaSum += (t.retryCount ?? 0) * 17;
+    if (t.failedReason) metaSum += t.failedReason.length;
+    if (t.blockedBy) metaSum += t.blockedBy.length * 31;
+  }
+  return `${tasks.length}:${statusFP}:${metaSum}`;
+}
+
 /**
  * Sync debris with plan task state and animate orbits.
  * - New tasks → spawn debris
@@ -57,7 +99,10 @@ export function updateDebris(
     return;
   }
 
-  const taskMap = new Map(plan.tasks.map((t) => [t.id, t]));
+  // Refill persistent map — no allocation.
+  _taskMap.clear();
+  for (const t of plan.tasks) _taskMap.set(t.id, t);
+  const taskMap = _taskMap;
   const currentIds = new Set(taskMap.keys());
 
   // Find the center planet — prefer sourceAgentId, else use first planet
@@ -193,37 +238,102 @@ export function updateDebris(
 
   // ── Dependency tethers ────────────────────────────────────────────────────
   if (tetherGraphics && plan && plan.tasks.length > 0) {
-    tetherGraphics.clear();
+    _frameCounter++;
 
-    // Build a position map of debris by taskId
-    const debrisPosMap = new Map<string, { x: number; y: number }>();
+    // Refill persistent debris position map — no allocation.
+    _debrisPosMap.clear();
     for (const child of debrisContainer.children) {
       const d = child as ExtendedDebris;
       if (d.__taskId) {
-        debrisPosMap.set(d.__taskId, { x: d.x, y: d.y });
+        _debrisPosMap.set(d.__taskId, { x: d.x, y: d.y });
       }
     }
+    const debrisPosMap = _debrisPosMap;
 
-    // Compute critical path depth (transitive dependent count) for glow brightness
-    const depCountMap = new Map<string, number>();
-    const taskById = new Map(plan.tasks.map((t) => [t.id, t]));
+    // Critical path depth (transitive dependent count) — cached across frames.
+    // Cache key is a content fingerprint (not array identity) because index.tsx
+    // re-creates `plan.tasks` on every setPlan() call, which busts identity-based
+    // caches and re-triggers O(N^2) Set/Map allocation every frame (R-CRIT-1).
+    const planExt = plan as DebrisPlan & { __depCountCache?: DepCountCache };
+    const cache = planExt.__depCountCache;
+    const fingerprint = computeDepCacheFingerprint(plan.tasks);
+    let depCountMap: Map<string, number>;
+    let maxDeps: number;
+    let taskById: Map<string, PlanTaskDebris>;
+    // Track whether the dep-count cache was a miss (plan changed).
+    let cacheMiss = false;
+    if (cache && cache.fingerprint === fingerprint) {
+      depCountMap = cache.depCountMap;
+      maxDeps = cache.maxDeps;
+      taskById = cache.taskById;
+    } else {
+      cacheMiss = true;
+      depCountMap = new Map<string, number>();
+      taskById = new Map(plan.tasks.map((t) => [t.id, t]));
 
-    function countDependents(taskId: string, visited: Set<string>): number {
-      if (visited.has(taskId)) return 0;
-      visited.add(taskId);
-      let count = 0;
-      for (const t of plan!.tasks) {
-        if (t.blockedBy?.includes(taskId)) {
-          count += 1 + countDependents(t.id, visited);
+      // Build reverse adjacency: task → list of tasks that depend on it.
+      const dependentsOf = new Map<string, string[]>();
+      for (const t of plan.tasks) {
+        if (!t.blockedBy) continue;
+        for (const depId of t.blockedBy) {
+          const list = dependentsOf.get(depId);
+          if (list) list.push(t.id);
+          else dependentsOf.set(depId, [t.id]);
         }
       }
-      return count;
+
+      // Iterative DFS with a single visited set per top-level call.
+      const countDependents = (rootId: string): number => {
+        const visited = new Set<string>();
+        const stack = [rootId];
+        let count = 0;
+        while (stack.length > 0) {
+          const id = stack.pop()!;
+          if (visited.has(id)) continue;
+          visited.add(id);
+          const deps = dependentsOf.get(id);
+          if (!deps) continue;
+          for (const d of deps) {
+            if (!visited.has(d)) {
+              count++;
+              stack.push(d);
+            }
+          }
+        }
+        return count;
+      };
+
+      for (const task of plan.tasks) {
+        depCountMap.set(task.id, countDependents(task.id));
+      }
+      maxDeps = 1;
+      for (const v of depCountMap.values()) if (v > maxDeps) maxDeps = v;
+
+      planExt.__depCountCache = { fingerprint, depCountMap, maxDeps, taskById };
     }
 
-    for (const task of plan.tasks) {
-      depCountMap.set(task.id, countDependents(task.id, new Set()));
+    // Dirty flag: redraw when plan changed or any debris moved >2px since last draw.
+    // Also force a redraw every 3rd frame so cascade flicker / animated tethers still pulse.
+    let tethersDirty = cacheMiss || (_frameCounter % 3 === 0);
+    if (!tethersDirty) {
+      for (const [tid, pos] of debrisPosMap) {
+        const last = _lastDrawnPos.get(tid);
+        if (!last) { tethersDirty = true; break; }
+        const dx = pos.x - last.x;
+        const dy = pos.y - last.y;
+        if (dx * dx + dy * dy > 4) { tethersDirty = true; break; }
+      }
     }
-    const maxDeps = Math.max(1, ...Array.from(depCountMap.values()));
+
+    if (!tethersDirty) return;
+
+    // Snapshot current positions for next-frame dirty check.
+    _lastDrawnPos.clear();
+    for (const [tid, pos] of debrisPosMap) {
+      _lastDrawnPos.set(tid, { x: pos.x, y: pos.y });
+    }
+
+    tetherGraphics.clear();
 
     // Draw tethers
     for (const task of plan.tasks) {
