@@ -226,7 +226,7 @@ export function updateAstronaut(
  * Update jet spray particles — decelerate, fade, clean up.
  * Mutates the array in place.
  */
-export function updateJetSpray(particles: JetSprayParticle[], dt: number): void {
+export function updateJetSpray(particles: JetSprayParticle[], dt: number, releaseParticle?: (g: Graphics) => void): void {
   for (let i = particles.length - 1; i >= 0; i--) {
     const jp = particles[i];
     jp.life += dt;
@@ -240,7 +240,11 @@ export function updateJetSpray(particles: JetSprayParticle[], dt: number): void 
     jp.g.alpha = (1 - frac) * 0.8;
     jp.g.scale.set(1 - frac * 0.5);
     if (jp.life >= jp.maxLife) {
-      jp.g.destroy();
+      if (releaseParticle) {
+        releaseParticle(jp.g);
+      } else {
+        jp.g.destroy();
+      }
       particles.splice(i, 1);
     }
   }

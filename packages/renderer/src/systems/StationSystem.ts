@@ -37,7 +37,7 @@ export class StationSystem {
   /** Sync stations with current MCP server data. */
   sync(
     mcpServers: Record<string, McpServerData[]>,
-    _planetPositions: Record<string, { x: number; y: number }>,
+    _planetPositions: Map<string, { x: number; y: number }>,
   ): void {
     // Remove stations for agents that no longer exist
     const agentIds = new Set(Object.keys(mcpServers));
@@ -95,12 +95,12 @@ export class StationSystem {
   update(
     dt: number,
     tickTime: number,
-    planetPositions: Record<string, { x: number; y: number }>,
+    planetPositions: Map<string, { x: number; y: number }>,
   ): void {
     this.dockingTubes.clear();
 
     for (const entry of this.stations) {
-      const pos = planetPositions[entry.agentId];
+      const pos = planetPositions.get(entry.agentId);
       if (!pos) {
         entry.station.visible = false;
         continue;

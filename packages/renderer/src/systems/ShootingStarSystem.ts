@@ -17,7 +17,7 @@ export interface ShootingStar {
  * Update all shooting stars — move, fade, clean up expired.
  * Mutates the array in place.
  */
-export function updateShootingStars(stars: ShootingStar[], dt: number): void {
+export function updateShootingStars(stars: ShootingStar[], dt: number, releaseStar?: (g: Graphics) => void): void {
   for (let i = stars.length - 1; i >= 0; i--) {
     const ss = stars[i];
     ss.life += dt;
@@ -36,7 +36,11 @@ export function updateShootingStars(stars: ShootingStar[], dt: number): void {
     ss.g.alpha = alpha * 0.7;
 
     if (ss.life >= ss.maxLife) {
-      ss.g.destroy();
+      if (releaseStar) {
+        releaseStar(ss.g);
+      } else {
+        ss.g.destroy();
+      }
       stars.splice(i, 1);
     }
   }

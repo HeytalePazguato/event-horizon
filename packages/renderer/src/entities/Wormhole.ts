@@ -33,6 +33,11 @@ export type ExtendedWormhole = Container & {
   __connection?: Graphics;
   /** Particle dots flowing along the connection. Each: { progress: 0..1, g: Graphics } */
   __particles?: Array<{ progress: number; g: Graphics }>;
+  /** Cache for connection line endpoints to avoid redraw when stationary. */
+  __lastConnSx?: number;
+  __lastConnSy?: number;
+  __lastConnTx?: number;
+  __lastConnTy?: number;
 };
 
 const PORTAL_RADIUS = 14;

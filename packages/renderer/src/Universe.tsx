@@ -5,7 +5,7 @@
 
 import 'pixi.js/unsafe-eval';
 import type { FC } from 'react';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, memo } from 'react';
 import { Application, Container, Graphics, Text } from 'pixi.js';
 import { createStars } from './entities/Stars.js';
 import { createSingularity } from './entities/Singularity.js';
@@ -32,6 +32,9 @@ import { updateShootingStars } from './systems/ShootingStarSystem.js';
 import { updateUFO } from './systems/UFOSystem.js';
 import { updateAstronaut, updateJetSpray } from './systems/AstronautSystem.js';
 import type { PlanetInfo, ViewportBounds } from './systems/AstronautSystem.js';
+import { createJetSprayPool } from './pools/JetSprayPool.js';
+import { createShootingStarPool } from './pools/ShootingStarPool.js';
+import type { GraphicsPool } from './pools/GraphicsPool.js';
 import { animatePlanets } from './systems/PlanetAnimationSystem.js';
 import { syncWormholes, animateWormholes } from './systems/WormholeSystem.js';
 import type { ExtendedWormhole } from './entities/Wormhole.js';
@@ -199,7 +202,7 @@ const ROCK_GLOW_COLORS = [0xddccaa, 0xccddee, 0xeeddbb];
  * Draw an asteroid belt around a workspace group using the member positions.
  * Creates an irregular contour and scatters bright rocks along it.
  */
-type BeltContainer = Container & { __groupAgentIds?: string[] };
+type BeltContainer = Container & { __groupAgentIds?: string[]; __positionsHash?: string };
 
 function drawAsteroidBelt(memberPositions: Array<{ x: number; y: number }>, groupAgentIds?: string[]): BeltContainer {
   const container = new Container() as BeltContainer;
@@ -298,13 +301,15 @@ interface ActiveShip {
   cx: number;
   cy: number;
   progress: number;
-  trailPoints: Array<{ x: number; y: number }>;
+  trailBuffer: Float32Array;
+  trailHead: number;
+  trailSize: number;
   trailColor: number;
 }
 
 // -------------------------------------------------------------------------
 
-export const Universe: FC<UniverseProps> = ({
+const UniverseImpl: FC<UniverseProps> = ({
   width = INITIAL_W,
   height = INITIAL_H,
   agents = [],
@@ -444,6 +449,10 @@ export const Universe: FC<UniverseProps> = ({
   const mcpServersRef = useRef(mcpServers);
   const visibleRef = useRef(visible);
   const beltsContainerRef = useRef<Container | null>(null);
+  const beltCacheRef = useRef<Map<string, BeltContainer>>(new Map());
+  const lastRosterKeyRef = useRef<string | null>(null);
+  const cachedLayoutRef = useRef<{ posMap: Map<string, { x: number; y: number }>; workspaceGroups: WorkspaceGroup[] } | null>(null);
+  const lastCustomPositionsSizeRef = useRef<number>(0);
   const wormholesContainerRef = useRef<Container | null>(null);
   const wormholesRef = useRef<Map<string, ExtendedWormhole>>(new Map());
   const wormholesDataRef = useRef(wormholes);
@@ -505,42 +514,66 @@ export const Universe: FC<UniverseProps> = ({
   const onPlanetClickRef = useRef(onPlanetClick);
   onPlanetClickRef.current = onPlanetClick;
 
+  const planetInfosRef = useRef<PlanetInfo[]>([]);
+  const astroCallbacksRef = useRef<import('./systems/AstronautSystem.js').AstronautCallbacks | null>(null);
+  const jetSprayPoolRef = useRef<GraphicsPool | null>(null);
+  const shootingStarPoolRef = useRef<GraphicsPool | null>(null);
+
   const mountedRef = useRef(true);
 
   const selectedAgentIdRef = useRef<string | null>(selectedAgentId);
 
-  // Keep control refs in sync without triggering rerenders
-  useEffect(() => { agentStatesRef.current = agentStates; }, [agentStates]);
-  useEffect(() => { metricsRef.current = metrics; }, [metrics]);
-  useEffect(() => { pausedRef.current = pausedAgentIds; }, [pausedAgentIds]);
-  useEffect(() => { isolatedRef.current = isolatedAgentId; }, [isolatedAgentId]);
-  useEffect(() => { boostedRef.current = boostedAgentIds; }, [boostedAgentIds]);
-  useEffect(() => { activeSubagentsRef.current = activeSubagents; }, [activeSubagents]);
-  useEffect(() => { agentSkillCountsRef.current = agentSkillCounts; }, [agentSkillCounts]);
-  useEffect(() => { activeSkillsRef.current = activeSkills; }, [activeSkills]);
-  useEffect(() => { planTasksRef.current = planTasks; }, [planTasks]);
+  // Keep control refs in sync without triggering rerenders (synchronous assignments)
+  agentStatesRef.current = agentStates;
+  metricsRef.current = metrics;
+  pausedRef.current = pausedAgentIds;
+  isolatedRef.current = isolatedAgentId;
+  boostedRef.current = boostedAgentIds;
+  activeSubagentsRef.current = activeSubagents;
+  agentSkillCountsRef.current = agentSkillCounts;
+  activeSkillsRef.current = activeSkills;
+  planTasksRef.current = planTasks;
+  animationSpeedRef.current = animationSpeed;
+  orchestratorIdsRef.current = orchestratorAgentIds;
+  heartbeatStatusesRef.current = heartbeatStatuses;
+  compactingAgentIdsRef.current = compactingAgentIds;
+  contextUsageRef.current = contextUsage;
+  wormholesDataRef.current = wormholes;
+  mcpServersRef.current = mcpServers;
+  visibleRef.current = visible;
+  spawnBeamsRef.current = spawnBeams;
+  agentTypesMapRef.current = agentTypesMap;
+  selectedAgentIdRef.current = selectedAgentId;
+
+  // Keep visual settings in sync and bump revision to trigger planet recreation
   useEffect(() => {
     if (visualSettingsRef.current !== visualSettings) {
       visualSettingsRef.current = visualSettings;
-      // Bump revision so the ticker recreates planets with new overrides
       settingsRevRef.current++;
     }
   }, [visualSettings]);
-  useEffect(() => { animationSpeedRef.current = animationSpeed; }, [animationSpeed]);
-  useEffect(() => { orchestratorIdsRef.current = orchestratorAgentIds; }, [orchestratorAgentIds]);
-  useEffect(() => { heartbeatStatusesRef.current = heartbeatStatuses; }, [heartbeatStatuses]);
-  useEffect(() => { compactingAgentIdsRef.current = compactingAgentIds; }, [compactingAgentIds]);
-  useEffect(() => { contextUsageRef.current = contextUsage; }, [contextUsage]);
-  useEffect(() => { wormholesDataRef.current = wormholes; }, [wormholes]);
-  useEffect(() => { mcpServersRef.current = mcpServers; }, [mcpServers]);
-  useEffect(() => { visibleRef.current = visible; }, [visible]);
-  useEffect(() => { spawnBeamsRef.current = spawnBeams; }, [spawnBeams]);
-  useEffect(() => { knowledgeLinksRef.current = knowledgeLinks; }, [knowledgeLinks]);
-  useEffect(() => { agentTypesMapRef.current = agentTypesMap; }, [agentTypesMap]);
+  // Redraw constellations when knowledge data changes
+  useEffect(() => {
+    knowledgeLinksRef.current = knowledgeLinks;
+    const sys = constellationSystemRef.current;
+    if (sys) sys.update(knowledgeLinks, planetPositionsRef.current, agentTypesMapRef.current);
+  }, [knowledgeLinks]);
+  // Redraw constellations when agent roster (and thus positions) changes
+  useEffect(() => {
+    const sys = constellationSystemRef.current;
+    if (sys) sys.update(knowledgeLinksRef.current, planetPositionsRef.current, agentTypesMapRef.current);
+  }, [agents]);
+  // Sync stations only when mcpServers or agent roster changes (not every frame)
+  useEffect(() => {
+    const sys = stationSystemRef.current;
+    if (sys) sys.sync(mcpServersRef.current ?? {}, planetPositionsRef.current);
+  }, [mcpServers, agents]);
 
   const sparksRef = useRef<SparkSpawn[]>(sparks);
-  useEffect(() => { sparksRef.current = sparks; }, [sparks]);
-  useEffect(() => { selectedAgentIdRef.current = selectedAgentId; }, [selectedAgentId]);
+  // Keep the ref in sync with the prop so the ticker reads current sparks
+  // (without this the ticker only ever saw the initial empty array and
+  // no file-collision lightning ever rendered).
+  sparksRef.current = sparks;
 
   // --- init timeout (fallback if PixiJS silently fails) --------------------
   useEffect(() => {
@@ -627,11 +660,6 @@ export const Universe: FC<UniverseProps> = ({
         world.addChild(beltsContainer);
         beltsContainerRef.current = beltsContainer;
 
-        // Wormholes drawn between planets — added before planets so they render behind
-        const wormholesContainer = new Container();
-        world.addChild(wormholesContainer);
-        wormholesContainerRef.current = wormholesContainer;
-
         const planetsContainer = new Container();
         world.addChild(planetsContainer);
         planetsContainerRef.current = planetsContainer;
@@ -639,6 +667,12 @@ export const Universe: FC<UniverseProps> = ({
         const moonsContainer = new Container();
         world.addChild(moonsContainer);
         moonsContainerRef.current = moonsContainer;
+
+        // Wormholes — drawn ABOVE planets so the violet portals are visible
+        // (when behind, the planet sprite covered the spiral entirely).
+        const wormholesContainer = new Container();
+        world.addChild(wormholesContainer);
+        wormholesContainerRef.current = wormholesContainer;
 
         const debrisContainer = new Container();
         world.addChild(debrisContainer);
@@ -728,7 +762,14 @@ export const Universe: FC<UniverseProps> = ({
       }
     })();
 
+    jetSprayPoolRef.current = createJetSprayPool();
+    shootingStarPoolRef.current = createShootingStarPool();
+
     return () => {
+      jetSprayPoolRef.current?.destroyAll();
+      jetSprayPoolRef.current = null;
+      shootingStarPoolRef.current?.destroyAll();
+      shootingStarPoolRef.current = null;
       mountedRef.current = false;
       panContainerRef.current = null;
       worldRef.current = null;
@@ -867,6 +908,11 @@ export const Universe: FC<UniverseProps> = ({
           try { c.destroy({ children: true }); } catch { /* ignore */ }
         }
       }
+      // Clear refs so updateShips doesn't operate on destroyed objects on visibility return
+      activeShipsRef.current = [];
+      spawnedShipIdsRef.current = new Set();
+      jetSprayRef.current = [];
+      astronautsRef.current = [];
     }
   }, [visible, canvasReady]);
 
@@ -892,6 +938,9 @@ export const Universe: FC<UniverseProps> = ({
   useEffect(() => {
     if (resetLayoutRequestedAt <= 0) return;
     customPositionsRef.current.clear();
+    // Invalidate roster cache so main effect recomputes after reset.
+    lastRosterKeyRef.current = null;
+    cachedLayoutRef.current = null;
     const planetsContainer = planetsContainerRef.current;
     if (!planetsContainer) return;
     const { positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED);
@@ -904,15 +953,24 @@ export const Universe: FC<UniverseProps> = ({
       }
     }
     planetPositionsRef.current = posMap;
-    // Redraw asteroid belts at auto-layout positions
+    // Diff-based asteroid belt update (reset-layout path)
     const beltsContainer = beltsContainerRef.current;
     if (beltsContainer) {
-      while (beltsContainer.children.length > 0) {
-        beltsContainer.children[0].destroy({ children: true });
-      }
+      const beltCache = beltCacheRef.current;
+      const activeGroupKeys = new Set<string>();
       for (const group of workspaceGroups) {
         if (group.agentIds.length > 1) {
+          const groupKey = [...group.agentIds].sort().join('|');
+          const positionsHash = group.memberPositions.map(p => `${p.x | 0},${p.y | 0}`).join(';');
+          activeGroupKeys.add(groupKey);
+          const existing = beltCache.get(groupKey);
+          if (existing && existing.__positionsHash === positionsHash) continue;
+          if (existing) {
+            beltsContainer.removeChild(existing);
+            existing.destroy({ children: true });
+          }
           const belt = drawAsteroidBelt(group.memberPositions, group.agentIds);
+          belt.__positionsHash = positionsHash;
           belt.on('pointerdown', (e: { stopPropagation: () => void; global: { x: number; y: number } }) => {
             e.stopPropagation();
             const scale = scaleRef.current;
@@ -923,6 +981,14 @@ export const Universe: FC<UniverseProps> = ({
             beltDragRef.current = { agentIds: [...group.agentIds], startX: wx, startY: wy };
           });
           beltsContainer.addChild(belt);
+          beltCache.set(groupKey, belt);
+        }
+      }
+      for (const [key, belt] of beltCache) {
+        if (!activeGroupKeys.has(key)) {
+          beltsContainer.removeChild(belt);
+          belt.destroy({ children: true });
+          beltCache.delete(key);
         }
       }
     }
@@ -968,8 +1034,24 @@ export const Universe: FC<UniverseProps> = ({
       }
     }
 
-    // 2. Compute positions + workspace groups
-    const { positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED);
+    // 2. Compute positions + workspace groups (skip if roster unchanged)
+    const rosterKey = agents.map((a) => a.id).sort().join('|');
+    const customSize = customPositionsRef.current.size;
+    let posMap: Map<string, { x: number; y: number }>;
+    let workspaceGroups: WorkspaceGroup[];
+    if (
+      rosterKey === lastRosterKeyRef.current &&
+      cachedLayoutRef.current !== null &&
+      customSize === lastCustomPositionsSizeRef.current
+    ) {
+      posMap = cachedLayoutRef.current.posMap;
+      workspaceGroups = cachedLayoutRef.current.workspaceGroups;
+    } else {
+      ({ positions: posMap, workspaceGroups } = computePlanetPositions(agents, SESSION_SEED));
+      lastRosterKeyRef.current = rosterKey;
+      lastCustomPositionsSizeRef.current = customSize;
+      cachedLayoutRef.current = { posMap, workspaceGroups };
+    }
     // Apply user-dragged custom positions (overrides auto-layout).
     // For workspace groups: if some members were dragged, shift new (non-dragged)
     // members by the same delta so they appear near the dragged ones.
@@ -1013,15 +1095,24 @@ export const Universe: FC<UniverseProps> = ({
     }
     workspaceGroupsRef.current = workspaceGroups;
 
-    // 2b. Draw workspace asteroid belts
+    // 2b. Diff-based asteroid belt update (main planets path)
     const beltsContainer = beltsContainerRef.current;
     if (beltsContainer) {
-      while (beltsContainer.children.length > 0) {
-        beltsContainer.children[0].destroy({ children: true });
-      }
+      const beltCache = beltCacheRef.current;
+      const activeGroupKeys = new Set<string>();
       for (const group of workspaceGroups) {
         if (group.agentIds.length > 1) {
+          const groupKey = [...group.agentIds].sort().join('|');
+          const positionsHash = group.memberPositions.map(p => `${p.x | 0},${p.y | 0}`).join(';');
+          activeGroupKeys.add(groupKey);
+          const existing = beltCache.get(groupKey);
+          if (existing && existing.__positionsHash === positionsHash) continue;
+          if (existing) {
+            beltsContainer.removeChild(existing);
+            existing.destroy({ children: true });
+          }
           const belt = drawAsteroidBelt(group.memberPositions, group.agentIds);
+          belt.__positionsHash = positionsHash;
           belt.on('pointerdown', (e: { stopPropagation: () => void; global: { x: number; y: number } }) => {
             e.stopPropagation();
             const scale = scaleRef.current;
@@ -1032,6 +1123,14 @@ export const Universe: FC<UniverseProps> = ({
             beltDragRef.current = { agentIds: [...group.agentIds], startX: worldX, startY: worldY };
           });
           beltsContainer.addChild(belt);
+          beltCache.set(groupKey, belt);
+        }
+      }
+      for (const [key, belt] of beltCache) {
+        if (!activeGroupKeys.has(key)) {
+          beltsContainer.removeChild(belt);
+          belt.destroy({ children: true });
+          beltCache.delete(key);
         }
       }
     }
@@ -1083,7 +1182,7 @@ export const Universe: FC<UniverseProps> = ({
         const labelText = cwdFolder ? `${agent.name}\n${cwdFolder}` : agent.name;
         const label = new Text({
           text: labelText,
-          style: { fontSize: 11, fill: '#6688aa', fontFamily: 'system-ui', align: 'center', lineHeight: 14 },
+          style: { fontFamily: 'Consolas, Courier New, monospace', fontSize: 11, fill: 0x6688aa, lineHeight: 14, align: 'center' },
         });
         label.anchor.set(0.5, 0);
         label.x = 0;
@@ -1230,7 +1329,9 @@ export const Universe: FC<UniverseProps> = ({
         cx,
         cy,
         progress: 0,
-        trailPoints: [],
+        trailBuffer: new Float32Array(64),
+        trailHead: 0,
+        trailSize: 0,
         trailColor,
       });
       spawnedShipIdsRef.current.add(ship.id);
@@ -1270,7 +1371,7 @@ export const Universe: FC<UniverseProps> = ({
       if (!labels.has(spark.id)) {
         const t = new Text({
           text: spark.filePath,
-          style: { fontSize: 9, fill: '#88ddff', fontFamily: 'Consolas, monospace', align: 'center' },
+          style: { fontFamily: 'Consolas, Courier New, monospace', fontSize: 9, fill: 0x88ddff, align: 'center' },
         });
         t.anchor.set(0.5, 0.5);
         t.alpha = 0.85;
@@ -1472,7 +1573,8 @@ export const Universe: FC<UniverseProps> = ({
           const vx = Math.cos(angle) * speed;
           const vy = Math.sin(angle) * speed;
 
-          const g = new Graphics();
+          const g = shootingStarPoolRef.current?.acquire();
+          if (!g) continue;
           const colors = [0xffffff, 0xddeeff, 0xffeedd];
           const color = colors[Math.floor(Math.random() * colors.length)];
           // Tail trails behind the head
@@ -1489,8 +1591,8 @@ export const Universe: FC<UniverseProps> = ({
           g.hitArea = { contains: (hx: number, hy: number) => hx * hx + hy * hy < 400 };
           g.on('pointertap', () => {
             onShootingStarClickedRef.current?.();
-            // Destroy this star immediately on click
-            g.destroy();
+            // Release back to pool immediately on click
+            shootingStarPoolRef.current?.release(g);
             const idx = shootingStarsRef.current.findIndex((s) => s.g === g);
             if (idx !== -1) shootingStarsRef.current.splice(idx, 1);
           });
@@ -1511,8 +1613,29 @@ export const Universe: FC<UniverseProps> = ({
     };
     spawnShootingStars();
 
+    let frameCount = 0;
+    let lastFrameLog = performance.now();
+    const phaseTimes: Record<string, number> = { debris: 0, station: 0, beam: 0, ships: 0, astro: 0, lightning: 0, shooting: 0, planets: 0 };
     const tick = () => {
       if (!world || !planetsContainer) return;
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFrameLog > 1000) {
+        if (__EH_DEV__) {
+          const perf = performance as Performance & { memory?: { usedJSHeapSize: number } };
+          const heap = perf.memory ? (perf.memory.usedJSHeapSize / 1048576).toFixed(0) : '?';
+          const children = planetsContainer.children.length;
+          const phases = Object.entries(phaseTimes)
+            .filter(([, v]) => v > 1)
+            .map(([k, v]) => `${k}=${v.toFixed(0)}ms`)
+            .join(' ');
+          // eslint-disable-next-line no-console
+          console.log(`[EH pixi-tick] ${frameCount}fps heap=${heap}MB planets=${children} stars=${shootingStarsRef.current.length} ${phases}`);
+        }
+        frameCount = 0;
+        lastFrameLog = now;
+        for (const k of Object.keys(phaseTimes)) phaseTimes[k] = 0;
+      }
       const rawDt = app.ticker.deltaMS / 1000;
       // Cap delta to prevent animation bursts after the panel was hidden
       const dt = Math.min(rawDt, 0.1) * animationSpeedRef.current;
@@ -1520,7 +1643,7 @@ export const Universe: FC<UniverseProps> = ({
       // If we were hidden for a long time, flush accumulated shooting stars
       if (rawDt > 1) {
         const sstars = shootingStarsRef.current;
-        for (const ss of sstars) ss.g.destroy();
+        for (const ss of sstars) shootingStarPoolRef.current?.release(ss.g);
         sstars.length = 0;
       }
 
@@ -1550,17 +1673,21 @@ export const Universe: FC<UniverseProps> = ({
 
       // Per-planet state-driven animation (delegated to PlanetAnimationSystem)
       const t = tickTimeRef.current;
-      animatePlanets(planetsContainer.children as unknown as import('./systems/PlanetAnimationSystem.js').AnimatedPlanet[], {
-        tickTime: t,
-        agentStates: agentStatesRef.current,
-        metrics: metricsRef.current,
-        pausedAgentIds: pausedRef.current,
-        boostedAgentIds: boostedRef.current,
-        isolatedAgentId: isolatedRef.current,
-        heartbeatStatuses: heartbeatStatusesRef.current,
-        compactingAgentIds: compactingAgentIdsRef.current,
-        contextUsage: contextUsageRef.current,
-      });
+      {
+        const p0 = performance.now();
+        animatePlanets(planetsContainer.children as unknown as import('./systems/PlanetAnimationSystem.js').AnimatedPlanet[], {
+          tickTime: t,
+          agentStates: agentStatesRef.current,
+          metrics: metricsRef.current,
+          pausedAgentIds: pausedRef.current,
+          boostedAgentIds: boostedRef.current,
+          isolatedAgentId: isolatedRef.current,
+          heartbeatStatuses: heartbeatStatusesRef.current,
+          compactingAgentIds: compactingAgentIdsRef.current,
+          contextUsage: contextUsageRef.current,
+        });
+        phaseTimes.planets += performance.now() - p0;
+      }
 
       // Wormholes — sync data + animate (cross-agent file collaboration visual)
       const whContainer = wormholesContainerRef.current;
@@ -1586,47 +1713,62 @@ export const Universe: FC<UniverseProps> = ({
       // Plan task debris (delegated to DebrisSystem)
       const debrisContainer = debrisContainerRef.current;
       if (debrisContainer) {
+        const p0 = performance.now();
         updateDebris(debrisContainer, planetPositionsRef.current, planTasksRef.current, debrisTaskIdsRef.current, t, tetherGraphicsRef.current);
+        phaseTimes.debris += performance.now() - p0;
       }
 
       // Station system (MCP servers orbiting planets)
       const stationSys = stationSystemRef.current;
       if (stationSys) {
-        const mcpData = mcpServersRef.current;
-        if (mcpData) {
-          const posObj: Record<string, { x: number; y: number }> = {};
-          for (const [id, pos] of planetPositionsRef.current) {
-            posObj[id] = pos;
-          }
-          stationSys.sync(mcpData, posObj);
-          stationSys.update(dt, t, posObj);
-        }
+        const p0 = performance.now();
+        stationSys.update(dt, t, planetPositionsRef.current);
+        phaseTimes.station += performance.now() - p0;
       }
 
       // Beam system (orchestrator ↔ worker beams)
       const beamSys = beamSystemRef.current;
       if (beamSys) {
+        const p0 = performance.now();
         const aliveBeams = beamSys.update(spawnBeamsRef.current, t, planetPositionsRef.current);
         spawnBeamsRef.current = aliveBeams;
+        phaseTimes.beam += performance.now() - p0;
       }
 
-      // Constellation system (knowledge links between planets)
-      const constellationSys = constellationSystemRef.current;
-      if (constellationSys && knowledgeLinksRef.current.length > 0) {
-        constellationSys.update(knowledgeLinksRef.current, planetPositionsRef.current, agentTypesMapRef.current);
+      // Constellation system — redraw every frame so lines track dragged planets.
+      // The cost is bounded (one Graphics.clear + N lineTo calls); if profiling
+      // shows hotspots, gate this on planetDragRef.current activity.
+      {
+        const sys = constellationSystemRef.current;
+        if (sys && knowledgeLinksRef.current.length > 0) {
+          sys.update(knowledgeLinksRef.current, planetPositionsRef.current, agentTypesMapRef.current);
+        }
       }
 
       // Animate ships along bezier arcs (delegated to ShipSystem)
-      updateShips(activeShipsRef.current, {
-        onShipRemoved: (id) => spawnedShipIdsRef.current.delete(id),
-      });
+      {
+        const p0 = performance.now();
+        updateShips(activeShipsRef.current, {
+          onShipRemoved: (id) => spawnedShipIdsRef.current.delete(id),
+        });
+        phaseTimes.ships += performance.now() - p0;
+      }
 
       // Astronaut physics (delegated to AstronautSystem)
       const astros = astronautsRef.current;
       const planets = planetsContainer.children as ExtendedPlanet[];
-      const planetInfos: PlanetInfo[] = planets.map((p) => ({
-        x: p.x, y: p.y, radius: p.__radius ?? 15, agentId: p.__agentId,
-      }));
+      // Pre-allocated planetInfos buffer — refill in-place to avoid per-frame allocation
+      const buf = planetInfosRef.current;
+      buf.length = planets.length;
+      for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!buf[i]) buf[i] = { x: 0, y: 0, radius: 0, agentId: '' };
+        buf[i].x = p.x;
+        buf[i].y = p.y;
+        buf[i].radius = p.__radius ?? 15;
+        buf[i].agentId = p.__agentId ?? '';
+      }
+      const planetInfos = buf;
       const sz = sizeRef.current;
       const scale = scaleRef.current;
       const pan = posRef.current;
@@ -1636,17 +1778,21 @@ export const Universe: FC<UniverseProps> = ({
         top:    -(sz.height / 2 + pan.y) / scale,
         bottom:  (sz.height / 2 - pan.y) / scale,
       };
-      const astroCallbacks = {
-        onTrapped: () => onAstronautTrappedRef.current?.(),
-        onEscaped: () => onAstronautEscapedRef.current?.(),
-        onGrazed: () => onAstronautGrazedRef.current?.(),
-        onConsumed: () => onAstronautConsumedRef.current?.(),
-        onLanded: (agentId: string) => onAstronautLandedRef.current?.(agentId),
-        onBounced: (id: number, count: number, edges: Set<string>) => onAstronautBouncedRef.current?.(id, count, edges),
-        onRocketMan: () => onRocketManRef.current?.(),
-        onTrickShot: () => onTrickShotRef.current?.(),
-        onKamikaze: () => onKamikazeRef.current?.(),
-      };
+      // Build astroCallbacks once, delegates to latest callback refs
+      if (!astroCallbacksRef.current) {
+        astroCallbacksRef.current = {
+          onTrapped: () => onAstronautTrappedRef.current?.(),
+          onEscaped: () => onAstronautEscapedRef.current?.(),
+          onGrazed: () => onAstronautGrazedRef.current?.(),
+          onConsumed: () => onAstronautConsumedRef.current?.(),
+          onLanded: (agentId: string) => onAstronautLandedRef.current?.(agentId),
+          onBounced: (id: number, count: number, edges: Set<string>) => onAstronautBouncedRef.current?.(id, count, edges),
+          onRocketMan: () => onRocketManRef.current?.(),
+          onTrickShot: () => onTrickShotRef.current?.(),
+          onKamikaze: () => onKamikazeRef.current?.(),
+        };
+      }
+      const astroCallbacks = astroCallbacksRef.current;
       for (let i = astros.length - 1; i >= 0; i--) {
         const a = astros[i];
         const result = updateAstronaut(a, singPos.x, singPos.y, planetInfos, astroBounds, dt, astroCallbacks);
@@ -1674,7 +1820,8 @@ export const Universe: FC<UniverseProps> = ({
             for (let pi = 0; pi < particleCount; pi++) {
               const pAngle = sprayAngle + (Math.random() - 0.5) * 1.0;
               const pSpeed = 2 + Math.random() * 3;
-              const pg = new Graphics();
+              const pg = jetSprayPoolRef.current?.acquire();
+              if (!pg) continue;
               const pSize = 1.5 + Math.random() * 2.5;
               const pColors = [0xff6622, 0xff8822, 0xffaa33, 0xffcc44, 0xffeeaa];
               const pColor = pColors[Math.floor(Math.random() * pColors.length)];
@@ -1692,13 +1839,21 @@ export const Universe: FC<UniverseProps> = ({
       }
 
       // Jet spray particles (delegated to AstronautSystem)
-      updateJetSpray(jetSprayRef.current, dt);
+      updateJetSpray(jetSprayRef.current, dt, (g) => jetSprayPoolRef.current?.release(g));
 
       // File collision — lightning arcs (delegated to LightningSystem)
-      updateLightning(sparksRef.current, lightningArcsRef.current, lightningLabelsRef.current, planetPositionsRef.current);
+      {
+        const p0 = performance.now();
+        updateLightning(sparksRef.current, lightningArcsRef.current, lightningLabelsRef.current, planetPositionsRef.current);
+        phaseTimes.lightning += performance.now() - p0;
+      }
 
       // Shooting stars (delegated to ShootingStarSystem)
-      updateShootingStars(shootingStarsRef.current, dt);
+      {
+        const p0 = performance.now();
+        updateShootingStars(shootingStarsRef.current, dt, (g) => shootingStarPoolRef.current?.release(g));
+        phaseTimes.shooting += performance.now() - p0;
+      }
 
       // UFO behaviour (delegated to UFOSystem)
       updateUFO(ufo, ufoStateRef.current, dt, {
@@ -1727,7 +1882,7 @@ export const Universe: FC<UniverseProps> = ({
       activeShipsRef.current = [];
       spawnedShipIdsRef.current = new Set();
       for (const ss of shootingStarsRef.current) {
-        try { ss.g.destroy(); } catch { /* ignore */ }
+        try { shootingStarPoolRef.current?.release(ss.g); } catch { /* ignore */ }
       }
       shootingStarsRef.current = [];
       for (const jp of jetSprayRef.current) {
@@ -1783,3 +1938,5 @@ export const Universe: FC<UniverseProps> = ({
     </div>
   );
 };
+
+export const Universe = memo(UniverseImpl);

@@ -389,6 +389,14 @@ export async function killChildProcess(child: cp.ChildProcess, timeoutMs = 3000)
 export class SpawnRegistry {
   private backends = new Map<string, SpawnBackend>();
   private spawnedAgents = new Map<string, SpawnedAgentInfo>();
+  /**
+   * session UUID → spawn-time synthetic id. Populated when a worker's first
+   * MCP call reaches us (usually `eh_heartbeat` or `eh_claim_task`) — we match
+   * its unknown session UUID against the most-recently-spawned unlinked agent.
+   * Without this map, `eh_stop_agent` called with a session UUID (which is all
+   * `eh_list_agents` returns) would miss every spawn entry.
+   */
+  private sessionToSpawn = new Map<string, string>();
   private disposables: vscode.Disposable[] = [];
   private changeListeners: Array<() => void> = [];
   /**
@@ -492,18 +500,89 @@ export class SpawnRegistry {
     return result;
   }
 
+  /**
+   * Link a session UUID (the id that workers register with over MCP) to a
+   * spawn-time synthetic id. Call this from MCP handlers that see worker-side
+   * calls (eh_heartbeat, eh_claim_task) with an unknown session UUID — we try
+   * to correlate it with the most recent unlinked spawn.
+   *
+   * Returns the spawn id if linked, null otherwise.
+   */
+  linkSession(sessionId: string): string | null {
+    if (this.sessionToSpawn.has(sessionId)) return this.sessionToSpawn.get(sessionId)!;
+
+    // Find the most recent spawn that doesn't yet have a linked session.
+    const linkedSpawnIds = new Set(this.sessionToSpawn.values());
+    let best: { spawnId: string; spawnedAt: number } | null = null;
+    for (const [spawnId, info] of this.spawnedAgents) {
+      if (linkedSpawnIds.has(spawnId)) continue;
+      if (!best || info.spawnedAt > best.spawnedAt) {
+        best = { spawnId, spawnedAt: info.spawnedAt };
+      }
+    }
+    if (!best) return null;
+    // Don't link if the spawn is more than 5 minutes old — likely not the same agent.
+    if (Date.now() - best.spawnedAt > 5 * 60 * 1000) return null;
+
+    this.sessionToSpawn.set(sessionId, best.spawnId);
+    return best.spawnId;
+  }
+
+  /** Lookup the spawn id for a given session UUID, if linked. */
+  getSpawnIdForSession(sessionId: string): string | undefined {
+    return this.sessionToSpawn.get(sessionId);
+  }
+
   async stop(agentId: string): Promise<{ stopped: boolean; message: string }> {
-    const info = this.spawnedAgents.get(agentId);
+    // First try direct lookup by spawn-time synthetic id (keys in spawnedAgents).
+    let info = this.spawnedAgents.get(agentId);
+    let resolvedId = agentId;
+
+    // Fallback 1: the caller passed a session UUID (what eh_list_agents returns).
+    // Resolve through the sessionToSpawn map populated by worker MCP calls.
     if (!info) {
-      // Try backends
+      const spawnId = this.sessionToSpawn.get(agentId);
+      if (spawnId) {
+        info = this.spawnedAgents.get(spawnId);
+        if (info) resolvedId = spawnId;
+      }
+    }
+
+    // Fallback 2: try to link now (first heartbeat may not have arrived yet,
+    // but maybe we can still correlate by recency).
+    if (!info) {
+      const spawnId = this.linkSession(agentId);
+      if (spawnId) {
+        info = this.spawnedAgents.get(spawnId);
+        if (info) resolvedId = spawnId;
+      }
+    }
+
+    // Fallback 3: substring match (rare but cheap).
+    if (!info) {
+      for (const [spawnId, candidate] of this.spawnedAgents) {
+        const lowerArg = agentId.toLowerCase();
+        const lowerSpawn = spawnId.toLowerCase();
+        if (lowerArg === lowerSpawn || lowerSpawn.includes(lowerArg) || lowerArg.includes(lowerSpawn)) {
+          info = candidate;
+          resolvedId = spawnId;
+          break;
+        }
+      }
+    }
+
+    if (!info) {
+      // Try backends as a last resort
       for (const backend of this.backends.values()) {
         try {
           await backend.stop(agentId);
-          return { stopped: true, message: `Agent ${agentId} stopped` };
+          return { stopped: true, message: `Agent ${agentId} stopped via backend` };
         } catch { /* continue */ }
       }
-      return { stopped: false, message: `Agent ${agentId} not found in spawn registry` };
+      return { stopped: false, message: `Agent ${agentId} not found in spawn registry (tried direct + fuzzy match). Close the terminal manually.` };
     }
+    // Reassign agentId to the resolved spawn id for downstream code.
+    agentId = resolvedId;
 
     // Kill the real child process if we have one — terminal.dispose() alone
     // does NOT terminate the underlying CLI in non-pty mode, so `claude -p`
@@ -522,11 +601,38 @@ export class SpawnRegistry {
     try { info.terminal.dispose(); } catch { /* ignore */ }
 
     this.spawnedAgents.delete(agentId);
+    // Clean up any session mappings pointing at this spawn.
+    for (const [sessionId, spawnId] of this.sessionToSpawn) {
+      if (spawnId === agentId) this.sessionToSpawn.delete(sessionId);
+    }
     this.notifyChange();
     const msg = processKilled
       ? `Agent ${agentId} stopped`
       : `Agent ${agentId} stopped (process may still be running — check tasklist/ps)`;
     return { stopped: processKilled, message: msg };
+  }
+
+  /**
+   * Kill every tracked spawned agent. Used by orchestrators to abort a plan.
+   * Returns a summary of which agents were killed and which may still be running.
+   */
+  async stopAll(): Promise<{ stopped: number; total: number; ids: string[]; stubborn: string[] }> {
+    const ids = Array.from(this.spawnedAgents.keys());
+    const stubborn: string[] = [];
+    let stopped = 0;
+    for (const id of ids) {
+      try {
+        const result = await this.stop(id);
+        if (result.stopped) {
+          stopped++;
+        } else {
+          stubborn.push(id);
+        }
+      } catch {
+        stubborn.push(id);
+      }
+    }
+    return { stopped, total: ids.length, ids, stubborn };
   }
 
   async getAvailableTypes(): Promise<string[]> {

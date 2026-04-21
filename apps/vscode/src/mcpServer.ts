@@ -439,6 +439,17 @@ export const MCP_TOOLS: McpToolDef[] = [
     },
   },
   {
+    name: 'eh_stop_all_workers',
+    description: 'Kill every spawned worker agent — used to abort a plan cleanly. Returns a summary of what was killed and any that may still be running. Orchestrator-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be orchestrator)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
     name: 'eh_purge_stale_agents',
     description: 'Remove stale/lost agents from the dashboard. Agents with no heartbeat for >5 minutes (and no running process) are terminated. Returns the list of purged agent IDs.',
     inputSchema: {
@@ -986,6 +997,13 @@ export class McpServer {
         const agentType = args.agent_type as string | undefined;
         const planId = args.plan_id as string | undefined;
 
+        // Opportunistically link this session UUID to a recent unlinked spawn
+        // so eh_stop_agent(sessionId) can find the underlying process later.
+        const { spawnRegistry: sr } = this.deps;
+        if (sr && !sr.getSpawnIdForSession(agentId)) {
+          sr.linkSession(agentId);
+        }
+
         // Auto-select best task when task_id is empty/missing
         if (!taskId || taskId.trim() === '') {
           if (!agentType) {
@@ -1516,6 +1534,19 @@ export class McpServer {
         return result;
       }
 
+      case 'eh_stop_all_workers': {
+        const agentId = this.resolveAgentId(args.agent_id as string);
+        if (!planBoardManager.isOrchestrator(agentId)) {
+          return { error: 'Only the orchestrator can stop all workers.' };
+        }
+        const { spawnRegistry } = this.deps;
+        if (!spawnRegistry) {
+          return { error: 'Spawn registry not available' };
+        }
+        const result = await spawnRegistry.stopAll();
+        return result;
+      }
+
       case 'eh_purge_stale_agents': {
         const { agentStateManager, heartbeatManager, spawnRegistry, onEvent } = this.deps;
         if (!agentStateManager || !heartbeatManager) {
@@ -1779,9 +1810,14 @@ export class McpServer {
 
       case 'eh_heartbeat': {
         const agentId = args.agent_id as string;
-        const { heartbeatManager } = this.deps;
+        const { heartbeatManager, spawnRegistry } = this.deps;
         if (!heartbeatManager) return { error: 'Heartbeat manager not available' };
         heartbeatManager.beat(agentId);
+        // Opportunistically link this session UUID to a recent unlinked spawn
+        // so eh_stop_agent(sessionId) can find the underlying process later.
+        if (spawnRegistry && !spawnRegistry.getSpawnIdForSession(agentId)) {
+          spawnRegistry.linkSession(agentId);
+        }
         return { status: 'alive', agent_id: agentId, timestamp: Date.now() };
       }
 

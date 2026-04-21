@@ -14,9 +14,11 @@ export interface SpawnBeam {
   toAgentId: string;
   color: number;
   startTime: number;
+  /** Wall-clock ms at construction — used by the pruner to evict stale beams from React state. */
+  createdAtMs?: number;
 }
 
-const BEAM_DURATION = 2.0; // seconds
+const BEAM_DURATION_MS = 2000; // wall-clock ms — matches beam.startTime (Date.now())
 const BEAM_WIDTH = 2.5;
 const GLOW_WIDTH = 8;
 
@@ -31,21 +33,27 @@ export class BeamSystem {
   /**
    * Update all active beams — draw glowing lines that fade over time.
    * Returns the set of beam keys that are still alive.
+   *
+   * NOTE: `beam.startTime` is wall-clock ms (Date.now()). We intentionally
+   * ignore the pixi ticker time argument and use Date.now() so the two units
+   * agree. Passing tickTime (accumulated seconds) produced a huge negative
+   * delta and beams never expired / drew to garbage endpoints.
    */
   update(
     beams: SpawnBeam[],
-    tickTime: number,
+    _tickTime: number,
     posMap: Map<string, { x: number; y: number }>,
   ): SpawnBeam[] {
+    const now = Date.now();
     const alive: SpawnBeam[] = [];
 
     // Clean up stale graphics
     const activeKeys = new Set<string>();
 
     for (const beam of beams) {
-      const elapsed = tickTime - beam.startTime;
-      if (elapsed > BEAM_DURATION) {
-        continue; // expired
+      const elapsed = now - beam.startTime;
+      if (elapsed < 0 || elapsed > BEAM_DURATION_MS) {
+        continue; // not yet or expired
       }
       alive.push(beam);
 
@@ -65,11 +73,11 @@ export class BeamSystem {
 
       g.clear();
 
-      const progress = elapsed / BEAM_DURATION;
+      const progress = elapsed / BEAM_DURATION_MS;
       const alpha = 1 - progress; // fade from 1 to 0
 
       // Beam travels from source to target — animate head position
-      const headProgress = Math.min(1, elapsed / (BEAM_DURATION * 0.4)); // beam reaches target in 40% of duration
+      const headProgress = Math.min(1, elapsed / (BEAM_DURATION_MS * 0.4)); // beam reaches target in 40% of duration
       const dx = toPos.x - fromPos.x;
       const dy = toPos.y - fromPos.y;
       const headX = fromPos.x + dx * headProgress;
