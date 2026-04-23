@@ -2,6 +2,13 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [2.1.1] — 2026-04-22
+
+### Fixed
+- **OpenCode agents exit code 1 immediately on spawn (P0)**: `OpenCodeSpawner.spawn()` was building the argv with Claude Code's CLI syntax (`['-p', prompt, '-f', 'json', '-q']`). In OpenCode those flags mean `--password`, `--file`, and nothing, so the process aborted before producing any output. Now emits the correct OpenCode form `['run', '--format', 'json', prompt]` (prompt is positional after the `run` subcommand)
+- **`eh_spawn_agent` rejected OpenCode orchestrators with "agent_type could not be resolved"**: the server relied on `AgentStateManager` knowing the orchestrator's runtime type, but OpenCode sessions often reach `eh_spawn_agent` before any `agent.spawn` event has registered one, leaving the type as `undefined` or `"unknown"`. Added an agent-id-prefix fallback (`opencode` / `claude` / `cursor`) that fires only when the primary lookup returns nothing — the existing explicit-override and registered-type paths are unchanged
+- **`eh:orchestrate` skill instructions**: rewritten the "Determine worker agent type" step to tell orchestrators to **always pass** `agent_type` explicitly (their own runtime as the default) rather than omitting it and relying on server inference. Server inference is now framed as a fallback, not a contract
+
 ## [2.1.0] — 2026-04-20
 
 ### Fixed

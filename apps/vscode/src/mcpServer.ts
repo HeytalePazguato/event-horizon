@@ -1496,6 +1496,17 @@ export class McpServer {
         if (!agentType) {
           agentType = orchestrator?.type;
         }
+        // Last-ditch fallback: infer runtime from the orchestrator's agent_id
+        // prefix when AgentStateManager has no registered type yet. OpenCode
+        // sessions often reach eh_spawn_agent before any agent.spawn event has
+        // set a known type, leaving `orchestrator?.type` as undefined or
+        // "unknown" even though the id clearly reveals the runtime.
+        if (!agentType || agentType === 'unknown') {
+          const lowerAgentId = agentId.toLowerCase();
+          if (lowerAgentId.includes('opencode')) agentType = 'opencode';
+          else if (lowerAgentId.includes('claude')) agentType = 'claude-code';
+          else if (lowerAgentId.includes('cursor')) agentType = 'cursor';
+        }
         if (!agentType || agentType === 'unknown') {
           return {
             error: `agent_type could not be resolved. Pass agent_type explicitly, or ensure the orchestrator (agent_id="${agentId}") is registered with a known runtime type.`,

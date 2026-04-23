@@ -942,7 +942,9 @@ export class OpenCodeSpawner implements SpawnBackend {
       return { agentId, type: this.type, status: 'unavailable', message: 'opencode/crush CLI is not available in PATH' };
     }
 
-    const args: string[] = ['-p', opts.prompt, '-f', 'json', '-q'];
+    // OpenCode CLI: `opencode run --format json "prompt"` — prompt is positional.
+    // Do NOT use `-p` (that's --password in OpenCode) or `-f` (--file).
+    const args: string[] = ['run', '--format', 'json', opts.prompt];
 
     const token = this.getAuthToken();
     const env: Record<string, string> = {
