@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
