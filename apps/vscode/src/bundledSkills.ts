@@ -639,12 +639,12 @@ You are an orchestrator agent. Your job is to MANAGE a plan — spawn worker age
 
 2. **Get the plan** — Call \`eh_get_plan\` to load the current plan. If the user specified a plan name or ID, use it. Otherwise use the most recent active plan.
 
-3. **Determine worker agent type** — The server defaults worker type to YOUR OWN runtime (if you are OpenCode, workers default to OpenCode). You only need to pass \`agent_type\` to override that default. Priority:
-   a. **User specified \`--agent opencode\`** (or similar) in the arguments → pass \`agent_type: "opencode"\` to \`eh_spawn_agent\` for all spawns
-   b. **Task specifies agent type** in plan metadata (e.g. \`[agent: opencode]\`) → pass \`agent_type\` per-task
-   c. **Neither** → **OMIT \`agent_type\` entirely**. The server will fill in your own runtime as the default. Do NOT guess or hardcode your own type — let the server do it.
+3. **Determine worker agent type** — Always pass \`agent_type\` explicitly to \`eh_spawn_agent\`. The server has a fallback, but it's unreliable for non-Claude orchestrators whose runtime type may not yet be registered in AgentStateManager at spawn time. Priority:
+   a. **User specified \`--agent opencode\`** (or similar) in the arguments → pass \`agent_type: "opencode"\` for all spawns
+   b. **Task specifies agent type** in plan metadata (e.g. \`[agent: opencode]\`) → pass that \`agent_type\` per-task
+   c. **Neither** → pass your OWN runtime type as the default (\`claude-code\`, \`opencode\`, or \`cursor\`). You know what you are — don't rely on the server to infer it.
 
-   Common reason to override: the user's organization requires authentication per session for one agent type but not another (e.g. claude-code needs auth but opencode doesn't).
+   Common reason to override (a vs c): the user's organization requires authentication per session for one agent type but not another (e.g. claude-code needs auth but opencode doesn't).
 
 4. **Assess the scope** — The user may specify a phase ("Phase 4"), a task range ("tasks 4.1-4.5"), or nothing (work on all pending tasks). Identify which tasks to work on.
 
@@ -659,7 +659,7 @@ For each batch of ready tasks:
 
 1. **Spawn agents** — For each ready task, call \`eh_spawn_agent\` with:
    - \`agent_id\`: your agent ID
-   - \`agent_type\`: **OMIT** unless (a) the user passed \`--agent X\` or (b) a task has \`[agent: X]\` metadata. The server defaults to your own runtime when this param is omitted, which is the behavior you want in 90% of cases
+   - \`agent_type\`: **Always pass** the resolved type from step 3 (user override → task metadata → your own runtime). Don't omit it — server-side inference is a fallback, not a contract.
    - \`role\`: the role from the task (e.g. \`implementer\`, \`tester\`, \`reviewer\`)
    - \`model\`: the model from the task metadata (e.g. \`haiku\`, \`sonnet\`, \`opus\`)
    - \`plan_id\`: the plan ID
