@@ -43,6 +43,11 @@ export interface ExtractResult {
  *   3. The bare filename — last-resort fallback.
  */
 function locateWasm(file: string): string {
+  // Compiled location is `apps/vscode/out/projectGraph/treeSitterExtractor.js`,
+  // so __dirname is .../out/projectGraph/ — but copy-tree-sitter-wasm.mjs writes
+  // the WASMs to .../out/. Check the parent dir first.
+  const oneUp = path.join(__dirname, '..', file);
+  if (fs.existsSync(oneUp)) return oneUp;
   const nearby = path.join(__dirname, file);
   if (fs.existsSync(nearby)) return nearby;
   try {

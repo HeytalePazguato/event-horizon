@@ -24,6 +24,10 @@ export interface ScanSummary {
   nodesCreated: number;
   edgesCreated: number;
   durationMs: number;
+  /** First error encountered during extraction — surfaces silent failures (e.g. WASM load). */
+  firstError?: string;
+  /** Files in the workspace that matched the glob; helps spot 'no files found' cases. */
+  filesMatched: number;
 }
 
 export class ProjectGraphScanner {
@@ -57,6 +61,7 @@ export class ProjectGraphScanner {
     let filesSkipped = 0;
     let nodesCreated = 0;
     let edgesCreated = 0;
+    let firstError: string | undefined;
 
     // Walk the workspace via Node fs — more reliable than vscode.workspace.findFiles,
     // which has returned 0 results inconsistently from the MCP-server context.
@@ -104,12 +109,21 @@ export class ProjectGraphScanner {
         } else {
           filesSkipped++;
         }
-      } catch {
+      } catch (err) {
         filesSkipped++;
+        if (!firstError) firstError = `${path.basename(filePath)}: ${(err as Error).message ?? String(err)}`;
       }
     }
 
-    return { filesProcessed, filesSkipped, nodesCreated, edgesCreated, durationMs: Date.now() - start };
+    return {
+      filesProcessed,
+      filesSkipped,
+      nodesCreated,
+      edgesCreated,
+      durationMs: Date.now() - start,
+      filesMatched: capped.length,
+      firstError,
+    };
   }
 
   async scanFile(filePath: string): Promise<{ committed: boolean; reason?: string }> {
