@@ -34,6 +34,8 @@ function locateSqlWasm(file: string): string {
   }
 }
 import type { AgentEvent } from '@event-horizon/core';
+import { GRAPH_SCHEMA_SQL } from './projectGraph/schema.js';
+import { ProjectGraphStore } from './projectGraph/store.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -147,6 +149,7 @@ export class EventHorizonDB {
   private db: Database;
   private ftsEnabled = false;
   private _dirty = false;
+  private graphStore: ProjectGraphStore | null = null;
 
   // Batching — inserts are queued and flushed inside a single transaction
   // every FLUSH_WINDOW_MS so bursty ingestion (transcript watcher, hook
@@ -173,6 +176,15 @@ export class EventHorizonDB {
 
     // Create schema
     db.run(SCHEMA_SQL);
+
+    // Project Graph schema (code & knowledge graph). FTS5 portion may fail
+    // on older sql.js builds — non-FTS tables are still created since
+    // sql.js executes statements sequentially.
+    try {
+      db.run(GRAPH_SCHEMA_SQL);
+    } catch {
+      /* graph FTS unavailable — store gracefully degrades to LIKE search */
+    }
 
     const instance = new EventHorizonDB(db);
 
@@ -500,6 +512,19 @@ export class EventHorizonDB {
       totalCostUsd: row['total_cost_usd'] as number,
       eventCount: row['event_count'] as number,
     };
+  }
+
+  // ── Project Graph ──────────────────────────────────────────────────────
+
+  /**
+   * Lazily construct and cache a `ProjectGraphStore` over this database.
+   * The graph schema (`GRAPH_SCHEMA_SQL`) is applied during `create()`.
+   */
+  getProjectGraphStore(): ProjectGraphStore {
+    if (!this.graphStore) {
+      this.graphStore = new ProjectGraphStore(this.db);
+    }
+    return this.graphStore;
   }
 
   // ── Maintenance ────────────────────────────────────────────────────────

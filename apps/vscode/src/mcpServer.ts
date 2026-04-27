@@ -21,7 +21,9 @@ import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
 import type { TokenAnalyzer } from './tokenAnalyzer.js';
+import type { ProjectGraphStore } from './projectGraph/index.js';
 import { exec } from 'child_process';
+import { createHash } from 'crypto';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -640,6 +642,47 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id', 'query'],
     },
   },
+  {
+    name: 'eh_extract_concepts',
+    description: 'Add INFERRED nodes/edges to the project graph from agent analysis. The agent runs the extraction (e.g. parses a doc and identifies concepts) and supplies the structured result; EH never makes outbound model calls. Gated by eventHorizon.projectGraph.allowAgentLLMExtraction setting. Call only when the user has asked you to enrich the project graph.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source_file: { type: 'string', description: 'Required. The file the concepts were extracted from.' },
+        nodes: {
+          type: 'array',
+          description: 'Concept nodes to add. Each requires: label (string), type (string — typically "concept"), confidence (number 0-1), and optional properties (object).',
+          items: {
+            type: 'object',
+            required: ['label', 'type', 'confidence'],
+            properties: {
+              label: { type: 'string' },
+              type: { type: 'string' },
+              confidence: { type: 'number' },
+              properties: { type: 'object' },
+              sourceLocation: { type: 'string' },
+            },
+          },
+        },
+        edges: {
+          type: 'array',
+          description: 'Edges between submitted nodes (referenced by label). Each requires: sourceLabel, targetLabel, relationType, confidence.',
+          items: {
+            type: 'object',
+            required: ['sourceLabel', 'targetLabel', 'relationType', 'confidence'],
+            properties: {
+              sourceLabel: { type: 'string' },
+              targetLabel: { type: 'string' },
+              relationType: { type: 'string' },
+              confidence: { type: 'number' },
+            },
+          },
+        },
+        confidence_floor: { type: 'number', description: 'Drop entries below this confidence. Default 0.5.' },
+      },
+      required: ['source_file', 'nodes'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -701,6 +744,8 @@ export interface McpServerDeps {
   modelTierManager?: ModelTierManager;
   tokenAnalyzer?: TokenAnalyzer;
   eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
+  projectGraphStore?: ProjectGraphStore;
+  isAgentExtractionEnabled?: () => boolean;
   /** Callback to inject events into the main event pipeline (for synthetic terminate, etc.). */
   onEvent?: (event: AgentEvent) => void;
 }
@@ -715,6 +760,10 @@ export class McpServer {
   /** Wire the event search engine after the DB is initialized (called from extension.ts). */
   setEventSearch(eventSearch: McpServerDeps['eventSearch']): void {
     this.deps.eventSearch = eventSearch;
+  }
+
+  setProjectGraphStore(store: ProjectGraphStore): void {
+    this.deps.projectGraphStore = store;
   }
 
   setOnEvent(onEvent: (event: AgentEvent) => void): void {
@@ -1957,6 +2006,103 @@ export class McpServer {
         if (typeof args.since === 'number') opts.since = args.since;
         const results = eventSearch.search(query, opts);
         return { query, count: results.length, events: results };
+      }
+
+      case 'eh_extract_concepts': {
+        const { projectGraphStore, isAgentExtractionEnabled } = this.deps;
+        if (!projectGraphStore) return { error: 'Project graph not available (persistence may be disabled)' };
+        if (isAgentExtractionEnabled && !isAgentExtractionEnabled()) {
+          return { error: 'eh_extract_concepts disabled — enable eventHorizon.projectGraph.allowAgentLLMExtraction to use this tool.' };
+        }
+
+        const sourceFile = args.source_file as string;
+        const rawNodes = (args.nodes as Array<Record<string, unknown>>) ?? [];
+        const rawEdges = (args.edges as Array<Record<string, unknown>>) ?? [];
+        const confidenceFloor = typeof args.confidence_floor === 'number' ? args.confidence_floor : 0.5;
+        const workspace = this.deps.workspaceRoot;
+        const now = Date.now();
+
+        const fileHash = createHash('sha256').update(sourceFile).digest('hex').slice(0, 12);
+        const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+
+        let nodesInserted = 0;
+        let nodesDropped = 0;
+        const labelToId = new Map<string, string>();
+
+        for (const raw of rawNodes) {
+          const label = String(raw.label ?? '');
+          const confidence = Number(raw.confidence ?? 0);
+
+          if (confidence < confidenceFloor) {
+            nodesDropped++;
+            continue;
+          }
+
+          const tag = confidence < 0.5 ? 'AMBIGUOUS' : 'INFERRED';
+          const id = `concept:${fileHash}:${toSlug(label)}`;
+          labelToId.set(label, id);
+
+          const node = {
+            id,
+            label,
+            type: (raw.type as string) || 'concept',
+            tag,
+            confidence,
+            sourceFile,
+            sourceLocation: raw.sourceLocation as string | undefined,
+            properties: (raw.properties as Record<string, unknown>) ?? {},
+            workspace,
+            createdAt: now,
+            updatedAt: now,
+          };
+          projectGraphStore.upsertNode(node as Parameters<typeof projectGraphStore.upsertNode>[0]);
+          nodesInserted++;
+        }
+
+        let edgesInserted = 0;
+        let edgesDropped = 0;
+
+        for (const raw of rawEdges) {
+          const sourceLabel = String(raw.sourceLabel ?? '');
+          const targetLabel = String(raw.targetLabel ?? '');
+          const relationType = String(raw.relationType ?? 'references');
+          const confidence = Number(raw.confidence ?? 0);
+
+          let sourceId = labelToId.get(sourceLabel);
+          if (!sourceId) {
+            const found = projectGraphStore.searchNodes(sourceLabel, { limit: 1 });
+            sourceId = found.find((n) => n.label === sourceLabel)?.id;
+          }
+          let targetId = labelToId.get(targetLabel);
+          if (!targetId) {
+            const found = projectGraphStore.searchNodes(targetLabel, { limit: 1 });
+            targetId = found.find((n) => n.label === targetLabel)?.id;
+          }
+
+          if (!sourceId || !targetId) {
+            edgesDropped++;
+            continue;
+          }
+
+          const edgeId = `edge:${sourceId}:${toSlug(relationType)}:${targetId}`;
+          const edge = {
+            id: edgeId,
+            sourceId,
+            targetId,
+            relationType,
+            tag: 'INFERRED' as const,
+            confidence,
+            sourceFile,
+            createdAt: now,
+          };
+          projectGraphStore.upsertEdge(edge as Parameters<typeof projectGraphStore.upsertEdge>[0]);
+          edgesInserted++;
+        }
+
+        return {
+          inserted: { nodes: nodesInserted, edges: edgesInserted },
+          dropped: { nodes: nodesDropped, edges: edgesDropped },
+        };
       }
 
       default:

@@ -2,6 +2,15 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [3.0.0] — TBD
+
+### Added
+- **Project knowledge graph**: a queryable map of code structure, docs, agent activity, and shared knowledge, stored locally in EventHorizonDB. User-triggered only — nothing runs in the background.
+- **Project graph foundation**: SQLite tables (`graph_nodes`, `graph_edges`, `graph_file_state`) plus FTS5 full-text search inside the existing EventHorizonDB. Shrink-guard refuses extractor regressions that would delete more than 50% of a file's prior nodes.
+
+### Changed
+_(filled in as phases ship)_
+
 ## [2.1.1] — 2026-04-22
 
 ### Fixed

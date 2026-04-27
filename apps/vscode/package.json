@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "2.1.1",
+  "version": "3.0.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
@@ -82,6 +82,14 @@
         "command": "eventHorizon.exportData",
         "title": "Event Horizon: Export Data...",
         "icon": "$(export)"
+      },
+      {
+        "command": "eventHorizon.buildProjectGraph",
+        "title": "Event Horizon: Build Project Graph"
+      },
+      {
+        "command": "eventHorizon.rebuildProjectGraph",
+        "title": "Event Horizon: Rebuild Project Graph"
       }
     ],
     "menus": {
@@ -390,6 +398,32 @@
           "maximum": 120,
           "description": "Auto-fail spawned workers that have not emitted any event for this many minutes (likely stuck on a permission prompt or hung). Orchestrators are notified via the message queue. Set to 0 to disable. Interactive-mode workers are always excluded.",
           "order": 36
+        },
+        "eventHorizon.projectGraph.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable workspace project graph (code structure + docs + agent activity). The graph is built only on user invocation; nothing runs in the background.",
+          "order": 40
+        },
+        "eventHorizon.projectGraph.maxFiles": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 100,
+          "maximum": 100000,
+          "description": "Cap on file count for a workspace scan. Workspaces over this size require manual confirmation.",
+          "order": 41
+        },
+        "eventHorizon.projectGraph.includeMarkdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "Extract concepts from markdown files.",
+          "order": 42
+        },
+        "eventHorizon.projectGraph.allowAgentLLMExtraction": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow agents to add INFERRED nodes via the eh_extract_concepts MCP tool. EH itself never makes outbound model calls.",
+          "order": 43
         }
       }
     },
@@ -450,10 +484,10 @@
     ]
   },
   "scripts": {
-    "build": "tsc && node scripts/copy-sql-wasm.mjs && pnpm run build:webview",
+    "build": "tsc && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs && pnpm run build:webview",
     "lint": "eslint src/ webview/",
-    "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap && node scripts/copy-sql-wasm.mjs",
-    "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked && node scripts/copy-sql-wasm.mjs",
+    "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
+    "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
     "build:webview": "node webview/esbuild.mjs",
     "build:webview:dev": "node webview/esbuild.mjs --dev",
     "build:webview:prod": "node webview/esbuild.mjs --minify",
@@ -469,6 +503,9 @@
     "@event-horizon/ui": "workspace:*",
     "html2canvas": "^1.4.1",
     "sql.js": "^1.14.1",
+    "tree-sitter-javascript": "^0.23.0",
+    "tree-sitter-typescript": "^0.23.0",
+    "web-tree-sitter": "^0.25.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {

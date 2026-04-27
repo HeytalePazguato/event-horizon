@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphStore, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -238,9 +238,10 @@ export function activate(context: vscode.ExtensionContext): void {
         }, 60_000);
         context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
 
-        // Wire event search engine into MCP server now that DB is ready
+        // Wire event search engine and project graph store into MCP server now that DB is ready
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
         setEventSearchEngine(eventSearchEngine);
+        setProjectGraphStore(ehDatabase.getProjectGraphStore());
         setMcpOnEvent(onAgentEvent);
 
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);

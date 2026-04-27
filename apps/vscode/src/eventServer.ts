@@ -37,6 +37,7 @@ export interface EventServerCallbacks {
 
 let server: http.Server | null = null;
 let callbacks: EventServerCallbacks | null = null;
+let activeBridge: EventBridge | null = null;
 const activeSockets = new Set<import('net').Socket>();
 
 // ── WebSocket state ──
@@ -92,6 +93,7 @@ export function setExtensionRoot(p: string): void {
 }
 
 // ── File lock manager (extracted to lockManager.ts) ─────────────────────────
+import type { EventBridge } from './projectGraph/eventBridge.js';
 import { LockManager } from './lockManager.js';
 import { McpServer, FileActivityTracker } from './mcpServer.js';
 import { PlanBoardManager } from './planBoard.js';
@@ -172,6 +174,8 @@ export function initMcpServer(deps: {
     workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     modelTierManager,
     tokenAnalyzer,
+    isAgentExtractionEnabled: () =>
+      vscode.workspace.getConfiguration('eventHorizon').get<boolean>('projectGraph.allowAgentLLMExtraction', true),
   });
 }
 
@@ -183,6 +187,11 @@ export function _setMcpServer(s: McpServer | null): void { mcpServer = s; }
 /** Wire the event search engine into the MCP server after the persistence DB is ready. */
 export function setEventSearchEngine(eventSearch: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] }): void {
   if (mcpServer) mcpServer.setEventSearch(eventSearch);
+}
+
+/** Wire the project graph store into the MCP server after the persistence DB is ready. */
+export function setProjectGraphStore(store: import('./projectGraph/index.js').ProjectGraphStore): void {
+  if (mcpServer) mcpServer.setProjectGraphStore(store);
 }
 
 export function setMcpOnEvent(onEvent: (event: import('@event-horizon/core').AgentEvent) => void): void {
@@ -538,6 +547,7 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
 
       if (event) {
         cb.onEvent(event);
+        activeBridge?.ingestEvent(event);
         if (route === '/claude') {
           send(200, '');
         } else {
@@ -579,8 +589,9 @@ export function setAuthToken(token: string): void {
   authToken = token;
 }
 
-export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT): Promise<number> {
+export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT, eventBridge?: EventBridge): Promise<number> {
   callbacks = cbs;
+  activeBridge = eventBridge ?? null;
   if (server) return port;
 
   // Use existing token if set (restored from globalState), otherwise generate new one
@@ -633,6 +644,7 @@ export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT
           if (data && typeof data === 'object' && data.type && data.agentId) {
             // Treat as raw AgentEvent
             if (callbacks) callbacks.onEvent(data as AgentEvent);
+            activeBridge?.ingestEvent(data as AgentEvent);
             ws.send(JSON.stringify({ ok: true, id: data.id }));
           }
         } catch { /* malformed message — ignore */ }
@@ -714,6 +726,7 @@ export function stopEventServer(): void {
     server = null;
   }
   callbacks = null;
+  activeBridge = null;
   authToken = null;
   rateCounts.clear();
 }
