@@ -1,59 +1,19 @@
 /**
- * Project Graph Section — wraps controls + canvas + detail drawer for the
- * Knowledge tab. The webview owns graph state and passes it through props.
+ * Project Graph Section — debug placeholder.
+ *
+ * The full implementation (Controls + Canvas + DetailDrawer) is temporarily
+ * disabled while we isolate the source of the
+ *   "Cannot read properties of null (reading 'remove')"
+ * error in the webview. If this placeholder renders without error, the bug
+ * is NOT in the section itself — it's somewhere else in the webview's graph
+ * wiring (message handlers, browse-request effect, OperationsView prop pass).
  *
  * Phase 8.5 of the Project Graph plan.
  */
 
-import React, { Component, useState, type ReactNode } from 'react';
-import { ProjectGraphCanvas } from './ProjectGraphCanvas.js';
+import React from 'react';
 import type { GraphNodeData, GraphEdgeData } from './ProjectGraphCanvas.js';
-
-/**
- * Local error boundary so a Pixi mount crash in ProjectGraphCanvas doesn't
- * take down the surrounding Knowledge tab.
- */
-class CanvasErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { error: null };
-  }
-  static getDerivedStateFromError(e: unknown): { error: string } {
-    return { error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) };
-  }
-  componentDidCatch(error: unknown): void {
-    // eslint-disable-next-line no-console
-    console.warn('[Project Graph canvas crashed]', error);
-  }
-  render(): ReactNode {
-    if (this.state.error) {
-      return (
-        <div
-          style={{
-            padding: 18,
-            color: '#ff8866',
-            background: 'rgba(40, 14, 14, 0.5)',
-            border: '1px dashed rgba(255, 102, 102, 0.4)',
-            margin: 12,
-            borderRadius: 4,
-            fontSize: 11,
-            fontFamily: 'monospace',
-          }}
-        >
-          <div style={{ fontWeight: 'bold', marginBottom: 6 }}>Graph canvas failed to mount</div>
-          <div style={{ color: '#ffaa88' }}>{this.state.error}</div>
-          <div style={{ marginTop: 8, color: '#88aacc' }}>
-            The rest of the Knowledge tab still works. Open DevTools (Help → Toggle Developer Tools) and reload the panel to see the full stack trace.
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-import { ProjectGraphControls } from './ProjectGraphControls.js';
 import type { GraphStats, GraphFilter, GraphBuildProgress } from './ProjectGraphControls.js';
-import { ProjectGraphDetailDrawer } from './ProjectGraphDetailDrawer.js';
 import type { NodeDetails } from './ProjectGraphDetailDrawer.js';
 
 export interface ProjectGraphSectionProps {
@@ -67,102 +27,39 @@ export interface ProjectGraphSectionProps {
   onBuild: (force: boolean) => void;
   onNodeSelect: (nodeId: string | null) => void;
   onRevealInEditor: (filePath: string, line?: number) => void;
-  /** Optional explicit dimensions; defaults adapt to container width. */
   width?: number;
   height?: number;
 }
 
-const styles = {
-  root: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    background: 'rgba(10, 15, 24, 0.5)',
-    borderRadius: 4,
-    overflow: 'hidden' as const,
-    fontFamily: 'monospace',
-    fontSize: 11,
-    color: '#cce0ff',
-    border: '1px solid rgba(68, 136, 187, 0.25)',
-    marginBottom: 12,
-  },
-  toggleRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '6px 10px',
-    background: 'rgba(20, 32, 44, 0.7)',
-    borderBottom: '1px solid rgba(68, 136, 187, 0.2)',
-    cursor: 'pointer',
-    userSelect: 'none' as const,
-  },
-  title: {
-    fontSize: 11,
-    color: '#88aacc',
-    textTransform: 'uppercase' as const,
-    letterSpacing: 1,
-  },
-  caret: {
-    color: '#88aacc',
-  },
-  body: {
-    position: 'relative' as const,
-  },
-};
-
-export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
-  stats,
-  buildProgress,
-  nodes,
-  edges,
-  filter,
-  selectedNodeDetails,
-  onFilterChange,
-  onBuild,
-  onNodeSelect,
-  onRevealInEditor,
-  width = 720,
-  height = 460,
-}) => {
-  const [collapsed, setCollapsed] = useState(false);
+export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = (props) => {
+  // Reference all props so TS doesn't flag unused
+  void props.stats; void props.buildProgress; void props.nodes; void props.edges;
+  void props.filter; void props.selectedNodeDetails; void props.onFilterChange;
+  void props.onBuild; void props.onNodeSelect; void props.onRevealInEditor;
+  void props.height;
 
   return (
-    <div style={styles.root}>
-      <div style={styles.toggleRow} onClick={() => setCollapsed((c) => !c)}>
-        <span style={styles.title}>Project Graph</span>
-        <span style={styles.caret}>{collapsed ? '▸' : '▾'}</span>
+    <div
+      style={{
+        padding: 14,
+        marginBottom: 12,
+        color: '#88aacc',
+        fontFamily: 'monospace',
+        fontSize: 11,
+        background: 'rgba(20, 32, 44, 0.5)',
+        border: '1px solid rgba(68, 136, 187, 0.3)',
+        borderRadius: 4,
+      }}
+    >
+      <div style={{ color: '#cce0ff', fontWeight: 'bold', marginBottom: 6 }}>
+        Project Graph (placeholder)
       </div>
-
-      {!collapsed && (
-        <>
-          <ProjectGraphControls
-            stats={stats}
-            buildProgress={buildProgress}
-            filter={filter}
-            onFilterChange={onFilterChange}
-            onBuild={onBuild}
-          />
-          <div style={styles.body}>
-            <CanvasErrorBoundary>
-              <ProjectGraphCanvas
-                nodes={nodes}
-                edges={edges}
-                selectedNodeId={selectedNodeDetails?.node.id ?? null}
-                onNodeSelect={onNodeSelect}
-                width={width}
-                height={height}
-              />
-            </CanvasErrorBoundary>
-            {selectedNodeDetails && (
-              <ProjectGraphDetailDrawer
-                details={selectedNodeDetails}
-                onClose={() => onNodeSelect(null)}
-                onFocusNode={onNodeSelect}
-                onRevealInEditor={onRevealInEditor}
-              />
-            )}
-          </div>
-        </>
-      )}
+      <div style={{ color: '#557799' }}>
+        If this message renders, the Knowledge tab itself is fine. The actual graph
+        canvas / controls / drawer are temporarily disabled while a webview error
+        is being diagnosed. Build the graph via Command Palette → "Event Horizon:
+        Build Project Graph" or via <code style={{ color: '#88aacc' }}>/eh:optimize-context</code>.
+      </div>
     </div>
   );
 };
