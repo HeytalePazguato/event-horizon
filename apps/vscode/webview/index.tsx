@@ -17,7 +17,7 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn, SpawnBeam, KnowledgeLink } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, ProjectGraphSection, useCommandCenterStore } from '@event-horizon/ui';
+import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, useCommandCenterStore } from '@event-horizon/ui';
 import type { CreateSkillRequest, MarketplaceSkillResult, CostInsightsData } from '@event-horizon/ui';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 
@@ -189,11 +189,6 @@ function App() {
   const [persistedSearchResults, setPersistedSearchResults] = useState<import('@event-horizon/ui').PersistedSearchResult[] | null>(null);
   const [taskExecutionEvents, setTaskExecutionEvents] = useState<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>(null);
   const [wormholes, setWormholes] = useState<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>([]);
-  const [graphStats, setGraphStats] = useState<{ nodeCount: number; edgeCount: number; fileCount: number; lastBuildAt?: number } | null>(null);
-  const [graphBrowseResult, setGraphBrowseResult] = useState<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number } | null>(null);
-  const [graphNodeDetails, setGraphNodeDetails] = useState<{ requestId: string; node: unknown | null; in: unknown[]; out: unknown[]; rationale: unknown[]; recentActivity: unknown[] } | null>(null);
-  const [graphBuildProgress, setGraphBuildProgress] = useState<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>(null);
-  const [graphFilter, setGraphFilter] = useState<import('@event-horizon/ui').GraphFilter>({});
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -259,10 +254,6 @@ function App() {
     setPersistedSearchResults,
     setTaskExecutionEvents,
     setWormholes,
-    setGraphStats,
-    setGraphBrowseResult,
-    setGraphNodeDetails,
-    setGraphBuildProgress,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -286,59 +277,6 @@ function App() {
 
   useSettingsPersistence(vscodeApi);
   useSpawnBeamPruner(spawnBeams, setSpawnBeams);
-
-  // ── Project graph state + senders (consumed by 8.2/8.3/8.4 panels) ──
-  const graphApi = useMemo(() => ({
-    stats: graphStats,
-    browseResult: graphBrowseResult,
-    nodeDetails: graphNodeDetails,
-    buildProgress: graphBuildProgress,
-    buildRequest: (force?: boolean) => vscodeApi?.postMessage({ type: 'graph-build-request', force }),
-    browseRequest: (requestId: string, filter: { type?: string; tag?: string; search?: string }, page = 0, pageSize = 50) =>
-      vscodeApi?.postMessage({ type: 'graph-browse-request', requestId, filter, page, pageSize }),
-    nodeDetailsRequest: (requestId: string, nodeId: string) =>
-      vscodeApi?.postMessage({ type: 'graph-node-details-request', requestId, nodeId }),
-    revealInEditor: (filePath: string, line?: number) =>
-      vscodeApi?.postMessage({ type: 'graph-reveal-in-editor', filePath, line }),
-  }), [graphStats, graphBrowseResult, graphNodeDetails, graphBuildProgress]);
-
-  // Refresh browse on filter change (Phase 8.5)
-  useEffect(() => {
-    if (!vscodeApi) return;
-    const requestId = `browse-${Date.now()}`;
-    vscodeApi.postMessage({ type: 'graph-browse-request', requestId, filter: graphFilter, page: 0, pageSize: 200 });
-  }, [graphFilter, vscodeApi]);
-
-  // Pre-build the Project Graph section for the Knowledge tab (Phase 8.5).
-  // Wrapped in CanvasErrorBoundary inside the section so a Pixi mount crash
-  // doesn't take down the rest of the Knowledge tab.
-  const projectGraphSection = useMemo(() => {
-    const nodes = (graphBrowseResult?.nodes ?? []) as import('@event-horizon/ui').GraphNodeData[];
-    const edges = (graphBrowseResult?.edges ?? []) as import('@event-horizon/ui').GraphEdgeData[];
-    const details = graphNodeDetails && graphNodeDetails.node
-      ? graphNodeDetails as unknown as import('@event-horizon/ui').NodeDetails
-      : null;
-    return (
-      <ProjectGraphSection
-        stats={graphStats}
-        buildProgress={graphBuildProgress}
-        nodes={nodes}
-        edges={edges}
-        filter={graphFilter}
-        selectedNodeDetails={details}
-        onFilterChange={setGraphFilter}
-        onBuild={(force) => graphApi.buildRequest(force)}
-        onNodeSelect={(nodeId) => {
-          if (!nodeId) {
-            setGraphNodeDetails(null);
-            return;
-          }
-          graphApi.nodeDetailsRequest(`details-${Date.now()}`, nodeId);
-        }}
-        onRevealInEditor={graphApi.revealInEditor}
-      />
-    );
-  }, [graphStats, graphBuildProgress, graphBrowseResult, graphNodeDetails, graphFilter, graphApi]);
 
   // ── Sync selected agent data ──
   useEffect(() => {
@@ -806,8 +744,7 @@ function App() {
           onViewExecution={(taskId, agentId, claimTime, completeTime) => vscodeApi?.postMessage({ type: 'request-task-execution', taskId, agentId, claimTime, completeTime })}
           taskExecution={taskExecutionEvents as { taskId: string; events: import('@event-horizon/ui').TaskExecutionEvent[] } | null}
           onCloseExecution={() => setTaskExecutionEvents(null)}
-          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })}
-          projectGraphSection={projectGraphSection} />
+          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
       )}
 
       <AchievementToasts />
