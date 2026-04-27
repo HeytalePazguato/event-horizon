@@ -303,7 +303,7 @@ function App() {
   }), [graphStats, graphBrowseResult, graphNodeDetails, graphBuildProgress]);
 
   // Refresh browse on filter change (Phase 8.5)
-  React.useEffect(() => {
+  useEffect(() => {
     if (!vscodeApi) return;
     const requestId = `browse-${Date.now()}`;
     vscodeApi.postMessage({ type: 'graph-browse-request', requestId, filter: graphFilter, page: 0, pageSize: 200 });
