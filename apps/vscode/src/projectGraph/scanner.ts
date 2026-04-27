@@ -57,9 +57,13 @@ export class ProjectGraphScanner {
 
   async scanWorkspace(
     progress?: vscode.Progress<{ message?: string; increment?: number }>,
-    opts?: { force?: boolean },
+    opts?: { force?: boolean; clearFirst?: boolean },
   ): Promise<ScanSummary> {
     const start = Date.now();
+    if (opts?.clearFirst) {
+      // Wipe all rows so a polluted graph (e.g. wrong workspace folder) gets reset.
+      this.store.clearAll();
+    }
     let filesProcessed = 0;
     let filesSkipped = 0;
     let nodesCreated = 0;
@@ -67,9 +71,14 @@ export class ProjectGraphScanner {
     let firstError: string | undefined;
     const skipReasons = { hashMatch: 0, noExtractor: 0, notCommitted: 0, mdDisabled: 0, error: 0 };
 
-    // Walk the workspace via Node fs — more reliable than vscode.workspace.findFiles,
-    // which has returned 0 results inconsistently from the MCP-server context.
-    const allFiles = await walkDir(this.opts.workspaceFolder);
+    // Resolve the workspace at scan time, not at construction time — at extension
+    // activation vscode.workspace.workspaceFolders may not yet be populated, so the
+    // construction-time value can fall back to process.cwd() which (in dev hosts and
+    // packaged installs) points at VS Code's own install dir, not the user's project.
+    const liveFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const root = liveFolder ?? this.opts.workspaceFolder;
+
+    const allFiles = await walkDir(root);
     const matched = allFiles.filter((p) => {
       const ext = path.extname(p).toLowerCase();
       return CODE_EXTENSIONS.has(ext) || MD_EXTENSIONS.has(ext);

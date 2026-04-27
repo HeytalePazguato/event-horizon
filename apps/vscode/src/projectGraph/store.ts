@@ -413,6 +413,20 @@ export class ProjectGraphStore {
     return { nodes, total };
   }
 
+  /** Drop every row from every graph table. Used by force rebuilds to recover
+   *  from polluted scans (e.g. wrong workspace folder). FTS5 rows are removed
+   *  via the special 'delete-all' command when available. */
+  clearAll(): void {
+    this.db.run(`DELETE FROM graph_nodes`);
+    this.db.run(`DELETE FROM graph_edges`);
+    this.db.run(`DELETE FROM graph_file_state`);
+    if (this.ftsAvailable) {
+      try {
+        this.db.run(`INSERT INTO graph_nodes_fts(graph_nodes_fts) VALUES('delete-all')`);
+      } catch { /* FTS rebuild on next insert */ }
+    }
+  }
+
   deleteNode(id: string): void {
     const existing = this.readFtsRowByNodeId(id);
     if (existing) this.deleteFtsRow(existing);

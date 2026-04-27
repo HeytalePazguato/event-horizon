@@ -2175,7 +2175,9 @@ export class McpServer {
           return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
         }
         const force = typeof args.force === 'boolean' ? args.force : false;
-        const result = await projectGraphScanner.scanWorkspace(undefined, { force });
+        // force=true also wipes the existing graph so a previously-polluted scan
+        // (wrong workspace folder, mid-broken extractor) can't lurk via hash matches.
+        const result = await projectGraphScanner.scanWorkspace(undefined, { force, clearFirst: force });
         return result;
       }
 
