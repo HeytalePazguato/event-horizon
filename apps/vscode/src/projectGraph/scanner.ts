@@ -58,16 +58,18 @@ export class ProjectGraphScanner {
     let nodesCreated = 0;
     let edgesCreated = 0;
 
-    const uris = await vscode.workspace.findFiles(
-      '**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,md,mdx}',
-      '**/node_modules/**',
-    );
+    // Walk the workspace via Node fs — more reliable than vscode.workspace.findFiles,
+    // which has returned 0 results inconsistently from the MCP-server context.
+    const allFiles = await walkDir(this.opts.workspaceFolder);
+    const matched = allFiles.filter((p) => {
+      const ext = path.extname(p).toLowerCase();
+      return CODE_EXTENSIONS.has(ext) || MD_EXTENSIONS.has(ext);
+    });
 
-    const capped = uris.slice(0, this.opts.maxFiles);
+    const capped = matched.slice(0, this.opts.maxFiles);
     const increment = capped.length > 0 ? 100 / capped.length : 0;
 
-    for (const uri of capped) {
-      const filePath = uri.fsPath;
+    for (const filePath of capped) {
       const ext = path.extname(filePath).toLowerCase();
 
       if (MD_EXTENSIONS.has(ext) && !this.opts.includeMarkdown) {
@@ -166,4 +168,39 @@ export class ProjectGraphScanner {
 
     return null;
   }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'out', 'build', 'webview-dist',
+  '.next', '.turbo', '.cache', 'coverage', '.vscode-test',
+]);
+
+async function walkDir(root: string): Promise<string[]> {
+  const out: string[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') && entry.name !== '.github') {
+        // skip dotfiles/dotdirs except .github (workflows)
+        continue;
+      }
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        await walk(path.join(dir, entry.name));
+      } else if (entry.isFile()) {
+        out.push(path.join(dir, entry.name));
+      }
+    }
+  }
+
+  await walk(root);
+  return out;
 }

@@ -26,6 +26,7 @@ import { CostInsightsPanel } from './panels/CostInsightsPanel.js';
 import type { CostInsightsData } from './panels/CostInsightsPanel.js';
 type OpsTab = 'overview' | 'activity' | 'files' | 'skills' | 'plan' | 'roles' | 'knowledge' | 'costs';
 type ActivityView = 'timeline' | 'traces' | 'logs';
+type KnowledgeView = 'entries' | 'graph';
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   padding: '6px 16px',
@@ -113,6 +114,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
 export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, heartbeatStatuses = {}, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution, projectGraphSection }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
+  const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>('entries');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
   const toggleViewMode = useCommandCenterStore((s) => s.toggleViewMode);
   const fileLockingEnabled = useCommandCenterStore((s) => s.fileLockingEnabled);
@@ -300,9 +302,35 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} contextLayers={contextLayers} onAddToSharedKnowledge={onAddToSharedKnowledge} />
             )}
             {activeTab === 'knowledge' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-                {projectGraphSection ?? null}
-                <KnowledgePanel workspace={knowledgeWorkspace} plan={knowledgePlan} planName={knowledgePlanName} onAdd={onKnowledgeAdd ?? (() => {})} onEdit={onKnowledgeEdit ?? (() => {})} onDelete={onKnowledgeDelete ?? (() => {})} />
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+                {/* Knowledge sub-toggle */}
+                <div style={{ display: 'flex', gap: 0, flexShrink: 0, padding: '8px 16px 0', background: 'rgba(8,16,10,0.5)' }}>
+                  {([
+                    { id: 'entries' as KnowledgeView, label: 'Entries' },
+                    { id: 'graph' as KnowledgeView, label: 'Project Graph' },
+                  ]).map((v) => (
+                    <button key={v.id} type="button" onClick={() => setKnowledgeView(v.id)} style={{
+                      padding: '4px 12px', border: 'none', fontSize: 11, fontFamily: 'Consolas, monospace', cursor: 'pointer',
+                      background: knowledgeView === v.id ? 'rgba(30,70,45,0.4)' : 'transparent',
+                      color: knowledgeView === v.id ? '#90d898' : '#4a7a58',
+                      borderBottom: knowledgeView === v.id ? '2px solid #40a060' : '2px solid transparent',
+                      fontWeight: knowledgeView === v.id ? 600 : 400,
+                    }}>{v.label}</button>
+                  ))}
+                </div>
+                {/* Knowledge content */}
+                <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                  {knowledgeView === 'entries' && (
+                    <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
+                      <KnowledgePanel workspace={knowledgeWorkspace} plan={knowledgePlan} planName={knowledgePlanName} onAdd={onKnowledgeAdd ?? (() => {})} onEdit={onKnowledgeEdit ?? (() => {})} onDelete={onKnowledgeDelete ?? (() => {})} />
+                    </div>
+                  )}
+                  {knowledgeView === 'graph' && (
+                    <div style={{ height: '100%', boxSizing: 'border-box' }}>
+                      {projectGraphSection ?? <div style={{ padding: 16, color: '#557799', fontFamily: 'monospace', fontSize: 11 }}>Project graph not wired.</div>}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
