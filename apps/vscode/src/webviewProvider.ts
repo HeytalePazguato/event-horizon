@@ -746,6 +746,8 @@ function wireUniverseWebview(
         } catch { /* scan failed */ }
         const stats = store.getStats();
         void webview.postMessage({ type: 'graph-stats-update', stats: { ...stats, lastBuildAt: Date.now() } });
+        // Signal completion so the UI clears the "Building..." state.
+        void webview.postMessage({ type: 'graph-build-progress', done: true });
       })();
     } else if (msg?.type === 'graph-browse-request') {
       void (async () => {

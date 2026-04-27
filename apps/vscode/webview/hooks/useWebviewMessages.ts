@@ -327,7 +327,12 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       if (msg?.type === 'graph-build-progress') {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = msg as any;
-        depsRef.current.setGraphBuildProgress?.(data ?? null);
+        // `done: true` clears the build state so the UI exits "Building...".
+        if (data && data.done) {
+          depsRef.current.setGraphBuildProgress?.(null);
+        } else {
+          depsRef.current.setGraphBuildProgress?.(data ?? null);
+        }
         return;
       }
       if (msg?.type === 'mcp-servers-update') {
