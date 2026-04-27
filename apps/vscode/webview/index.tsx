@@ -309,8 +309,12 @@ function App() {
     vscodeApi.postMessage({ type: 'graph-browse-request', requestId, filter: graphFilter, page: 0, pageSize: 200 });
   }, [graphFilter, vscodeApi]);
 
-  // Pre-build the Project Graph section for the Knowledge tab (Phase 8.5)
-  const projectGraphSection = useMemo(() => {
+  // Pre-build the Project Graph section for the Knowledge tab (Phase 8.5).
+  // Mount currently DISABLED — the PixiJS canvas crashes on Knowledge tab open
+  // (Cannot read properties of null (reading 'remove')). Re-enable in a proper
+  // dev session after diagnosing the mount lifecycle in a running webview.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _projectGraphSection = useMemo(() => {
     const nodes = (graphBrowseResult?.nodes ?? []) as import('@event-horizon/ui').GraphNodeData[];
     const edges = (graphBrowseResult?.edges ?? []) as import('@event-horizon/ui').GraphEdgeData[];
     const details = graphNodeDetails && graphNodeDetails.node
@@ -804,8 +808,7 @@ function App() {
           onViewExecution={(taskId, agentId, claimTime, completeTime) => vscodeApi?.postMessage({ type: 'request-task-execution', taskId, agentId, claimTime, completeTime })}
           taskExecution={taskExecutionEvents as { taskId: string; events: import('@event-horizon/ui').TaskExecutionEvent[] } | null}
           onCloseExecution={() => setTaskExecutionEvents(null)}
-          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })}
-          projectGraphSection={projectGraphSection} />
+          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
       )}
 
       <AchievementToasts />
