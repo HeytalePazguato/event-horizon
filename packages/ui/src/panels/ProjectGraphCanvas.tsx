@@ -111,7 +111,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
       })
       .then(() => {
         if (cancelled) {
-          app.destroy(true, { children: true, texture: true });
+          safeDestroy(app);
           return;
         }
         if (!hostRef.current) return;
@@ -142,7 +142,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
     return () => {
       cancelled = true;
       if (appRef.current) {
-        appRef.current.destroy(true, { children: true, texture: true });
+        safeDestroy(appRef.current);
         appRef.current = null;
       }
       worldRef.current = null;
@@ -158,9 +158,13 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
     const nodesC = nodesContainerRef.current;
     if (!edgesC || !nodesC) return;
 
-    edgesC.removeChildren();
+    try {
+      edgesC.removeChildren();
+    } catch { /* container already torn down */ }
     for (const [, view] of nodeViewsRef.current) {
-      view.container.destroy({ children: true });
+      try {
+        view.container.destroy({ children: true });
+      } catch { /* already destroyed */ }
     }
     nodeViewsRef.current.clear();
 
@@ -195,7 +199,11 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
   // Selection ring update
   useEffect(() => {
     for (const [id, view] of nodeViewsRef.current) {
-      const ring = view.container.getChildByName('selection-ring') as Graphics | null;
+      const ring = (
+        view.container.getChildByLabel
+          ? view.container.getChildByLabel('selection-ring')
+          : view.container.getChildByName?.('selection-ring')
+      ) as Graphics | null | undefined;
       if (ring) ring.visible = id === selectedNodeId;
     }
   }, [selectedNodeId]);
@@ -204,6 +212,24 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+function safeDestroy(app: Application): void {
+  try {
+    // Manually detach the canvas if it has a parent — Pixi v8's destroy
+    // can throw on already-detached canvases under React strict mode.
+    const canvas = app.canvas;
+    if (canvas && canvas.parentNode) {
+      try {
+        canvas.parentNode.removeChild(canvas);
+      } catch {
+        /* already detached */
+      }
+    }
+    app.destroy({ removeView: false }, { children: true, texture: true });
+  } catch {
+    /* destroy failed — leak is acceptable on tear-down */
+  }
+}
 
 function drawGrid(g: Graphics, w: number, h: number): void {
   for (let x = 0; x <= w; x += GRID_SPACING) {
