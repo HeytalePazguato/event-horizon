@@ -21,7 +21,7 @@ import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
 import type { TokenAnalyzer } from './tokenAnalyzer.js';
-import type { ProjectGraphStore } from './projectGraph/index.js';
+import type { ProjectGraphStore, GraphNodeType, RelationType } from './projectGraph/index.js';
 import type { ProjectGraphScanner } from './projectGraph/scanner.js';
 import type { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import { exec } from 'child_process';
@@ -2162,6 +2162,56 @@ export class McpServer {
 
         const result = await projectGraphScanner.scanWorkspace();
         return result;
+      }
+
+      case 'eh_query_graph': {
+        const engine = this.deps.projectGraphQueryEngine;
+        if (!engine) {
+          return { ok: false, message: 'No project graph yet — invoke /eh:optimize-context to build one.' };
+        }
+
+        const op = args.op as string;
+        const nodeId = args.node_id as string | undefined;
+        const sourceId = args.source_id as string | undefined;
+        const targetId = args.target_id as string | undefined;
+        const filePath = args.file_path as string | undefined;
+        const queryStr = args.query as string | undefined;
+        const depth = typeof args.depth === 'number' ? args.depth : undefined;
+        const limit = typeof args.limit === 'number' ? args.limit : undefined;
+        const sinceMs = typeof args.since_ms === 'number' ? args.since_ms : undefined;
+        const nodeType = args.type as GraphNodeType | undefined;
+        const tag = args.tag as 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS' | undefined;
+        const relationTypes = Array.isArray(args.relation_types)
+          ? (args.relation_types as RelationType[])
+          : undefined;
+        const direction = args.direction as 'in' | 'out' | 'both' | undefined;
+
+        switch (op) {
+          case 'search':
+            if (!queryStr) return { error: 'query is required for op=search' };
+            return engine.search(queryStr, { type: nodeType, tag, limit: limit ?? 25 });
+          case 'callers':
+            if (!nodeId) return { error: 'node_id is required for op=callers' };
+            return engine.callers(nodeId, depth ?? 2);
+          case 'callees':
+            if (!nodeId) return { error: 'node_id is required for op=callees' };
+            return engine.callees(nodeId, depth ?? 2);
+          case 'neighbors':
+            if (!nodeId) return { error: 'node_id is required for op=neighbors' };
+            return engine.neighbors(nodeId, { relationTypes, direction: direction ?? 'both', limit: limit ?? 50 });
+          case 'path':
+            if (!sourceId) return { error: 'source_id is required for op=path' };
+            if (!targetId) return { error: 'target_id is required for op=path' };
+            return engine.shortestPath(sourceId, targetId, { maxDepth: depth ?? 6, relationTypes });
+          case 'explain':
+            if (!nodeId) return { error: 'node_id is required for op=explain' };
+            return engine.explain(nodeId);
+          case 'recent_activity':
+            if (!filePath) return { error: 'file_path is required for op=recent_activity' };
+            return engine.recentActivity(filePath, sinceMs ?? Date.now() - 24 * 60 * 60 * 1000);
+          default:
+            return { error: `Unknown op: ${op}` };
+        }
       }
 
       default:
