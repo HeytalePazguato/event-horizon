@@ -16,10 +16,6 @@ function absFile(relPath: string): string {
   return path.join(WORKSPACE, relPath);
 }
 
-function moduleId(relPath: string): string {
-  return `module:${absFile(relPath)}`;
-}
-
 function makeEvent(overrides: Partial<AgentEvent> & Pick<AgentEvent, 'type'>): AgentEvent {
   return {
     id: `evt-${Math.random().toString(36).slice(2, 8)}`,
