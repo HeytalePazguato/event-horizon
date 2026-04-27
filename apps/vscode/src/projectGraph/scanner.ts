@@ -30,8 +30,8 @@ export interface ScanSummary {
   filesMatched: number;
   /** Per-cause skip counters so we can pinpoint why files weren't processed. */
   skipReasons?: { hashMatch: number; noExtractor: number; notCommitted: number; mdDisabled: number; error: number };
-  /** The directory the walker actually rooted at — surfaces wrong-folder bugs. */
-  rootScanned?: string;
+  /** The directory the walker actually rooted at — surfaces wrong-folder bugs. undefined when no workspace was open. */
+  rootScanned?: string | undefined;
   /** Whether vscode.workspace.workspaceFolders was non-empty at scan time. */
   workspaceFoldersAvailable?: boolean;
 }
@@ -75,12 +75,27 @@ export class ProjectGraphScanner {
     let firstError: string | undefined;
     const skipReasons = { hashMatch: 0, noExtractor: 0, notCommitted: 0, mdDisabled: 0, error: 0 };
 
-    // Resolve the workspace at scan time, not at construction time — at extension
-    // activation vscode.workspace.workspaceFolders may not yet be populated, so the
-    // construction-time value can fall back to process.cwd() which (in dev hosts and
-    // packaged installs) points at VS Code's own install dir, not the user's project.
+    // Resolve the workspace at scan time. If workspace.workspaceFolders is empty
+    // (the dev host window has no folder open, or VS Code launched on a single
+    // file), refuse to scan — falling back to process.cwd() lands on VS Code's
+    // own install directory in dev hosts and bundled extension dirs in packaged
+    // installs, indexing files that have nothing to do with the user's project.
     const liveFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const root = liveFolder ?? this.opts.workspaceFolder;
+    if (!liveFolder) {
+      return {
+        filesProcessed: 0,
+        filesSkipped: 0,
+        nodesCreated: 0,
+        edgesCreated: 0,
+        durationMs: Date.now() - start,
+        filesMatched: 0,
+        skipReasons,
+        rootScanned: undefined,
+        workspaceFoldersAvailable: false,
+        firstError: 'No workspace folder open. Use File → Open Folder in this window before running /eh:optimize-context.',
+      } as ScanSummary;
+    }
+    const root = liveFolder;
 
     const allFiles = await walkDir(root);
     const matched = allFiles.filter((p) => {
