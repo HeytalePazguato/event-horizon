@@ -28,6 +28,8 @@ export interface ScanSummary {
   firstError?: string;
   /** Files in the workspace that matched the glob; helps spot 'no files found' cases. */
   filesMatched: number;
+  /** Per-cause skip counters so we can pinpoint why files weren't processed. */
+  skipReasons?: { hashMatch: number; noExtractor: number; notCommitted: number; mdDisabled: number; error: number };
 }
 
 export class ProjectGraphScanner {
@@ -62,6 +64,7 @@ export class ProjectGraphScanner {
     let nodesCreated = 0;
     let edgesCreated = 0;
     let firstError: string | undefined;
+    const skipReasons = { hashMatch: 0, noExtractor: 0, notCommitted: 0, mdDisabled: 0, error: 0 };
 
     // Walk the workspace via Node fs — more reliable than vscode.workspace.findFiles,
     // which has returned 0 results inconsistently from the MCP-server context.
@@ -79,6 +82,7 @@ export class ProjectGraphScanner {
 
       if (MD_EXTENSIONS.has(ext) && !this.opts.includeMarkdown) {
         filesSkipped++;
+        skipReasons.mdDisabled++;
         progress?.report({ increment });
         continue;
       }
@@ -91,12 +95,14 @@ export class ProjectGraphScanner {
 
         if (this.store.getFileState(filePath)?.contentHash === contentHash) {
           filesSkipped++;
+          skipReasons.hashMatch++;
           continue;
         }
 
         const extracted = await this.runExtractor(filePath, ext, source);
         if (!extracted) {
           filesSkipped++;
+          skipReasons.noExtractor++;
           continue;
         }
 
@@ -108,9 +114,12 @@ export class ProjectGraphScanner {
           edgesCreated += edges.length;
         } else {
           filesSkipped++;
+          skipReasons.notCommitted++;
+          if (!firstError && result.reason) firstError = `${path.basename(filePath)}: ${result.reason}`;
         }
       } catch (err) {
         filesSkipped++;
+        skipReasons.error++;
         if (!firstError) firstError = `${path.basename(filePath)}: ${(err as Error).message ?? String(err)}`;
       }
     }
@@ -123,7 +132,8 @@ export class ProjectGraphScanner {
       durationMs: Date.now() - start,
       filesMatched: capped.length,
       firstError,
-    };
+      skipReasons,
+    } as ScanSummary;
   }
 
   async scanFile(filePath: string): Promise<{ committed: boolean; reason?: string }> {
