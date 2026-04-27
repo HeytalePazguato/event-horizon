@@ -2,7 +2,7 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [3.0.0] — TBD
+## [3.0.0] — 2026-04-27
 
 ### Added
 - **Project knowledge graph**: a queryable map of code structure, docs, agent activity, and shared knowledge, stored locally in EventHorizonDB. User-triggered only — nothing runs in the background.
@@ -11,6 +11,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Documentation and rationale extraction**: heuristic markdown parser captures headings, links to source files, and backticked identifier references. Code-comment extractor captures `// WHY:` / TODO / FIXME markers and JSDoc/TSDoc tags, attached to the function or class they describe. All inferred edges carry an EXTRACTED / INFERRED / AMBIGUOUS provenance tag and a confidence score.
 - **Four new MCP tools for graph queries**: `eh_query_graph` (search / callers / callees / neighbors / shortest path / explain / recent activity), `eh_extract_concepts` (agent-driven LLM extraction, opt-in via `eventHorizon.projectGraph.allowAgentLLMExtraction`), `eh_build_graph` (manual scan trigger), `eh_curate_context` (task-aware slice selection with token budget). EH itself never makes outbound model calls; agents that opt into extraction spend their own tokens.
 - **Agent activity and shared knowledge as graph data**: `task.complete` events spawn `agent_activity` nodes with `touched`/`authored` edges to the files they modified. Shared-knowledge entries become first-class graph nodes with `references` edges to the code and concepts they mention.
+- **Manual build commands**: `Event Horizon: Build Project Graph` and `Event Horizon: Rebuild Project Graph` in the Command Palette, alongside the `/eh:optimize-context` slash command. **No autoscan, no file watcher** — the graph builds only when you ask, by design.
+- **Project Graph canvas in the Knowledge tab**: a PixiJS visualization with rounded-square nodes (color-coded by type), straight edge connections, soft cyan glow halos on a dark blueprint grid. Force-directed initial layout. Click a node to open a 320 px detail drawer with callers, callees, references, rationale, recent agent activity, and a "Reveal in editor" button that jumps to the source file. Search box, type/tag filter pills, and Build/Refresh/Rebuild buttons in a header strip. Pan with mouse drag, zoom with wheel.
 
 ### Changed
 - **`eh:optimize-context` rewritten end to end**: now does three things on invocation — (1) builds or refreshes the project knowledge graph, (2) tiers instruction files (CLAUDE.md / .cursorrules / etc.) as before, (3) when invoked with a task description, hands the agent the relevant slice of the graph instead of a generic summary. `eh:research` and `eh:debug` query the graph before grep, with graceful fallback when no graph exists.
