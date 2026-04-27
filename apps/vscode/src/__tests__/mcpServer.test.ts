@@ -73,7 +73,7 @@ describe('tools/list', () => {
   it('returns all tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(47);
+    expect(result.tools).toHaveLength(48);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');

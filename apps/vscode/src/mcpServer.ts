@@ -722,6 +722,21 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['op'],
     },
   },
+  {
+    name: 'eh_curate_context',
+    description: 'Given a task description, return a token-budgeted slice of the project knowledge graph (code, docs, recent agent activity, knowledge entries) that is most relevant to that task. Use this BEFORE reading raw files. Requires a built project graph; if absent, returns a hint to invoke /eh:optimize-context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_description: { type: 'string' },
+        token_budget: { type: 'number', description: 'Approximate token cap for the returned subgraph. Default 4000.' },
+        seed_files: { type: 'array', items: { type: 'string' }, description: 'Optional explicit anchor files to seed expansion.' },
+        include_activity: { type: 'boolean', description: 'Include recent agent activity nodes (last 7 days). Default true.' },
+        include_knowledge: { type: 'boolean', description: 'Include shared-knowledge nodes referencing seeds. Default true.' },
+      },
+      required: ['task_description'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -2212,6 +2227,25 @@ export class McpServer {
           default:
             return { error: `Unknown op: ${op}` };
         }
+      }
+
+      case 'eh_curate_context': {
+        const engine = this.deps.projectGraphQueryEngine;
+        if (!engine) {
+          return { ok: false, message: 'No project graph yet — invoke /eh:optimize-context to build one.' };
+        }
+
+        const taskDescription = args.task_description as string | undefined;
+        if (!taskDescription) return { error: 'task_description is required' };
+
+        const tokenBudget = typeof args.token_budget === 'number' ? args.token_budget : 4000;
+        const seedFiles = Array.isArray(args.seed_files) ? (args.seed_files as string[]) : undefined;
+        const includeActivity = typeof args.include_activity === 'boolean' ? args.include_activity : undefined;
+        const includeKnowledge = typeof args.include_knowledge === 'boolean' ? args.include_knowledge : undefined;
+
+        const { ContextCurator } = await import('./projectGraph/contextCurator.js');
+        const curator = new ContextCurator(engine);
+        return curator.curate({ taskDescription, tokenBudget, seedFiles, includeActivity, includeKnowledge });
       }
 
       default:
