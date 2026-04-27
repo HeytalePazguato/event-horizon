@@ -786,6 +786,10 @@ function wireUniverseWebview(
           }
         }
         void webview.postMessage({ type: 'graph-browse-result', requestId, nodes, edges, total, page, pageSize });
+        // Also push current stats so the UI shows them without requiring a Build click —
+        // covers the case where the graph was already populated by a skill / MCP call.
+        const liveStats = store.getStats();
+        void webview.postMessage({ type: 'graph-stats-update', stats: { ...liveStats, lastBuildAt: liveStats.fileCount > 0 ? Date.now() : undefined } });
       })();
     } else if (msg?.type === 'graph-node-details-request') {
       void (async () => {
