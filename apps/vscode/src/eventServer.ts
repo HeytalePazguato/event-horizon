@@ -40,6 +40,9 @@ let callbacks: EventServerCallbacks | null = null;
 let activeBridge: EventBridge | null = null;
 const activeSockets = new Set<import('net').Socket>();
 
+let activeGraphStore: import('./projectGraph/index.js').ProjectGraphStore | null = null;
+let activeGraphScanner: import('./projectGraph/scanner.js').ProjectGraphScanner | null = null;
+
 // ── WebSocket state ──
 let wss: WebSocketServer | null = null;
 const wsClients = new Set<WebSocket>();
@@ -191,7 +194,32 @@ export function setEventSearchEngine(eventSearch: { search: (query: string, opts
 
 /** Wire the project graph store into the MCP server after the persistence DB is ready. */
 export function setProjectGraphStore(store: import('./projectGraph/index.js').ProjectGraphStore): void {
+  activeGraphStore = store;
   if (mcpServer) mcpServer.setProjectGraphStore(store);
+}
+
+/** Wire the project graph scanner into the MCP server so agents can trigger workspace scans. */
+export function setProjectGraphScanner(scanner: import('./projectGraph/scanner.js').ProjectGraphScanner): void {
+  activeGraphScanner = scanner;
+  if (mcpServer) mcpServer.setProjectGraphScanner(scanner);
+}
+
+export function getProjectGraphStore(): import('./projectGraph/index.js').ProjectGraphStore | null {
+  return activeGraphStore;
+}
+
+export function getProjectGraphScanner(): import('./projectGraph/scanner.js').ProjectGraphScanner | null {
+  return activeGraphScanner;
+}
+
+/** Wire the event bridge into the shared knowledge store for knowledge→graph node ingestion. */
+export function setEventBridgeOnSharedKnowledge(bridge: EventBridge | undefined): void {
+  sharedKnowledge.setEventBridge(bridge);
+}
+
+/** Set the active event bridge for event ingestion into the project graph. */
+export function setActiveBridge(bridge: EventBridge | undefined): void {
+  activeBridge = bridge ?? null;
 }
 
 export function setMcpOnEvent(onEvent: (event: import('@event-horizon/core').AgentEvent) => void): void {

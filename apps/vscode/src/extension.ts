@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphStore, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphStore, setProjectGraphScanner, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -26,6 +26,9 @@ import { ensureBundledSkills } from './bundledSkills';
 import { EventHorizonDB } from './persistence';
 import { deriveEventCategory } from '@event-horizon/core';
 import { CrossAgentCorrelator } from './crossAgentCorrelator';
+import { EventBridge } from './projectGraph/eventBridge';
+import { ProjectGraphScanner } from './projectGraph/scanner';
+import { treeSitterExtractor } from './projectGraph/treeSitterExtractor';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -241,8 +244,23 @@ export function activate(context: vscode.ExtensionContext): void {
         // Wire event search engine and project graph store into MCP server now that DB is ready
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
         setEventSearchEngine(eventSearchEngine);
-        setProjectGraphStore(ehDatabase.getProjectGraphStore());
+        const projectGraphStore = ehDatabase.getProjectGraphStore();
+        setProjectGraphStore(projectGraphStore);
         setMcpOnEvent(onAgentEvent);
+
+        // Create event bridge and wire into shared knowledge + event server for graph ingestion
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+        const eventBridge = new EventBridge(projectGraphStore, { workspaceFolder });
+        setEventBridgeOnSharedKnowledge(eventBridge);
+        setActiveBridge(eventBridge);
+
+        // Create and wire project graph scanner for agents to trigger workspace scans
+        const projectGraphScanner = new ProjectGraphScanner(
+          projectGraphStore,
+          { treeSitter: treeSitterExtractor },
+          { workspaceFolder, maxFiles: 5000, includeMarkdown: true },
+        );
+        setProjectGraphScanner(projectGraphScanner);
 
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {

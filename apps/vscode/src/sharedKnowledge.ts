@@ -8,6 +8,8 @@
  * Both humans and agents can read/write. All entries visible to all agents.
  */
 
+import type { EventBridge } from './projectGraph/eventBridge.js';
+
 export type KnowledgeScope = 'workspace' | 'plan';
 
 export type KnowledgeTier = 'L0' | 'L1' | 'L2';
@@ -40,6 +42,15 @@ export class SharedKnowledgeStore {
   private workspace = new Map<string, KnowledgeEntry>();
   private planEntries = new Map<string, Map<string, KnowledgeEntry>>(); // planId -> entries
   private changeListeners: Array<() => void> = [];
+  private eventBridge?: EventBridge;
+
+  constructor(eventBridge?: EventBridge) {
+    this.eventBridge = eventBridge;
+  }
+
+  setEventBridge(bridge: EventBridge | undefined): void {
+    this.eventBridge = bridge;
+  }
 
   onChange(listener: () => void): void {
     this.changeListeners.push(listener);
@@ -83,6 +94,7 @@ export class SharedKnowledgeStore {
       this.workspace.set(key, entry);
       this.enforceLimit(this.workspace, MAX_WORKSPACE_ENTRIES);
       this.notifyChange();
+      this.eventBridge?.ingestKnowledge(entry, 'write');
       return entry;
     }
 
@@ -109,6 +121,7 @@ export class SharedKnowledgeStore {
     planMap.set(key, entry);
     this.enforceLimit(planMap, MAX_PLAN_ENTRIES);
     this.notifyChange();
+    this.eventBridge?.ingestKnowledge(entry, 'write');
     return entry;
   }
 
@@ -187,6 +200,7 @@ export class SharedKnowledgeStore {
       if (callerAuthorId !== 'user' && entry.authorId !== callerAuthorId) return false;
       this.workspace.delete(key);
       this.notifyChange();
+      this.eventBridge?.ingestKnowledge(entry, 'delete');
       return true;
     }
 
@@ -198,6 +212,7 @@ export class SharedKnowledgeStore {
     if (callerAuthorId !== 'user' && entry.authorId !== callerAuthorId) return false;
     planMap.delete(key);
     this.notifyChange();
+    this.eventBridge?.ingestKnowledge(entry, 'delete');
     return true;
   }
 

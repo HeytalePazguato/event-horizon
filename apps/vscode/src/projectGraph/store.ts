@@ -384,6 +384,27 @@ export class ProjectGraphStore {
     return { nodeCount, edgeCount, fileCount };
   }
 
+  listNodes(opts: { type?: GraphNodeType; tag?: GraphTag; offset: number; limit: number }): { nodes: GraphNode[]; total: number } {
+    const conditions: string[] = [];
+    const params: SqlValue[] = [];
+    if (opts.type) { conditions.push('type = ?'); params.push(opts.type); }
+    if (opts.tag) { conditions.push('tag = ?'); params.push(opts.tag); }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countStmt = this.db.prepare(`SELECT COUNT(*) as c FROM graph_nodes ${where}`);
+    if (params.length > 0) countStmt.bind(params);
+    const countFound = countStmt.step();
+    const total = countFound ? ((countStmt.getAsObject()['c'] as number) ?? 0) : 0;
+    countStmt.free();
+
+    const stmt = this.db.prepare(`SELECT * FROM graph_nodes ${where} ORDER BY created_at ASC LIMIT ? OFFSET ?`);
+    stmt.bind([...params, opts.limit, opts.offset]);
+    const nodes: GraphNode[] = [];
+    while (stmt.step()) nodes.push(rowToNode(stmt.getAsObject()));
+    stmt.free();
+    return { nodes, total };
+  }
+
   deleteNode(id: string): void {
     const existing = this.readFtsRowByNodeId(id);
     if (existing) this.deleteFtsRow(existing);

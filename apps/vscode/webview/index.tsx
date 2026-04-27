@@ -189,6 +189,10 @@ function App() {
   const [persistedSearchResults, setPersistedSearchResults] = useState<import('@event-horizon/ui').PersistedSearchResult[] | null>(null);
   const [taskExecutionEvents, setTaskExecutionEvents] = useState<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>(null);
   const [wormholes, setWormholes] = useState<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>([]);
+  const [graphStats, setGraphStats] = useState<{ nodeCount: number; edgeCount: number; fileCount: number; lastBuildAt?: number } | null>(null);
+  const [graphBrowseResult, setGraphBrowseResult] = useState<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number } | null>(null);
+  const [graphNodeDetails, setGraphNodeDetails] = useState<{ requestId: string; node: unknown | null; in: unknown[]; out: unknown[]; rationale: unknown[]; recentActivity: unknown[] } | null>(null);
+  const [graphBuildProgress, setGraphBuildProgress] = useState<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>(null);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -254,6 +258,10 @@ function App() {
     setPersistedSearchResults,
     setTaskExecutionEvents,
     setWormholes,
+    setGraphStats,
+    setGraphBrowseResult,
+    setGraphNodeDetails,
+    setGraphBuildProgress,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -277,6 +285,22 @@ function App() {
 
   useSettingsPersistence(vscodeApi);
   useSpawnBeamPruner(spawnBeams, setSpawnBeams);
+
+  // ── Project graph state + senders (consumed by 8.2/8.3/8.4 panels) ──
+  const graphApi = useMemo(() => ({
+    stats: graphStats,
+    browseResult: graphBrowseResult,
+    nodeDetails: graphNodeDetails,
+    buildProgress: graphBuildProgress,
+    buildRequest: (force?: boolean) => vscodeApi?.postMessage({ type: 'graph-build-request', force }),
+    browseRequest: (requestId: string, filter: { type?: string; tag?: string; search?: string }, page = 0, pageSize = 50) =>
+      vscodeApi?.postMessage({ type: 'graph-browse-request', requestId, filter, page, pageSize }),
+    nodeDetailsRequest: (requestId: string, nodeId: string) =>
+      vscodeApi?.postMessage({ type: 'graph-node-details-request', requestId, nodeId }),
+    revealInEditor: (filePath: string, line?: number) =>
+      vscodeApi?.postMessage({ type: 'graph-reveal-in-editor', filePath, line }),
+  }), [graphStats, graphBrowseResult, graphNodeDetails, graphBuildProgress]);
+  void graphApi; // referenced by upcoming graph panels (8.2/8.3/8.4)
 
   // ── Sync selected agent data ──
   useEffect(() => {

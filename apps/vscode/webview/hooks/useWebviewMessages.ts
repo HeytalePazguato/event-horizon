@@ -62,6 +62,10 @@ export interface WebviewMessageDeps {
   setPersistedSearchResults?: React.Dispatch<React.SetStateAction<import('@event-horizon/ui').PersistedSearchResult[] | null>>;
   setTaskExecutionEvents?: React.Dispatch<React.SetStateAction<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>>;
   setWormholes?: React.Dispatch<React.SetStateAction<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>>;
+  setGraphStats?: React.Dispatch<React.SetStateAction<{ nodeCount: number; edgeCount: number; fileCount: number; lastBuildAt?: number } | null>>;
+  setGraphBrowseResult?: React.Dispatch<React.SetStateAction<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number } | null>>;
+  setGraphNodeDetails?: React.Dispatch<React.SetStateAction<{ requestId: string; node: unknown | null; in: unknown[]; out: unknown[]; rationale: unknown[]; recentActivity: unknown[] } | null>>;
+  setGraphBuildProgress?: React.Dispatch<React.SetStateAction<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>>;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -300,6 +304,30 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
             return [...demoOnly, ...ws];
           });
         }
+        return;
+      }
+      if (msg?.type === 'graph-stats-update') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        depsRef.current.setGraphStats?.(data.stats ?? null);
+        return;
+      }
+      if (msg?.type === 'graph-browse-result') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        depsRef.current.setGraphBrowseResult?.(data ?? null);
+        return;
+      }
+      if (msg?.type === 'graph-node-details') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        depsRef.current.setGraphNodeDetails?.(data ?? null);
+        return;
+      }
+      if (msg?.type === 'graph-build-progress') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = msg as any;
+        depsRef.current.setGraphBuildProgress?.(data ?? null);
         return;
       }
       if (msg?.type === 'mcp-servers-update') {

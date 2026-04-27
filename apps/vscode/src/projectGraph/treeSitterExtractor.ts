@@ -61,7 +61,7 @@ function locateWasm(file: string): string {
   return file;
 }
 
-function detectLanguage(filePath: string): TreeSitterLanguageKey | null {
+export function detectLanguage(filePath: string): TreeSitterLanguageKey | null {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.ts' || ext === '.mts' || ext === '.cts') return 'typescript';
   if (ext === '.tsx') return 'tsx';
@@ -142,7 +142,7 @@ export class TreeSitterExtractor {
     return lang;
   }
 
-  private async getParser(key: TreeSitterLanguageKey): Promise<TSParser> {
+  async getParser(key: TreeSitterLanguageKey): Promise<TSParser> {
     const cached = this.parsers.get(key);
     if (cached) return cached;
     const mod = await this.loadModule();

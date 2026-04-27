@@ -7,6 +7,9 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Added
 - **Project knowledge graph**: a queryable map of code structure, docs, agent activity, and shared knowledge, stored locally in EventHorizonDB. User-triggered only — nothing runs in the background.
 - **Project graph foundation**: SQLite tables (`graph_nodes`, `graph_edges`, `graph_file_state`) plus FTS5 full-text search inside the existing EventHorizonDB. Shrink-guard refuses extractor regressions that would delete more than 50% of a file's prior nodes.
+- **Code structure extraction**: tree-sitter (WASM) extractor for TypeScript, JavaScript, and TSX. Captures functions, classes, interfaces, imports, calls, extends/implements as graph nodes and edges. SHA256 hash-based incremental updates skip unchanged files. Manual workspace scanner with progress reporting.
+- **Documentation and rationale extraction**: heuristic markdown parser captures headings, links to source files, and backticked identifier references. Code-comment extractor captures `// WHY:` / TODO / FIXME markers and JSDoc/TSDoc tags, attached to the function or class they describe. All inferred edges carry an EXTRACTED / INFERRED / AMBIGUOUS provenance tag and a confidence score.
+- **Four new MCP tools for graph queries**: `eh_query_graph` (search / callers / callees / neighbors / shortest path / explain / recent activity), `eh_extract_concepts` (agent-driven LLM extraction, opt-in via `eventHorizon.projectGraph.allowAgentLLMExtraction`), `eh_build_graph` (manual scan trigger), `eh_curate_context` (task-aware slice selection with token budget). EH itself never makes outbound model calls; agents that opt into extraction spend their own tokens.
 
 ### Changed
 _(filled in as phases ship)_

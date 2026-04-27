@@ -22,6 +22,8 @@ import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
 import type { TokenAnalyzer } from './tokenAnalyzer.js';
 import type { ProjectGraphStore } from './projectGraph/index.js';
+import type { ProjectGraphScanner } from './projectGraph/scanner.js';
+import type { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import { exec } from 'child_process';
 import { createHash } from 'crypto';
 
@@ -683,6 +685,43 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['source_file', 'nodes'],
     },
   },
+  {
+    name: 'eh_build_graph',
+    description: 'Trigger a workspace scan to build or refresh the project knowledge graph. Call this only when the user has explicitly invoked /eh:optimize-context or otherwise asked you to (re)build the graph. Returns scan stats (filesProcessed, filesSkipped, nodesCreated, edgesCreated, durationMs).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        force: {
+          type: 'boolean',
+          description: 'When true, ignore the per-file SHA256 hash and rescan every file. Default false.'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'eh_query_graph',
+    description: 'Query the project knowledge graph. Pick an op: search (FTS by query), callers (incoming calls edges), callees (outgoing calls edges), neighbors (1-hop), path (shortest path between two nodes), explain (full detail of a node), recent_activity (agents who touched a file recently). Returns structured graph data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['search', 'callers', 'callees', 'neighbors', 'path', 'explain', 'recent_activity'] },
+        query: { type: 'string' },
+        node_id: { type: 'string' },
+        source_id: { type: 'string' },
+        target_id: { type: 'string' },
+        file_path: { type: 'string' },
+        since_ms: { type: 'number' },
+        depth: { type: 'number' },
+        type: { type: 'string' },
+        tag: { type: 'string', enum: ['EXTRACTED', 'INFERRED', 'AMBIGUOUS'] },
+        limit: { type: 'number' },
+        relation_types: { type: 'array', items: { type: 'string' } },
+        direction: { type: 'string', enum: ['in', 'out', 'both'] },
+      },
+      required: ['op'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -745,6 +784,8 @@ export interface McpServerDeps {
   tokenAnalyzer?: TokenAnalyzer;
   eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
   projectGraphStore?: ProjectGraphStore;
+  projectGraphScanner?: ProjectGraphScanner;
+  projectGraphQueryEngine?: GraphQueryEngine;
   isAgentExtractionEnabled?: () => boolean;
   /** Callback to inject events into the main event pipeline (for synthetic terminate, etc.). */
   onEvent?: (event: AgentEvent) => void;
@@ -764,6 +805,14 @@ export class McpServer {
 
   setProjectGraphStore(store: ProjectGraphStore): void {
     this.deps.projectGraphStore = store;
+  }
+
+  setProjectGraphScanner(scanner: ProjectGraphScanner): void {
+    this.deps.projectGraphScanner = scanner;
+  }
+
+  setProjectGraphQueryEngine(engine: GraphQueryEngine): void {
+    this.deps.projectGraphQueryEngine = engine;
   }
 
   setOnEvent(onEvent: (event: AgentEvent) => void): void {
@@ -2103,6 +2152,16 @@ export class McpServer {
           inserted: { nodes: nodesInserted, edges: edgesInserted },
           dropped: { nodes: nodesDropped, edges: edgesDropped },
         };
+      }
+
+      case 'eh_build_graph': {
+        const { projectGraphScanner } = this.deps;
+        if (!projectGraphScanner) {
+          return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
+        }
+
+        const result = await projectGraphScanner.scanWorkspace();
+        return result;
       }
 
       default:
