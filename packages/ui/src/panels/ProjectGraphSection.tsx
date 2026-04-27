@@ -5,9 +5,52 @@
  * Phase 8.5 of the Project Graph plan.
  */
 
-import React, { useState } from 'react';
+import React, { Component, useState, type ReactNode } from 'react';
 import { ProjectGraphCanvas } from './ProjectGraphCanvas.js';
 import type { GraphNodeData, GraphEdgeData } from './ProjectGraphCanvas.js';
+
+/**
+ * Local error boundary so a Pixi mount crash in ProjectGraphCanvas doesn't
+ * take down the surrounding Knowledge tab.
+ */
+class CanvasErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(e: unknown): { error: string } {
+    return { error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) };
+  }
+  componentDidCatch(error: unknown): void {
+    // eslint-disable-next-line no-console
+    console.warn('[Project Graph canvas crashed]', error);
+  }
+  render(): ReactNode {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            padding: 18,
+            color: '#ff8866',
+            background: 'rgba(40, 14, 14, 0.5)',
+            border: '1px dashed rgba(255, 102, 102, 0.4)',
+            margin: 12,
+            borderRadius: 4,
+            fontSize: 11,
+            fontFamily: 'monospace',
+          }}
+        >
+          <div style={{ fontWeight: 'bold', marginBottom: 6 }}>Graph canvas failed to mount</div>
+          <div style={{ color: '#ffaa88' }}>{this.state.error}</div>
+          <div style={{ marginTop: 8, color: '#88aacc' }}>
+            The rest of the Knowledge tab still works. Open DevTools (Help → Toggle Developer Tools) and reload the panel to see the full stack trace.
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { ProjectGraphControls } from './ProjectGraphControls.js';
 import type { GraphStats, GraphFilter, GraphBuildProgress } from './ProjectGraphControls.js';
 import { ProjectGraphDetailDrawer } from './ProjectGraphDetailDrawer.js';
@@ -99,14 +142,16 @@ export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
             onBuild={onBuild}
           />
           <div style={styles.body}>
-            <ProjectGraphCanvas
-              nodes={nodes}
-              edges={edges}
-              selectedNodeId={selectedNodeDetails?.node.id ?? null}
-              onNodeSelect={onNodeSelect}
-              width={width}
-              height={height}
-            />
+            <CanvasErrorBoundary>
+              <ProjectGraphCanvas
+                nodes={nodes}
+                edges={edges}
+                selectedNodeId={selectedNodeDetails?.node.id ?? null}
+                onNodeSelect={onNodeSelect}
+                width={width}
+                height={height}
+              />
+            </CanvasErrorBoundary>
             {selectedNodeDetails && (
               <ProjectGraphDetailDrawer
                 details={selectedNodeDetails}
