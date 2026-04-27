@@ -42,6 +42,7 @@ const activeSockets = new Set<import('net').Socket>();
 
 let activeGraphStore: import('./projectGraph/index.js').ProjectGraphStore | null = null;
 let activeGraphScanner: import('./projectGraph/scanner.js').ProjectGraphScanner | null = null;
+let activeGraphQueryEngine: import('./projectGraph/queryEngine.js').GraphQueryEngine | null = null;
 
 // ── WebSocket state ──
 let wss: WebSocketServer | null = null;
@@ -202,6 +203,16 @@ export function setProjectGraphStore(store: import('./projectGraph/index.js').Pr
 export function setProjectGraphScanner(scanner: import('./projectGraph/scanner.js').ProjectGraphScanner): void {
   activeGraphScanner = scanner;
   if (mcpServer) mcpServer.setProjectGraphScanner(scanner);
+}
+
+/** Wire the project graph query engine into the MCP server for eh_query_graph and eh_curate_context. */
+export function setProjectGraphQueryEngine(engine: import('./projectGraph/queryEngine.js').GraphQueryEngine): void {
+  activeGraphQueryEngine = engine;
+  if (mcpServer) mcpServer.setProjectGraphQueryEngine(engine);
+}
+
+export function getProjectGraphQueryEngine(): import('./projectGraph/queryEngine.js').GraphQueryEngine | null {
+  return activeGraphQueryEngine;
 }
 
 export function getProjectGraphStore(): import('./projectGraph/index.js').ProjectGraphStore | null {

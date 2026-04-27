@@ -384,6 +384,14 @@ export class ProjectGraphStore {
     return { nodeCount, edgeCount, fileCount };
   }
 
+  getTrackedFiles(): string[] {
+    const stmt = this.db.prepare(`SELECT source_file FROM graph_file_state`);
+    const files: string[] = [];
+    while (stmt.step()) files.push(stmt.getAsObject()['source_file'] as string);
+    stmt.free();
+    return files;
+  }
+
   listNodes(opts: { type?: GraphNodeType; tag?: GraphTag; offset: number; limit: number }): { nodes: GraphNode[]; total: number } {
     const conditions: string[] = [];
     const params: SqlValue[] = [];

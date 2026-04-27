@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphStore, setProjectGraphScanner, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphStore, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -29,6 +29,7 @@ import { CrossAgentCorrelator } from './crossAgentCorrelator';
 import { EventBridge } from './projectGraph/eventBridge';
 import { ProjectGraphScanner } from './projectGraph/scanner';
 import { treeSitterExtractor } from './projectGraph/treeSitterExtractor';
+import { GraphQueryEngine } from './projectGraph/queryEngine';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -261,6 +262,50 @@ export function activate(context: vscode.ExtensionContext): void {
           { workspaceFolder, maxFiles: 5000, includeMarkdown: true },
         );
         setProjectGraphScanner(projectGraphScanner);
+
+        // Create and wire project graph query engine for eh_query_graph / eh_curate_context
+        const graphQueryEngine = new GraphQueryEngine(projectGraphStore);
+        setProjectGraphQueryEngine(graphQueryEngine);
+
+        // Register project graph commands now that scanner and store are ready
+        context.subscriptions.push(
+          vscode.commands.registerCommand('eventHorizon.buildProjectGraph', () => {
+            void vscode.window.withProgress(
+              { location: vscode.ProgressLocation.Notification, title: 'Event Horizon: Building project graph…', cancellable: false },
+              async (progress) => {
+                try {
+                  const summary = await projectGraphScanner.scanWorkspace(progress);
+                  void vscode.window.showInformationMessage(
+                    `Event Horizon: Graph built — ${summary.filesProcessed} files, ${summary.nodesCreated} nodes (${summary.durationMs}ms)`,
+                  );
+                } catch (err) {
+                  void vscode.window.showErrorMessage(`Event Horizon: Graph build failed — ${String(err)}`);
+                }
+              },
+            );
+          }),
+        );
+
+        context.subscriptions.push(
+          vscode.commands.registerCommand('eventHorizon.rebuildProjectGraph', () => {
+            void vscode.window.withProgress(
+              { location: vscode.ProgressLocation.Notification, title: 'Event Horizon: Rebuilding project graph…', cancellable: false },
+              async (progress) => {
+                try {
+                  for (const file of projectGraphStore.getTrackedFiles()) {
+                    projectGraphStore.deleteFile(file);
+                  }
+                  const summary = await projectGraphScanner.scanWorkspace(progress);
+                  void vscode.window.showInformationMessage(
+                    `Event Horizon: Graph rebuilt — ${summary.filesProcessed} files, ${summary.nodesCreated} nodes (${summary.durationMs}ms)`,
+                  );
+                } catch (err) {
+                  void vscode.window.showErrorMessage(`Event Horizon: Graph rebuild failed — ${String(err)}`);
+                }
+              },
+            );
+          }),
+        );
 
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {
