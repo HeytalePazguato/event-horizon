@@ -30,6 +30,10 @@ export interface ScanSummary {
   filesMatched: number;
   /** Per-cause skip counters so we can pinpoint why files weren't processed. */
   skipReasons?: { hashMatch: number; noExtractor: number; notCommitted: number; mdDisabled: number; error: number };
+  /** The directory the walker actually rooted at — surfaces wrong-folder bugs. */
+  rootScanned?: string;
+  /** Whether vscode.workspace.workspaceFolders was non-empty at scan time. */
+  workspaceFoldersAvailable?: boolean;
 }
 
 export class ProjectGraphScanner {
@@ -143,6 +147,8 @@ export class ProjectGraphScanner {
       filesMatched: capped.length,
       firstError,
       skipReasons,
+      rootScanned: root,
+      workspaceFoldersAvailable: !!liveFolder,
     } as ScanSummary;
   }
 
