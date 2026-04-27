@@ -2174,8 +2174,8 @@ export class McpServer {
         if (!projectGraphScanner) {
           return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
         }
-
-        const result = await projectGraphScanner.scanWorkspace();
+        const force = typeof args.force === 'boolean' ? args.force : false;
+        const result = await projectGraphScanner.scanWorkspace(undefined, { force });
         return result;
       }
 

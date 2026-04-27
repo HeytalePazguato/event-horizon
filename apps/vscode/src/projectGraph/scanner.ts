@@ -57,6 +57,7 @@ export class ProjectGraphScanner {
 
   async scanWorkspace(
     progress?: vscode.Progress<{ message?: string; increment?: number }>,
+    opts?: { force?: boolean },
   ): Promise<ScanSummary> {
     const start = Date.now();
     let filesProcessed = 0;
@@ -93,7 +94,7 @@ export class ProjectGraphScanner {
         const source = await fs.promises.readFile(filePath, 'utf8');
         const contentHash = crypto.createHash('sha256').update(source).digest('hex');
 
-        if (this.store.getFileState(filePath)?.contentHash === contentHash) {
+        if (!opts?.force && this.store.getFileState(filePath)?.contentHash === contentHash) {
           filesSkipped++;
           skipReasons.hashMatch++;
           continue;

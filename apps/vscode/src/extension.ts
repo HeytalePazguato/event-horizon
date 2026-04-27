@@ -29,6 +29,7 @@ import { CrossAgentCorrelator } from './crossAgentCorrelator';
 import { EventBridge } from './projectGraph/eventBridge';
 import { ProjectGraphScanner } from './projectGraph/scanner';
 import { treeSitterExtractor } from './projectGraph/treeSitterExtractor';
+import { extractMarkdown } from './projectGraph/markdownExtractor';
 import { GraphQueryEngine } from './projectGraph/queryEngine';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
@@ -258,7 +259,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // Create and wire project graph scanner for agents to trigger workspace scans
         const projectGraphScanner = new ProjectGraphScanner(
           projectGraphStore,
-          { treeSitter: treeSitterExtractor },
+          { treeSitter: treeSitterExtractor, markdown: extractMarkdown },
           { workspaceFolder, maxFiles: 5000, includeMarkdown: true },
         );
         setProjectGraphScanner(projectGraphScanner);
