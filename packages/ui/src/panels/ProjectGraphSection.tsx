@@ -1,19 +1,16 @@
 /**
- * Project Graph Section — debug placeholder.
- *
- * The full implementation (Controls + Canvas + DetailDrawer) is temporarily
- * disabled while we isolate the source of the
- *   "Cannot read properties of null (reading 'remove')"
- * error in the webview. If this placeholder renders without error, the bug
- * is NOT in the section itself — it's somewhere else in the webview's graph
- * wiring (message handlers, browse-request effect, OperationsView prop pass).
+ * Project Graph Section — wraps controls + canvas + detail drawer for the
+ * Knowledge tab.
  *
  * Phase 8.5 of the Project Graph plan.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
+import { ProjectGraphCanvas } from './ProjectGraphCanvas.js';
 import type { GraphNodeData, GraphEdgeData } from './ProjectGraphCanvas.js';
+import { ProjectGraphControls } from './ProjectGraphControls.js';
 import type { GraphStats, GraphFilter, GraphBuildProgress } from './ProjectGraphControls.js';
+import { ProjectGraphDetailDrawer } from './ProjectGraphDetailDrawer.js';
 import type { NodeDetails } from './ProjectGraphDetailDrawer.js';
 
 export interface ProjectGraphSectionProps {
@@ -31,35 +28,83 @@ export interface ProjectGraphSectionProps {
   height?: number;
 }
 
-export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = (props) => {
-  // Reference all props so TS doesn't flag unused
-  void props.stats; void props.buildProgress; void props.nodes; void props.edges;
-  void props.filter; void props.selectedNodeDetails; void props.onFilterChange;
-  void props.onBuild; void props.onNodeSelect; void props.onRevealInEditor;
-  void props.height;
+export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
+  stats,
+  buildProgress,
+  nodes,
+  edges,
+  filter,
+  selectedNodeDetails,
+  onFilterChange,
+  onBuild,
+  onNodeSelect,
+  onRevealInEditor,
+  width = 720,
+  height = 460,
+}) => {
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div
       style={{
-        padding: 14,
-        marginBottom: 12,
-        color: '#88aacc',
+        background: 'rgba(10, 15, 24, 0.5)',
+        borderRadius: 4,
+        overflow: 'hidden',
         fontFamily: 'monospace',
         fontSize: 11,
-        background: 'rgba(20, 32, 44, 0.5)',
-        border: '1px solid rgba(68, 136, 187, 0.3)',
-        borderRadius: 4,
+        color: '#cce0ff',
+        border: '1px solid rgba(68, 136, 187, 0.25)',
+        marginBottom: 12,
       }}
     >
-      <div style={{ color: '#cce0ff', fontWeight: 'bold', marginBottom: 6 }}>
-        Project Graph (placeholder)
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '6px 10px',
+          background: 'rgba(20, 32, 44, 0.7)',
+          borderBottom: '1px solid rgba(68, 136, 187, 0.2)',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <span style={{ fontSize: 11, color: '#88aacc', textTransform: 'uppercase', letterSpacing: 1 }}>
+          Project Graph
+        </span>
+        <span style={{ color: '#88aacc' }}>{collapsed ? '▸' : '▾'}</span>
       </div>
-      <div style={{ color: '#557799' }}>
-        If this message renders, the Knowledge tab itself is fine. The actual graph
-        canvas / controls / drawer are temporarily disabled while a webview error
-        is being diagnosed. Build the graph via Command Palette → "Event Horizon:
-        Build Project Graph" or via <code style={{ color: '#88aacc' }}>/eh:optimize-context</code>.
-      </div>
+
+      {!collapsed ? (
+        <div>
+          <ProjectGraphControls
+            stats={stats}
+            buildProgress={buildProgress}
+            filter={filter}
+            onFilterChange={onFilterChange}
+            onBuild={onBuild}
+          />
+          <div style={{ position: 'relative' }}>
+            <ProjectGraphCanvas
+              nodes={nodes}
+              edges={edges}
+              selectedNodeId={selectedNodeDetails ? selectedNodeDetails.node.id : null}
+              onNodeSelect={onNodeSelect}
+              width={width}
+              height={height}
+            />
+            {selectedNodeDetails ? (
+              <ProjectGraphDetailDrawer
+                details={selectedNodeDetails}
+                onClose={() => onNodeSelect(null)}
+                onFocusNode={onNodeSelect}
+                onRevealInEditor={onRevealInEditor}
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

@@ -1,18 +1,21 @@
 /**
- * Project Graph Canvas — SVG visualization of the project knowledge graph.
+ * Project Graph Canvas — SVG visualization.
  *
- * SVG instead of PixiJS to avoid the canvas mount/destroy lifecycle issues
- * that plagued the v8 Pixi implementation under React strict-mode double-
- * mounts. SVG elements are plain DOM and React handles them naturally.
+ * Pure React + SVG. No useEffect, no refs, no addEventListener — every
+ * interaction is via JSX event props so React lifecycle handles it.
  *
- * Renders rounded-square nodes (type-colored, soft glow), straight edge
- * connections, force-directed layout, pan via drag, zoom via wheel, and
- * click-to-select.
+ * - Rounded-square nodes (96×64), type-colored, with soft glow halo
+ * - Straight edge connections, cyan, alpha 0.4
+ * - Force-directed layout (200 iterations) computed on render
+ * - Pan via mouse drag on background
+ * - Zoom via wheel (no preventDefault — can't with React's passive listeners,
+ *   but the zoom math still works)
+ * - Click selection ring (white)
  *
  * Phase 8.2 of the Project Graph plan.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -65,11 +68,6 @@ const DEFAULT_NODE_COLOR = '#aaaaaa';
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-interface NodePosition {
-  x: number;
-  y: number;
-}
-
 export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
   nodes,
   edges,
@@ -78,59 +76,20 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
   width = 800,
   height = 600,
 }) => {
-  const svgRef = useRef<SVGSVGElement | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
-  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const [drag, setDrag] = useState<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
 
   const positions = useMemo(
     () => layoutNodes(nodes, edges, width, height),
     [nodes, edges, width, height],
   );
 
-  // Wheel zoom
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      setZoom((z) => Math.max(0.25, Math.min(4, z * factor)));
-    };
-    svg.addEventListener('wheel', onWheel, { passive: false });
-    return () => {
-      svg.removeEventListener('wheel', onWheel);
-    };
-  }, []);
-
-  if (nodes.length === 0) {
-    return (
-      <div
-        style={{
-          width,
-          height,
-          background: '#0a0f18',
-          border: '1px solid rgba(68, 136, 187, 0.25)',
-          color: '#557799',
-          fontFamily: 'monospace',
-          fontSize: 12,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          textAlign: 'center',
-          padding: 24,
-        }}
-      >
-        Empty graph. Click <strong style={{ color: '#88aacc', margin: '0 4px' }}>Build</strong> in the controls above to scan the workspace.
-      </div>
-    );
-  }
-
   const transform = `translate(${pan.x}, ${pan.y}) scale(${zoom})`;
+  const isEmpty = nodes.length === 0;
 
   return (
     <svg
-      ref={svgRef}
       width={width}
       height={height}
       style={{
@@ -140,17 +99,24 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
         userSelect: 'none',
       }}
       onMouseDown={(e) => {
-        if (e.target === svgRef.current || (e.target as Element).tagName === 'rect' && (e.target as SVGRectElement).getAttribute('data-bg')) {
-          setDrag({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+        const target = e.target as Element;
+        // Only start panning when grabbing the background, not a node.
+        if (target.tagName === 'svg' || target.getAttribute('data-bg') === '1') {
+          setDrag({ startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y });
         }
       }}
       onMouseMove={(e) => {
-        if (drag) setPan({ x: e.clientX - drag.x, y: e.clientY - drag.y });
+        if (drag) {
+          setPan({ x: drag.panX + (e.clientX - drag.startX), y: drag.panY + (e.clientY - drag.startY) });
+        }
       }}
       onMouseUp={() => setDrag(null)}
       onMouseLeave={() => setDrag(null)}
+      onWheel={(e) => {
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        setZoom((z) => Math.max(0.25, Math.min(4, z * factor)));
+      }}
     >
-      {/* Background pattern (grid) */}
       <defs>
         <pattern id="graph-grid" width={GRID_SPACING} height={GRID_SPACING} patternUnits="userSpaceOnUse">
           <path
@@ -164,8 +130,20 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
       </defs>
       <rect data-bg="1" x={0} y={0} width={width} height={height} fill="url(#graph-grid)" />
 
+      {isEmpty && (
+        <text
+          x={width / 2}
+          y={height / 2}
+          fontFamily="monospace"
+          fontSize={12}
+          fill="#557799"
+          textAnchor="middle"
+        >
+          Empty graph. Click Build in the header to scan the workspace.
+        </text>
+      )}
+
       <g transform={transform}>
-        {/* Edges first */}
         {edges.map((edge) => {
           const a = positions.get(edge.sourceId);
           const b = positions.get(edge.targetId);
@@ -184,7 +162,6 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
           );
         })}
 
-        {/* Nodes */}
         {nodes.map((node) => {
           const pos = positions.get(node.id);
           if (!pos) return null;
@@ -198,10 +175,9 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
               style={{ cursor: 'pointer' }}
               onClick={(e) => {
                 e.stopPropagation();
-                onNodeSelect?.(node.id);
+                if (onNodeSelect) onNodeSelect(node.id);
               }}
             >
-              {/* Glow halo */}
               <rect
                 x={-NODE_W / 2 - 8}
                 y={-NODE_H / 2 - 8}
@@ -211,7 +187,6 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
                 fill={color}
                 opacity={0.15}
               />
-              {/* Body */}
               <rect
                 x={-NODE_W / 2}
                 y={-NODE_H / 2}
@@ -224,7 +199,6 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
                 strokeWidth={2}
                 strokeOpacity={0.85}
               />
-              {/* Selection ring */}
               {isSelected && (
                 <rect
                   x={-NODE_W / 2 - 4}
@@ -238,7 +212,6 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
                   strokeOpacity={0.85}
                 />
               )}
-              {/* Type label */}
               <text
                 x={0}
                 y={-6}
@@ -250,7 +223,6 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
               >
                 {node.type}
               </text>
-              {/* Main label */}
               <text
                 x={0}
                 y={12}
@@ -272,6 +244,11 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
 
 // ── Force-directed layout ──────────────────────────────────────────────────
 
+interface NodePosition {
+  x: number;
+  y: number;
+}
+
 function layoutNodes(
   nodes: GraphNodeData[],
   edges: GraphEdgeData[],
@@ -279,9 +256,7 @@ function layoutNodes(
   h: number,
 ): Map<string, NodePosition> {
   if (nodes.length === 0) return new Map();
-  if (nodes.length === 1) {
-    return new Map([[nodes[0].id, { x: w / 2, y: h / 2 }]]);
-  }
+  if (nodes.length === 1) return new Map([[nodes[0].id, { x: w / 2, y: h / 2 }]]);
 
   const pos = new Map<string, { x: number; y: number; vx: number; vy: number }>();
   const cx = w / 2;
@@ -290,8 +265,8 @@ function layoutNodes(
   for (let i = 0; i < nodes.length; i++) {
     const angle = (i / nodes.length) * Math.PI * 2;
     pos.set(nodes[i].id, {
-      x: cx + Math.cos(angle) * radius + (Math.random() - 0.5) * 20,
-      y: cy + Math.sin(angle) * radius + (Math.random() - 0.5) * 20,
+      x: cx + Math.cos(angle) * radius,
+      y: cy + Math.sin(angle) * radius,
       vx: 0,
       vy: 0,
     });

@@ -91,6 +91,8 @@ export interface OperationsViewProps {
   taskExecution?: { taskId: string; events: import('./panels/PlanPanel.js').TaskExecutionEvent[] } | null;
   /** Close the execution modal. */
   onCloseExecution?: () => void;
+  /** Optional Project Graph section rendered above KnowledgePanel in the Knowledge tab (Phase 8.5). */
+  projectGraphSection?: React.ReactNode;
 }
 
 const OPS_TOOLTIP_STYLE: React.CSSProperties = {
@@ -108,7 +110,7 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, heartbeatStatuses = {}, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, heartbeatStatuses = {}, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution, projectGraphSection }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -298,7 +300,8 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} contextLayers={contextLayers} onAddToSharedKnowledge={onAddToSharedKnowledge} />
             )}
             {activeTab === 'knowledge' && (
-              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: 16, height: '100%', boxSizing: 'border-box', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+                {projectGraphSection ?? null}
                 <KnowledgePanel workspace={knowledgeWorkspace} plan={knowledgePlan} planName={knowledgePlanName} onAdd={onKnowledgeAdd ?? (() => {})} onEdit={onKnowledgeEdit ?? (() => {})} onDelete={onKnowledgeDelete ?? (() => {})} />
               </div>
             )}

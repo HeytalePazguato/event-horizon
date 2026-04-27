@@ -17,7 +17,7 @@ import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn, SpawnBeam, KnowledgeLink } from '@event-horizon/renderer';
-import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, useCommandCenterStore } from '@event-horizon/ui';
+import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, ProjectGraphSection, useCommandCenterStore } from '@event-horizon/ui';
 import type { CreateSkillRequest, MarketplaceSkillResult, CostInsightsData } from '@event-horizon/ui';
 import type { AgentState, AgentMetrics } from '@event-horizon/core';
 
@@ -189,6 +189,13 @@ function App() {
   const [persistedSearchResults, setPersistedSearchResults] = useState<import('@event-horizon/ui').PersistedSearchResult[] | null>(null);
   const [taskExecutionEvents, setTaskExecutionEvents] = useState<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>(null);
   const [wormholes, setWormholes] = useState<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>([]);
+  // Project graph state (Phase 8)
+  const [graphStats, setGraphStats] = useState<{ nodeCount: number; edgeCount: number; fileCount: number; lastBuildAt?: number } | null>(null);
+  const [graphBrowseResult, setGraphBrowseResult] = useState<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number } | null>(null);
+  const [graphNodeDetails, setGraphNodeDetails] = useState<{ requestId: string; node: unknown | null; in: unknown[]; out: unknown[]; rationale: unknown[]; recentActivity: unknown[] } | null>(null);
+  const [graphBuildProgress, setGraphBuildProgress] = useState<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>(null);
+  const [graphFilter, setGraphFilter] = useState<import('@event-horizon/ui').GraphFilter>({});
+  const [graphLastBrowseRequest, setGraphLastBrowseRequest] = useState(0);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -254,6 +261,10 @@ function App() {
     setPersistedSearchResults,
     setTaskExecutionEvents,
     setWormholes,
+    setGraphStats,
+    setGraphBrowseResult,
+    setGraphNodeDetails,
+    setGraphBuildProgress,
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -277,6 +288,44 @@ function App() {
 
   useSettingsPersistence(vscodeApi);
   useSpawnBeamPruner(spawnBeams, setSpawnBeams);
+
+  // ── Project graph: refresh browse on filter change (Phase 8.5) ──
+  useEffect(() => {
+    if (!vscodeApi) return;
+    setGraphLastBrowseRequest(Date.now());
+    vscodeApi.postMessage({ type: 'graph-browse-request', requestId: `browse-${Date.now()}`, filter: graphFilter, page: 0, pageSize: 200 });
+  }, [graphFilter]);
+  void graphLastBrowseRequest;
+
+  // Build the Project Graph section JSX once per render (cheap; just JSX
+  // assembly, no effects). Mounted in OperationsView's Knowledge tab.
+  const projectGraphSection = useMemo(() => {
+    const browseNodes = (graphBrowseResult?.nodes ?? []) as import('@event-horizon/ui').GraphNodeData[];
+    const browseEdges = (graphBrowseResult?.edges ?? []) as import('@event-horizon/ui').GraphEdgeData[];
+    const details = graphNodeDetails && graphNodeDetails.node
+      ? (graphNodeDetails as unknown as import('@event-horizon/ui').NodeDetails)
+      : null;
+    return (
+      <ProjectGraphSection
+        stats={graphStats}
+        buildProgress={graphBuildProgress}
+        nodes={browseNodes}
+        edges={browseEdges}
+        filter={graphFilter}
+        selectedNodeDetails={details}
+        onFilterChange={setGraphFilter}
+        onBuild={(force) => vscodeApi?.postMessage({ type: 'graph-build-request', force })}
+        onNodeSelect={(nodeId) => {
+          if (!nodeId) {
+            setGraphNodeDetails(null);
+            return;
+          }
+          vscodeApi?.postMessage({ type: 'graph-node-details-request', requestId: `details-${Date.now()}`, nodeId });
+        }}
+        onRevealInEditor={(filePath, line) => vscodeApi?.postMessage({ type: 'graph-reveal-in-editor', filePath, line })}
+      />
+    );
+  }, [graphStats, graphBrowseResult, graphNodeDetails, graphBuildProgress, graphFilter]);
 
   // ── Sync selected agent data ──
   useEffect(() => {
@@ -744,7 +793,8 @@ function App() {
           onViewExecution={(taskId, agentId, claimTime, completeTime) => vscodeApi?.postMessage({ type: 'request-task-execution', taskId, agentId, claimTime, completeTime })}
           taskExecution={taskExecutionEvents as { taskId: string; events: import('@event-horizon/ui').TaskExecutionEvent[] } | null}
           onCloseExecution={() => setTaskExecutionEvents(null)}
-          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })} />
+          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })}
+          projectGraphSection={projectGraphSection} />
       )}
 
       <AchievementToasts />
