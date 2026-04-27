@@ -27,3 +27,17 @@ export type { OperationsViewProps } from './OperationsView.js';
 export { CostInsightsPanel } from './panels/CostInsightsPanel.js';
 export type { CostInsightsData, CostInsightsPanelProps, ContextLayerBreakdown } from './panels/CostInsightsPanel.js';
 export type { LogsPanelProps, PersistedSearchResult } from './panels/LogsPanel.js';
+export { ProjectGraphSection, ProjectGraphCanvas, ProjectGraphControls, ProjectGraphDetailDrawer } from './panels/index.js';
+export type {
+  ProjectGraphSectionProps,
+  GraphNodeData,
+  GraphEdgeData,
+  ProjectGraphCanvasProps,
+  GraphStats,
+  GraphFilter,
+  GraphBuildProgress,
+  ProjectGraphControlsProps,
+  NodeDetails,
+  NodeNeighborEntry,
+  ProjectGraphDetailDrawerProps,
+} from './panels/index.js';
