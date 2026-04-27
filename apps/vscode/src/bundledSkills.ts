@@ -530,18 +530,27 @@ Call \`eh_update_task\` with your task ID, status \`done\`, and your findings as
     dirName: 'eh-optimize-context',
     content: `---
 name: eh:optimize-context
-description: "Analyze and optimize instruction files to reduce per-session token costs"
+description: "Build the project knowledge graph, tier instruction files, and (with a task) hand the agent the relevant slice."
 user-invocable: true
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+argument-hint: "[optional task description for curation]"
 metadata:
   category: optimization
-  tags: tokens, cost, context, optimization
+  tags: tokens, cost, context, optimization, graph
 ---
 
-You are a context optimizer. Your job is to manage instruction files — create them if missing, optimize them if too large.
+You are a context optimizer. This skill does THREE things in this exact order:
 
-## Target files
+## Step 1 — Build or refresh the project knowledge graph
+
+Call \`eh_build_graph\` to scan the workspace. The scanner extracts code structure (TS/JS/TSX functions, classes, imports, calls) via tree-sitter, plus markdown headings and code-comment rationale (\`// WHY:\`, TODO, FIXME, JSDoc). Files unchanged since the last build (matched by SHA256 hash) are skipped.
+
+The build is **user-triggered only** — invoking this skill is the user's signal that they want a (re)build. Do NOT call \`eh_build_graph\` from any other skill.
+
+Show the result counts: \`Indexed N files, M nodes, K edges in <time>s\`. If \`eh_build_graph\` returns an error indicating no scanner is available, note it and continue to step 2.
+
+## Step 2 — Tier instruction files (CLAUDE.md, .cursorrules, etc.)
 
 Scan the workspace for these instruction files:
 - \`CLAUDE.md\` — Claude Code instructions
@@ -549,9 +558,9 @@ Scan the workspace for these instruction files:
 - \`copilot-instructions.md\` or \`.github/copilot-instructions.md\` — GitHub Copilot instructions
 - \`AGENTS.md\` — General agent instructions
 
-## If NO instruction files exist
+### If NO instruction files exist
 
-If the workspace has no instruction files at all, offer to create them:
+Offer to create them:
 
 1. **Explore the project** — Read package.json, look at the directory structure, check for existing configs (tsconfig, eslint, etc.), identify the tech stack.
 2. **Generate CLAUDE.md** — Create a concise CLAUDE.md with:
@@ -562,7 +571,7 @@ If the workspace has no instruction files at all, offer to create them:
    Keep it under 150 lines / ~2000 tokens. Concise > comprehensive.
 3. **Generate other files if relevant** — If the project uses Cursor or Copilot, offer to create \`.cursorrules\` or \`.github/copilot-instructions.md\` with equivalent content adapted to that agent's format.
 
-## Analysis (when files exist)
+### Analysis (when files exist)
 
 For each file found:
 
@@ -578,7 +587,7 @@ For each file found:
 
 4. **Identify skill candidates** — Detailed step-by-step procedures (e.g. "how to add a new API endpoint") could be extracted into on-demand skills that agents invoke only when needed, instead of paying the token cost on every session.
 
-## Optimization Strategy — MemPalace-Inspired Tiered Loading
+### Optimization Strategy — MemPalace-Inspired Tiered Loading
 
 The goal is NOT to shrink CLAUDE.md to the smallest possible size. The goal is to **tier the content** so the always-loaded part is small while the full detail remains available on demand. MemPalace's published benchmark proved that aggressive summarization regresses retrieval by 12+ percentage points — losing the *why* costs more than it saves in tokens.
 
@@ -591,7 +600,7 @@ Apply this 4-tier model (analogous to MemPalace's L0-L3 stack):
 
 A well-tiered project pays ~600-1000 tokens per agent wake-up instead of 4000+, freeing 95%+ of the context window for actual work.
 
-## Actions
+### Tiering Actions
 
 Present your analysis first, then offer these optimizations (with user approval):
 
@@ -612,18 +621,61 @@ Present your analysis first, then offer these optimizations (with user approval)
 
 5. **Move dated content to shared knowledge with expiration** — content like "as of Q1 2025" or "until the new auth lands in March" should NOT live in always-loaded instruction files. Move it to shared knowledge via \`eh_write_shared\` with a \`valid_until\` timestamp so it auto-expires and stops costing tokens once stale.
 
-## What NOT to do
+### What NOT to do
 
 - **DO NOT summarize for the sake of brevity.** MemPalace's benchmarks (96.6% R@5 raw vs 84.2% with their AAAK lossy compression) prove summarization loses critical context. Trim filler words, but never remove the *why*.
 - **DO NOT collapse examples that show different patterns.** If three examples illustrate three distinct cases, keep all three. Only collapse examples that are redundant.
 - **DO NOT delete dated content — expire it.** Move time-bound notes to shared knowledge with \`valid_until\`. Future agents can still find expired entries with \`include_expired: true\` if needed.
 
-## Safety
+### Safety
 
 - **ALWAYS create backups** — Before modifying any file, copy it to \`<filename>.backup\` in the same directory.
 - **Never delete content** — Only move content to other files (or to shared knowledge). Every line removed from one file must appear in another location, with the same fidelity.
 - **Report before/after with tier breakdown** — "CLAUDE.md: 4,200 → 800 tokens (L0+L1 only). Moved 2,400 tokens to .claude/rules/ (L2). Moved 800 tokens to .claude/skills/ (L3). Per-session wake-up cost: 4,200 → 800 tokens."
 - **Ask before modifying** — Present the tiered plan and get user confirmation before making changes.
+
+## Step 3 — Curate per-task slice (only when called WITH a task description)
+
+If the user invoked this skill with a task description as the argument (e.g. \`/eh:optimize-context "fix the auth bug"\`), call \`eh_curate_context({ task_description: <arg>, token_budget: 4000 })\` and present the returned slice as a structured summary:
+
+\`\`\`
+Curated context for: "<task description>"
+Token budget: 4000 (estimated <X> used)
+
+CODE ANCHORS (<N> nodes)
+  <label>     <sourceFile>:<location>
+  ...
+
+DOC ANCHORS (<N> nodes)
+  <heading>   <sourceFile>
+  ...
+
+RECENT AGENT ACTIVITY (last 7 days)
+  <timestamp>  <agent> <task title>
+                 touched/authored <file>
+                 note: <text>
+  ...
+
+RELEVANT KNOWLEDGE
+  <tier> <key> — <value>
+  ...
+
+SUGGESTED READS
+  1. <file>
+  2. <file>
+  ...
+\`\`\`
+
+Tell the agent (or remind the user): operate on the suggestedReads first; the curated subgraph is the high-signal slice for this task.
+
+If invoked without a task argument, skip this step.
+
+## Summary
+
+- **No-arg invocation**: build/refresh graph + tier instruction files.
+- **With-arg invocation**: build/refresh graph + tier instruction files + curate per-task slice.
+
+The graph build is the only path that scans the workspace; nothing runs in the background.
 `,
   },
   {
