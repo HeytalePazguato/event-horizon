@@ -145,7 +145,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
           y={height / 2}
           fontFamily="monospace"
           fontSize={12}
-          fill="#557799"
+          fill="#557766"
           textAnchor="middle"
         >
           Run /eh:optimize-context in any AI agent to build the project graph.

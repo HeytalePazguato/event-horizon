@@ -43,9 +43,9 @@ const styles = {
     height: '100%',
     width: 320,
     background: 'rgba(10, 15, 24, 0.96)',
-    borderLeft: '1px solid rgba(68, 136, 187, 0.4)',
+    borderLeft: '1px solid rgba(68, 187, 110, 0.4)',
     boxShadow: '-2px 0 16px rgba(0, 0, 0, 0.45)',
-    color: '#cce0ff',
+    color: '#cceedd',
     fontFamily: 'monospace',
     fontSize: 11,
     overflow: 'auto' as const,
@@ -59,8 +59,8 @@ const styles = {
   },
   closeBtn: {
     background: 'transparent',
-    border: '1px solid rgba(68, 136, 187, 0.4)',
-    color: '#88aacc',
+    border: '1px solid rgba(68, 187, 110, 0.4)',
+    color: '#88cc99',
     fontFamily: 'monospace',
     fontSize: 11,
     cursor: 'pointer',
@@ -69,7 +69,7 @@ const styles = {
   },
   header: {
     paddingBottom: 8,
-    borderBottom: '1px solid rgba(68, 136, 187, 0.2)',
+    borderBottom: '1px solid rgba(68, 187, 110, 0.2)',
     marginBottom: 10,
   },
   label: {
@@ -88,8 +88,8 @@ const styles = {
   typeBadge: {
     padding: '1px 6px',
     borderRadius: 2,
-    background: 'rgba(68, 221, 255, 0.15)',
-    color: '#44ddff',
+    background: 'rgba(68, 255, 136, 0.15)',
+    color: '#44ff88',
   },
   tagBadge: {
     padding: '1px 6px',
@@ -103,13 +103,13 @@ const styles = {
   },
   confidenceLabel: {
     fontSize: 9,
-    color: '#88aacc',
+    color: '#88cc99',
     width: 70,
   },
   confidenceBar: {
     flex: 1,
     height: 4,
-    background: 'rgba(68, 136, 187, 0.2)',
+    background: 'rgba(68, 187, 110, 0.2)',
     borderRadius: 2,
     overflow: 'hidden' as const,
   },
@@ -119,12 +119,12 @@ const styles = {
   },
   confidencePct: {
     fontSize: 9,
-    color: '#cce0ff',
+    color: '#cceedd',
     width: 30,
     textAlign: 'right' as const,
   },
   sourceLink: {
-    color: '#88ddff',
+    color: '#88eeaa',
     cursor: 'pointer',
     textDecoration: 'underline' as const,
     wordBreak: 'break-all' as const,
@@ -135,14 +135,14 @@ const styles = {
   },
   sectionTitle: {
     fontSize: 10,
-    color: '#88aacc',
+    color: '#88cc99',
     textTransform: 'uppercase' as const,
     letterSpacing: 1,
     marginBottom: 4,
   },
   empty: {
     fontSize: 10,
-    color: '#557799',
+    color: '#557766',
     fontStyle: 'italic' as const,
   },
   row: {
@@ -151,15 +151,15 @@ const styles = {
     gap: 6,
     padding: '3px 0',
     fontSize: 10,
-    borderBottom: '1px dotted rgba(68, 136, 187, 0.12)',
+    borderBottom: '1px dotted rgba(68, 187, 110, 0.12)',
     cursor: 'pointer',
   },
   relation: {
-    color: '#557799',
+    color: '#557766',
     minWidth: 60,
   },
   rowLabel: {
-    color: '#cce0ff',
+    color: '#cceedd',
     flex: 1,
     overflow: 'hidden' as const,
     textOverflow: 'ellipsis' as const,
@@ -167,7 +167,7 @@ const styles = {
   },
   empty2: {
     fontSize: 11,
-    color: '#557799',
+    color: '#557766',
     fontStyle: 'italic' as const,
     padding: 24,
     textAlign: 'center' as const,
@@ -175,7 +175,7 @@ const styles = {
 };
 
 const TAG_COLORS: Record<string, { bg: string; fg: string }> = {
-  EXTRACTED: { bg: 'rgba(68, 221, 255, 0.18)', fg: '#44ddff' },
+  EXTRACTED: { bg: 'rgba(68, 255, 136, 0.18)', fg: '#44ff88' },
   INFERRED: { bg: 'rgba(255, 170, 68, 0.18)', fg: '#ffaa44' },
   AMBIGUOUS: { bg: 'rgba(255, 102, 136, 0.2)', fg: '#ff6688' },
 };

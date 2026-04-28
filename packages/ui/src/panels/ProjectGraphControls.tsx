@@ -78,10 +78,10 @@ const styles = {
     gap: 8,
     padding: '8px 10px',
     background: 'rgba(10, 15, 24, 0.7)',
-    borderBottom: '1px solid rgba(68, 136, 187, 0.25)',
+    borderBottom: '1px solid rgba(68, 187, 110, 0.25)',
     fontFamily: 'monospace',
     fontSize: 11,
-    color: '#cce0ff',
+    color: '#cceedd',
   },
   topRow: {
     display: 'flex',
@@ -91,15 +91,15 @@ const styles = {
   },
   stats: {
     fontSize: 11,
-    color: '#88aacc',
+    color: '#88cc99',
   },
   search: {
     flex: 1,
     minWidth: 160,
     padding: '4px 8px',
     background: 'rgba(20, 32, 44, 0.85)',
-    border: '1px solid rgba(68, 136, 187, 0.4)',
-    color: '#cce0ff',
+    border: '1px solid rgba(68, 187, 110, 0.4)',
+    color: '#cceedd',
     borderRadius: 3,
     fontFamily: 'monospace',
     fontSize: 11,
@@ -113,16 +113,16 @@ const styles = {
   pill: {
     padding: '2px 8px',
     borderRadius: 10,
-    border: '1px solid rgba(68, 136, 187, 0.35)',
+    border: '1px solid rgba(68, 187, 110, 0.35)',
     background: 'transparent',
-    color: '#88aacc',
+    color: '#88cc99',
     cursor: 'pointer',
     fontFamily: 'monospace',
   },
   pillActive: {
-    background: 'rgba(68, 221, 255, 0.15)',
-    color: '#44ddff',
-    borderColor: '#44ddff',
+    background: 'rgba(68, 255, 136, 0.15)',
+    color: '#44ff88',
+    borderColor: '#44ff88',
   },
   progress: {
     fontSize: 10,
@@ -130,7 +130,7 @@ const styles = {
   },
   emptyHint: {
     fontSize: 11,
-    color: '#88aacc',
+    color: '#88cc99',
     fontStyle: 'italic' as const,
   },
 };
@@ -208,7 +208,7 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
       </div>
 
       <div style={styles.pillRow}>
-        <span style={{ color: '#557799', marginRight: 6 }}>type:</span>
+        <span style={{ color: '#557766', marginRight: 6 }}>type:</span>
         {TYPE_OPTIONS.map((opt) => {
           const active = (filter.type ?? null) === opt.id;
           return (
@@ -225,7 +225,7 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
       </div>
 
       <div style={styles.pillRow}>
-        <span style={{ color: '#557799', marginRight: 6 }}>tag:</span>
+        <span style={{ color: '#557766', marginRight: 6 }}>tag:</span>
         {TAG_OPTIONS.map((opt) => {
           const active = (filter.tag ?? null) === opt.id;
           return (
