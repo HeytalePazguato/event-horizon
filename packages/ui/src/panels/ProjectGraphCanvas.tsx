@@ -139,7 +139,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
           fill="#557799"
           textAnchor="middle"
         >
-          Empty graph. Click Build in the header to scan the workspace.
+          Run /eh:optimize-context in any AI agent to build the project graph.
         </text>
       )}
 

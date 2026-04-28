@@ -110,7 +110,22 @@ export class ProjectGraphLifecycle {
       return;
     }
 
-    const db = await ProjectGraphDB.create(buffer);
+    // Empty (0-byte) or corrupt files crash sql.js. Treat the same as
+    // "no graph yet" — the user re-runs `/eh:optimize-context` to rebuild.
+    if (!buffer || buffer.byteLength === 0) {
+      this.emitter.fire(null);
+      return;
+    }
+
+    let db: ProjectGraphDB;
+    try {
+      db = await ProjectGraphDB.create(buffer);
+    } catch (err) {
+      console.error(`[Event Horizon] graph.db at ${dbPath} is corrupt — re-run /eh:optimize-context to rebuild:`, err);
+      this.emitter.fire(null);
+      return;
+    }
+
     this.activeDb = db;
     this.activeDbPath = dbPath;
     this.saveInterval = setInterval(() => this.tickSave(), SAVE_INTERVAL_MS);

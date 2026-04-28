@@ -317,11 +317,16 @@ function wireUniverseWebview(
   // Refresh the Knowledge → Graph stats whenever the per-project graph DB
   // swaps (workspace folder change), closes (folder removed), or is rebuilt
   // by `/eh:optimize-context`. Without these the stats line stays stale.
+  //
+  // workspaceOpen is sourced from `vscode.workspace.workspaceFolders` —
+  // the authoritative answer to "is a folder open" — not from the
+  // lifecycle's tracking state, which can briefly be `null` during
+  // attach races or after a corrupt-DB attach failure.
   const lifecycle = getProjectGraphLifecycle();
   if (lifecycle) {
     const pushCurrent = (): void => {
       const store = lifecycle.getActiveStore();
-      const workspaceOpen = !!lifecycle.getActiveWorkspace();
+      const workspaceOpen = !!vscode.workspace.workspaceFolders?.[0];
       if (store) {
         const stats = store.getStats();
         void webview.postMessage({
@@ -368,9 +373,9 @@ function wireUniverseWebview(
     // this webview was created, so the onActiveStoreChange event would
     // have fired into the void. Hydrate explicitly here.
     const lifecycleAtHydrate = getProjectGraphLifecycle();
+    const workspaceOpenAtHydrate = !!vscode.workspace.workspaceFolders?.[0];
     if (lifecycleAtHydrate) {
       const store = lifecycleAtHydrate.getActiveStore();
-      const workspaceOpen = !!lifecycleAtHydrate.getActiveWorkspace();
       if (store) {
         const stats = store.getStats();
         void webview.postMessage({
@@ -384,9 +389,15 @@ function wireUniverseWebview(
       } else {
         void webview.postMessage({
           type: 'graph-stats-update',
-          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
+          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen: workspaceOpenAtHydrate },
         });
       }
+    } else {
+      // Lifecycle not wired yet (rare: webview opened mid-activation).
+      void webview.postMessage({
+        type: 'graph-stats-update',
+        stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen: workspaceOpenAtHydrate },
+      });
     }
 
     // ── Send historical events from persistence for replay ──
@@ -788,7 +799,7 @@ function wireUniverseWebview(
         const page = typeof msg.page === 'number' ? msg.page : 0;
         const pageSize = typeof msg.pageSize === 'number' ? msg.pageSize : 50;
         if (!store) {
-          const workspaceOpen = !!getProjectGraphLifecycle()?.getActiveWorkspace();
+          const workspaceOpen = !!vscode.workspace.workspaceFolders?.[0];
           void webview.postMessage({ type: 'graph-browse-result', requestId, nodes: [], edges: [], total: 0, page, pageSize });
           void webview.postMessage({
             type: 'graph-stats-update',
