@@ -42,7 +42,7 @@ const styles = {
     right: 0,
     height: '100%',
     width: 320,
-    background: 'rgba(10, 15, 24, 0.96)',
+    background: 'rgba(10, 24, 16, 0.96)',
     borderLeft: '1px solid rgba(68, 187, 110, 0.4)',
     boxShadow: '-2px 0 16px rgba(0, 0, 0, 0.45)',
     color: '#cceedd',

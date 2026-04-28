@@ -103,7 +103,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
       height={height}
       style={{
         display: 'block',
-        background: '#0a0f18',
+        background: '#0a1810',
         cursor: drag ? 'grabbing' : 'grab',
         userSelect: 'none',
       }}
@@ -202,7 +202,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
                 width={NODE_W}
                 height={NODE_H}
                 rx={NODE_RADIUS}
-                fill="#14202c"
+                fill="#142c1f"
                 fillOpacity={0.95}
                 stroke={color}
                 strokeWidth={2}

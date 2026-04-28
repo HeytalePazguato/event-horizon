@@ -71,7 +71,7 @@ export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
         fontFamily: 'monospace',
         fontSize: 11,
         color: '#cceedd',
-        background: 'rgba(10, 15, 24, 0.5)',
+        background: 'rgba(10, 24, 16, 0.5)',
       }}
     >
       <ProjectGraphControls
