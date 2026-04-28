@@ -261,6 +261,20 @@ export class ExtractionContext {
         );
         if (funcNode) {
           this.realNodes.push(funcNode);
+          // If the enclosing scope is a class/interface, emit a member_of edge.
+          if (scope.type === 'class' || scope.type === 'interface') {
+            this.edges.push({
+              id: `member_of:${funcNode.id}:${scope.id}`,
+              sourceId: funcNode.id,
+              targetId: scope.id,
+              relationType: 'member_of',
+              tag: 'EXTRACTED',
+              confidence: 1.0,
+              sourceFile: this.filePath,
+              sourceLocation: funcNode.sourceLocation,
+              createdAt: this.now,
+            });
+          }
           const body = node.childForFieldName('body');
           if (body) this.walkTypescript(body, funcNode);
         }

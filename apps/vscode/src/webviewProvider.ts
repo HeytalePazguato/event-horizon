@@ -395,6 +395,12 @@ function wireUniverseWebview(
             workspaceOpen: true,
           },
         });
+        // Trigger a fresh browse-request from the webview. The initial
+        // useEffect on mount may have fired before this hydrate ran, and
+        // the lifecycle might not have been attached yet at that moment —
+        // bumping the refresh nonce guarantees the canvas re-fetches now
+        // that we know there's a real graph to show.
+        void webview.postMessage({ type: 'graph-data-changed' });
       } else {
         void webview.postMessage({
           type: 'graph-stats-update',

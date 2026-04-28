@@ -78,6 +78,19 @@ function walkCsNode(
       const method = makeCsMethodNode(node, ctx, classScope);
       if (method) {
         ctx.pushNode(method);
+        if (classScope) {
+          ctx.pushEdge({
+            id: `member_of:${method.id}:${classScope.id}`,
+            sourceId: method.id,
+            targetId: classScope.id,
+            relationType: 'member_of',
+            tag: 'EXTRACTED',
+            confidence: 1.0,
+            sourceFile: ctx.filePath,
+            sourceLocation: method.sourceLocation,
+            createdAt: ctx.now,
+          });
+        }
         const body = node.childForFieldName('body');
         if (body) walkCsNode(body, ctx, method, classScope);
       }

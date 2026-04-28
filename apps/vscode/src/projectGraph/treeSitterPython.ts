@@ -25,7 +25,7 @@ interface ScopeRange {
 
 export function walkPython(root: TSNode, ctx: ExtractionContext, source: string): void {
   const ranges: ScopeRange[] = [];
-  walkPyNode(root, ctx, ctx.moduleNode, ranges);
+  walkPyNode(root, ctx, ctx.moduleNode, null, ranges);
   scanPyRationale(source, ctx, ranges);
 }
 
@@ -33,6 +33,7 @@ function walkPyNode(
   node: TSNode,
   ctx: ExtractionContext,
   scope: GraphNode,
+  classScope: GraphNode | null,
   ranges: ScopeRange[],
 ): void {
   switch (node.type) {
@@ -40,13 +41,26 @@ function walkPyNode(
       const fn = makePyFunctionNode(node, ctx, false);
       if (fn) {
         ctx.pushNode(fn);
+        if (classScope) {
+          ctx.pushEdge({
+            id: `member_of:${fn.id}:${classScope.id}`,
+            sourceId: fn.id,
+            targetId: classScope.id,
+            relationType: 'member_of',
+            tag: 'EXTRACTED',
+            confidence: 1.0,
+            sourceFile: ctx.filePath,
+            sourceLocation: fn.sourceLocation,
+            createdAt: ctx.now,
+          });
+        }
         ranges.push({
           startLine: node.startPosition.row + 1,
           endLine: node.endPosition.row + 1,
           node: fn,
         });
         const body = node.childForFieldName('body');
-        if (body) walkPyNode(body, ctx, fn, ranges);
+        if (body) walkPyNode(body, ctx, fn, classScope, ranges);
       }
       return;
     }
@@ -61,7 +75,9 @@ function walkPyNode(
         });
         processPyClassHeritage(node, ctx, cls);
         const body = node.childForFieldName('body');
-        if (body) walkPyNode(body, ctx, cls, ranges);
+        // Functions defined directly in this class body get a member_of
+        // edge to the class via the classScope arg.
+        if (body) walkPyNode(body, ctx, cls, cls, ranges);
       }
       return;
     }
@@ -75,13 +91,26 @@ function walkPyNode(
         const fn = makePyFunctionNode(innerFn, ctx, false, decorators);
         if (fn) {
           ctx.pushNode(fn);
+          if (classScope) {
+            ctx.pushEdge({
+              id: `member_of:${fn.id}:${classScope.id}`,
+              sourceId: fn.id,
+              targetId: classScope.id,
+              relationType: 'member_of',
+              tag: 'EXTRACTED',
+              confidence: 1.0,
+              sourceFile: ctx.filePath,
+              sourceLocation: fn.sourceLocation,
+              createdAt: ctx.now,
+            });
+          }
           ranges.push({
             startLine: node.startPosition.row + 1,
             endLine: node.endPosition.row + 1,
             node: fn,
           });
           const body = innerFn.childForFieldName('body');
-          if (body) walkPyNode(body, ctx, fn, ranges);
+          if (body) walkPyNode(body, ctx, fn, classScope, ranges);
         }
         return;
       }
@@ -96,7 +125,7 @@ function walkPyNode(
           });
           processPyClassHeritage(innerCls, ctx, cls);
           const body = innerCls.childForFieldName('body');
-          if (body) walkPyNode(body, ctx, cls, ranges);
+          if (body) walkPyNode(body, ctx, cls, cls, ranges);
         }
         return;
       }
@@ -113,12 +142,12 @@ function walkPyNode(
     }
     case 'call': {
       processPyCall(node, ctx, scope);
-      for (const c of node.namedChildren) if (c) walkPyNode(c, ctx, scope, ranges);
+      for (const c of node.namedChildren) if (c) walkPyNode(c, ctx, scope, classScope, ranges);
       return;
     }
   }
 
-  for (const c of node.namedChildren) if (c) walkPyNode(c, ctx, scope, ranges);
+  for (const c of node.namedChildren) if (c) walkPyNode(c, ctx, scope, classScope, ranges);
 }
 
 /**

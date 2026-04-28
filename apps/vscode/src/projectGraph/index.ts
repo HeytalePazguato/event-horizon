@@ -27,7 +27,14 @@ export type RelationType =
   | 'references'
   | 'touched'
   | 'authored'
-  | 'rationale_for';
+  | 'rationale_for'
+  /**
+   * Method/property → enclosing class/trait/interface. Emitted by the
+   * language extractors so the canvas shows the structural relationship
+   * between a class and its members instead of leaving them as floating
+   * islands.
+   */
+  | 'member_of';
 
 export interface GraphNode {
   id: string;

@@ -81,6 +81,19 @@ function walkPhpNode(
       const method = makePhpFunctionNode(node, ctx, 'method_declaration', classScope);
       if (method) {
         ctx.pushNode(method);
+        if (classScope) {
+          ctx.pushEdge({
+            id: `member_of:${method.id}:${classScope.id}`,
+            sourceId: method.id,
+            targetId: classScope.id,
+            relationType: 'member_of',
+            tag: 'EXTRACTED',
+            confidence: 1.0,
+            sourceFile: ctx.filePath,
+            sourceLocation: method.sourceLocation,
+            createdAt: ctx.now,
+          });
+        }
         const body = node.childForFieldName('body');
         if (body) walkPhpNode(body, ctx, method, classScope);
       }

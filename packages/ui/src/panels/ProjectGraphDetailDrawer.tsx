@@ -8,7 +8,8 @@
  * Phase 8.4 of the Project Graph plan.
  */
 
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { GraphNodeData, GraphEdgeData } from './ProjectGraphCanvas.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -224,16 +225,7 @@ export const ProjectGraphDetailDrawer: React.FC<ProjectGraphDetailDrawerProps> =
           </span>
         </div>
         {typeof node.confidence === 'number' && (
-          <div
-            style={styles.confidenceRow}
-            title="Extractor confidence (0–100%). Tree-sitter extractions are 100% (EXTRACTED). Heuristic doc/markdown extractions are ~70% (INFERRED). Agent-supplied extractions below 50% are downgraded to AMBIGUOUS."
-          >
-            <span style={styles.confidenceLabel}>confidence</span>
-            <div style={styles.confidenceBar}>
-              <div style={{ ...styles.confidenceFill, width: `${Math.round(node.confidence * 100)}%` }} />
-            </div>
-            <span style={styles.confidencePct}>{Math.round(node.confidence * 100)}%</span>
-          </div>
+          <ConfidenceRow value={node.confidence} />
         )}
         {node.sourceFile && (
           <div style={{ marginTop: 6 }}>
@@ -340,3 +332,59 @@ function parseLine(loc?: string): number | undefined {
   const m = /^(\d+)/.exec(loc);
   return m ? parseInt(m[1], 10) : undefined;
 }
+
+// ── Confidence row with portal tooltip ─────────────────────────────────────
+
+const ConfidenceRow: React.FC<{ value: number }> = ({ value }) => {
+  const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
+  const pct = Math.round(value * 100);
+
+  const tier = value >= 0.95
+    ? { label: 'EXTRACTED', desc: 'Tree-sitter parsed this directly from source. High-confidence structural fact (function signatures, class declarations, imports, calls, extends/implements).' }
+    : value >= 0.5
+    ? { label: 'INFERRED', desc: 'Heuristic guess from comments, markdown headings, or backticked identifier references. Useful but not authoritative — verify before relying on it.' }
+    : { label: 'AMBIGUOUS', desc: 'An agent supplied this with low confidence. Treat as a hypothesis, not a fact.' };
+
+  return (
+    <>
+      <div
+        style={styles.confidenceRow}
+        onMouseEnter={(e) => setHover({ x: e.clientX, y: e.clientY })}
+        onMouseMove={(e) => setHover({ x: e.clientX, y: e.clientY })}
+        onMouseLeave={() => setHover(null)}
+      >
+        <span style={styles.confidenceLabel}>confidence</span>
+        <div style={styles.confidenceBar}>
+          <div style={{ ...styles.confidenceFill, width: `${pct}%` }} />
+        </div>
+        <span style={styles.confidencePct}>{pct}%</span>
+      </div>
+      {hover && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: Math.max(8, hover.y - 130),
+            left: Math.max(8, Math.min(hover.x - 110, window.innerWidth - 240)),
+            width: 220,
+            background: 'linear-gradient(180deg, #0d1e16 0%, #070f0a 100%)',
+            border: '1px solid #2a5a3c',
+            boxShadow: '0 -4px 16px rgba(0,0,0,0.75)',
+            padding: '8px 10px',
+            fontFamily: 'Consolas, monospace',
+            zIndex: 9999,
+            pointerEvents: 'none',
+            clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#90d898', letterSpacing: '0.04em', marginBottom: 4 }}>
+            {tier.label} · {pct}%
+          </div>
+          <div style={{ fontSize: 9, color: '#4a7a58', lineHeight: 1.5 }}>
+            {tier.desc}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+};
