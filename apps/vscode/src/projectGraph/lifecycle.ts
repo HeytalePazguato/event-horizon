@@ -36,9 +36,23 @@ export class ProjectGraphLifecycle {
   private activeDbPath: string | null = null;
   private saveInterval: ReturnType<typeof setInterval> | null = null;
   private readonly emitter = new vscode.EventEmitter<ProjectGraphStore | null>();
+  private readonly dataEmitter = new vscode.EventEmitter<void>();
 
   /** Fires whenever the active store changes (attach, build, close, swap). */
   readonly onActiveStoreChange: vscode.Event<ProjectGraphStore | null> = this.emitter.event;
+
+  /**
+   * Fires when the active store's data changes in bulk — e.g. after a
+   * `/eh:optimize-context` rebuild lands. Consumers (the webview) refresh
+   * stats and re-fetch nodes when this fires. Distinct from
+   * `onActiveStoreChange` (which is for transitions: open/close/swap).
+   */
+  readonly onDataChange: vscode.Event<void> = this.dataEmitter.event;
+
+  /** Notify listeners that the active store's contents changed in bulk. */
+  notifyDataChange(): void {
+    this.dataEmitter.fire();
+  }
 
   /**
    * The currently-tracked workspace folder, if any. Set by both
@@ -118,9 +132,25 @@ export class ProjectGraphLifecycle {
   async openForBuild(folder: string): Promise<ProjectGraphStore> {
     const normalized = path.resolve(folder);
 
-    if (this.activeWorkspace !== normalized && (this.activeDb || this.activeWorkspace)) {
+    // Always start a build with a clean slate. The user's intent when
+    // running `/eh:optimize-context` is "rebuild the graph for this project
+    // because it might have changed." Carrying over the prior DB risks
+    // stale rows for files that were deleted or renamed since the last run.
+    // The fresh in-memory DB will overwrite `<folder>/.eh/graph.db` on the
+    // next save.
+    if (this.activeDb) {
+      // Have a DB — different folder OR same folder. Flush and close before
+      // building fresh.
+      await this.closeActive();
+    } else if (this.activeWorkspace && this.activeWorkspace !== normalized) {
+      // Attached to a different folder via attachIfExists — release it so
+      // the build attaches to the correct folder.
       await this.closeActive();
     }
+    // Otherwise the lifecycle is either fully unattached, or attached to
+    // this folder via attachIfExists but with no DB. We can build directly
+    // without a redundant close-and-reattach (avoids a spurious
+    // onActiveStoreChange(null) right before the fresh `(store)` fire).
 
     const ehDir = path.join(normalized, '.eh');
     const dbPath = path.join(ehDir, 'graph.db');
@@ -132,25 +162,18 @@ export class ProjectGraphLifecycle {
       await fs.promises.writeFile(gitignorePath, GITIGNORE_CONTENT, 'utf8');
     }
 
-    if (!this.activeDb || this.activeWorkspace !== normalized) {
-      let buffer: Uint8Array | undefined;
-      try {
-        buffer = await fs.promises.readFile(dbPath);
-      } catch {
-        // First-ever build — create an empty DB. ProjectGraphDB.create()
-        // marks itself dirty so the first save loop persists the schema.
-      }
-      const db = await ProjectGraphDB.create(buffer);
-      this.activeDb = db;
-      this.activeWorkspace = normalized;
-      this.activeDbPath = dbPath;
-      if (this.saveInterval === null) {
-        this.saveInterval = setInterval(() => this.tickSave(), SAVE_INTERVAL_MS);
-      }
-      this.emitter.fire(db.getStore());
+    // Fresh empty DB — no buffer load. Marked dirty so the first save tick
+    // overwrites whatever stale `graph.db` is on disk.
+    const db = await ProjectGraphDB.create();
+    this.activeDb = db;
+    this.activeWorkspace = normalized;
+    this.activeDbPath = dbPath;
+    if (this.saveInterval === null) {
+      this.saveInterval = setInterval(() => this.tickSave(), SAVE_INTERVAL_MS);
     }
+    this.emitter.fire(db.getStore());
 
-    return this.activeDb.getStore();
+    return db.getStore();
   }
 
   /**
@@ -191,9 +214,10 @@ export class ProjectGraphLifecycle {
     if (wasActive) this.emitter.fire(null);
   }
 
-  /** Dispose the underlying EventEmitter. Call once on deactivation. */
+  /** Dispose the underlying EventEmitters. Call once on deactivation. */
   dispose(): void {
     this.emitter.dispose();
+    this.dataEmitter.dispose();
   }
 
   private tickSave(): void {

@@ -2202,8 +2202,9 @@ export class McpServer {
           return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
         }
         // The skill is the only path that creates `<folder>/.eh/graph.db`.
-        // openForBuild ensures the directory + .gitignore + DB file exist
-        // before the scanner writes anything.
+        // openForBuild always starts with a fresh empty DB so a re-run of
+        // /eh:optimize-context produces a clean rebuild (no stale rows for
+        // files that were deleted or renamed since the prior run).
         if (projectGraphLifecycle) {
           const folder = projectGraphLifecycle.getActiveWorkspace();
           if (!folder) {
@@ -2211,10 +2212,11 @@ export class McpServer {
           }
           await projectGraphLifecycle.openForBuild(folder);
         }
-        const force = typeof args.force === 'boolean' ? args.force : false;
-        // force=true also wipes the existing graph so a previously-polluted scan
-        // (wrong workspace folder, mid-broken extractor) can't lurk via hash matches.
-        const result = await projectGraphScanner.scanWorkspace(undefined, { force, clearFirst: force });
+        const result = await projectGraphScanner.scanWorkspace(undefined, { force: true });
+        // Tell listeners (notably the webview) that the graph contents
+        // changed in bulk so the Knowledge → Graph tab refreshes without
+        // requiring a manual click-off-click-on.
+        if (projectGraphLifecycle) projectGraphLifecycle.notifyDataChange();
         return result;
       }
 

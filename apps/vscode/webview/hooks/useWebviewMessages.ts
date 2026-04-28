@@ -66,6 +66,12 @@ export interface WebviewMessageDeps {
   setGraphBrowseResult?: React.Dispatch<React.SetStateAction<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number } | null>>;
   setGraphNodeDetails?: React.Dispatch<React.SetStateAction<{ requestId: string; node: unknown | null; in: unknown[]; out: unknown[]; rationale: unknown[]; recentActivity: unknown[] } | null>>;
   setGraphBuildProgress?: React.Dispatch<React.SetStateAction<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>>;
+  /**
+   * Called when the extension signals that the graph rebuilt in bulk.
+   * The webview increments a counter that the browse-request useEffect
+   * watches, forcing a fresh fetch of nodes/edges.
+   */
+  bumpGraphRefreshNonce?: () => void;
 }
 
 export function useWebviewMessages(deps: WebviewMessageDeps): void {
@@ -333,6 +339,12 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         } else {
           depsRef.current.setGraphBuildProgress?.(data ?? null);
         }
+        return;
+      }
+      if (msg?.type === 'graph-data-changed') {
+        // After /eh:optimize-context rebuilds the graph, bump the refresh
+        // nonce so the browse-request useEffect re-fires with fresh state.
+        depsRef.current.bumpGraphRefreshNonce?.();
         return;
       }
       if (msg?.type === 'mcp-servers-update') {

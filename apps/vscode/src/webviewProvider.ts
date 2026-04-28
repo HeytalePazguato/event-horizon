@@ -315,11 +315,13 @@ function wireUniverseWebview(
   context.subscriptions.push(configListener);
 
   // Refresh the Knowledge → Graph stats whenever the per-project graph DB
-  // swaps (workspace folder change) or closes (folder removed). Without this
-  // the stats line keeps showing the prior project's counts after a swap.
+  // swaps (workspace folder change), closes (folder removed), or is rebuilt
+  // by `/eh:optimize-context`. Without these the stats line stays stale.
   const lifecycle = getProjectGraphLifecycle();
   if (lifecycle) {
-    const lifecycleListener = lifecycle.onActiveStoreChange((store) => {
+    const pushCurrent = (): void => {
+      const store = lifecycle.getActiveStore();
+      const workspaceOpen = !!lifecycle.getActiveWorkspace();
       if (store) {
         const stats = store.getStats();
         void webview.postMessage({
@@ -333,11 +335,21 @@ function wireUniverseWebview(
       } else {
         void webview.postMessage({
           type: 'graph-stats-update',
-          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen: false },
+          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
         });
       }
-    });
+    };
+
+    const lifecycleListener = lifecycle.onActiveStoreChange(pushCurrent);
     context.subscriptions.push(lifecycleListener);
+
+    // After a build completes, fire a fresh stats push AND ask the webview
+    // to re-fetch nodes/edges so the canvas redraws without a manual click.
+    const dataListener = lifecycle.onDataChange(() => {
+      pushCurrent();
+      void webview.postMessage({ type: 'graph-data-changed' });
+    });
+    context.subscriptions.push(dataListener);
   }
 
   function hydrateWebview() {
@@ -349,6 +361,32 @@ function wireUniverseWebview(
     const metrics = metricsEngine.getAllMetrics();
     if (agents.length > 0) {
       void webview.postMessage({ type: 'init-state', agents, metrics });
+    }
+
+    // Push the current graph state on connect — the lifecycle may have
+    // already attached to a pre-existing `<folder>/.eh/graph.db` before
+    // this webview was created, so the onActiveStoreChange event would
+    // have fired into the void. Hydrate explicitly here.
+    const lifecycleAtHydrate = getProjectGraphLifecycle();
+    if (lifecycleAtHydrate) {
+      const store = lifecycleAtHydrate.getActiveStore();
+      const workspaceOpen = !!lifecycleAtHydrate.getActiveWorkspace();
+      if (store) {
+        const stats = store.getStats();
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: {
+            ...stats,
+            lastBuildAt: stats.fileCount > 0 ? Date.now() : undefined,
+            workspaceOpen: true,
+          },
+        });
+      } else {
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
+        });
+      }
     }
 
     // ── Send historical events from persistence for replay ──

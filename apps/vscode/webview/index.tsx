@@ -196,6 +196,9 @@ function App() {
   const [graphBuildProgress, setGraphBuildProgress] = useState<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>(null);
   const [graphFilter, setGraphFilter] = useState<import('@event-horizon/ui').GraphFilter>({});
   const [graphLastBrowseRequest, setGraphLastBrowseRequest] = useState(0);
+  // Bumped by the extension when the graph rebuilds; the browse-request
+  // useEffect watches this to re-fetch nodes/edges automatically.
+  const [graphRefreshNonce, setGraphRefreshNonce] = useState(0);
 
   // ── Store selectors ──
   const setSelectedAgentData = useCommandCenterStore((s) => s.setSelectedAgentData);
@@ -265,6 +268,7 @@ function App() {
     setGraphBrowseResult,
     setGraphNodeDetails,
     setGraphBuildProgress,
+    bumpGraphRefreshNonce: () => setGraphRefreshNonce((n) => n + 1),
   });
 
   const achievementCallbacks = useAchievementTriggers({
@@ -289,12 +293,15 @@ function App() {
   useSettingsPersistence(vscodeApi);
   useSpawnBeamPruner(spawnBeams, setSpawnBeams);
 
-  // ── Project graph: refresh browse on filter change (Phase 8.5) ──
+  // ── Project graph: refresh browse on filter change OR rebuild signal ──
+  // graphRefreshNonce is bumped when the extension fires `graph-data-changed`
+  // after a `/eh:optimize-context` rebuild — without it the canvas would
+  // stay empty until the user manually changed a filter.
   useEffect(() => {
     if (!vscodeApi) return;
     setGraphLastBrowseRequest(Date.now());
     vscodeApi.postMessage({ type: 'graph-browse-request', requestId: `browse-${Date.now()}`, filter: graphFilter, page: 0, pageSize: 200 });
-  }, [graphFilter]);
+  }, [graphFilter, graphRefreshNonce]);
   void graphLastBrowseRequest;
 
   // Build the Project Graph section JSX once per render (cheap; just JSX

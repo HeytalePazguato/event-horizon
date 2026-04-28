@@ -91,6 +91,33 @@ describe('ProjectGraphLifecycle', () => {
     expect(store!.getNodeById('persisted')).not.toBeNull();
   });
 
+  it('openForBuild starts fresh: stale rows from a prior build do NOT carry over', async () => {
+    const ws = newWorkspace('rebuild');
+
+    // First build seeds the graph and persists.
+    await lifecycle.openForBuild(ws);
+    lifecycle.getActiveStore()!.upsertNode(makeNode('first-build'));
+    await lifecycle.closeActive();
+
+    // Second build (e.g. user re-runs /eh:optimize-context) must NOT
+    // carry over the prior node — the user expects a clean rebuild.
+    await lifecycle.openForBuild(ws);
+    const store = lifecycle.getActiveStore();
+    expect(store).not.toBeNull();
+    expect(store!.getNodeById('first-build')).toBeNull();
+  });
+
+  it('notifyDataChange fires onDataChange listeners', async () => {
+    const ws = newWorkspace('datachange');
+    await lifecycle.openForBuild(ws);
+
+    let fired = 0;
+    lifecycle.onDataChange(() => { fired++; });
+    lifecycle.notifyDataChange();
+    lifecycle.notifyDataChange();
+    expect(fired).toBe(2);
+  });
+
   // ── openForBuild: create-mode ──────────────────────────────────────────
 
   it('openForBuild creates .eh/ + .gitignore + graph.db on a clean folder', async () => {

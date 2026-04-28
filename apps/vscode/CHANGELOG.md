@@ -20,6 +20,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Workspace-folder ambiguity fixed**: the scanner can no longer index files outside the current workspace. The graph file's location *is* the project; if no folder is open, project-graph tools surface a clear "open a folder in VS Code" message instead of silently writing into the wrong DB.
 - **Activation never touches disk** — opening a folder in VS Code does NOT create `.eh/`, `.gitignore`, or `graph.db`. Those files are created only by `/eh:optimize-context` on its first run. Activation may *attach* to an existing `<folder>/.eh/graph.db` from a prior skill run, but never creates one.
 - **`/eh:optimize-context` is now the only trigger** for graph builds. The Knowledge → Graph tab no longer has Build / Refresh / Rebuild buttons, and the `Event Horizon: Build Project Graph` / `Event Horizon: Rebuild Project Graph` Command Palette entries are removed. Empty state in the Knowledge tab now reads "No project graph yet — run `/eh:optimize-context` in any AI agent to build it." Search box and filter pills remain for browsing an existing graph.
+- **`/eh:optimize-context` now always rebuilds from scratch.** Re-running the skill discards the prior `<workspace>/.eh/graph.db` contents in memory and writes a fresh DB on next save — no stale rows for files that were deleted or renamed between runs.
+- **Knowledge → Graph tab refreshes automatically.** The webview hydrates the current graph state on connect (so reopening the panel shows an existing `<workspace>/.eh/graph.db` immediately) and re-fetches nodes/edges automatically when a `/eh:optimize-context` rebuild finishes — no manual click needed.
 
 ## [2.1.1] — 2026-04-22
 
