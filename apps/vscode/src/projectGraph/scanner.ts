@@ -15,8 +15,37 @@ type RationaleExtractFn = (
 
 const CODE_EXTENSIONS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts',
+  '.php', '.py', '.cs',
 ]);
 const MD_EXTENSIONS = new Set(['.md', '.mdx']);
+
+/**
+ * Filename patterns that mark a file as bundled / minified / auto-generated.
+ * Matched against the basename (case-insensitive). These typically explode
+ * the graph with thousands of useless nodes for vendor code the user didn't
+ * write — `dropzone.min.js` and friends.
+ */
+const SKIP_FILE_PATTERNS: RegExp[] = [
+  /\.min\.(js|mjs|css)$/i,
+  /\.bundle\.js$/i,
+  /\.bundled\.js$/i,
+  /\.umd\.js$/i,
+  /-min\.js$/i,
+  /\.generated\.cs$/i,
+  /\.designer\.cs$/i,
+  /\.pyc$/i,
+];
+
+/**
+ * Default file-size cap (KB). Files larger than this are skipped with a
+ * `tooLarge` reason. Tunable via the `eventHorizon.projectGraph.maxFileSizeKb`
+ * setting. 256 KB comfortably fits hand-written source while excluding
+ * inline-bundled vendor scripts (which are typically multiple MB).
+ */
+const DEFAULT_MAX_FILE_SIZE_KB = 256;
+
+/** First-line length above which a file is treated as minified output. */
+const MINIFIED_FIRST_LINE_THRESHOLD = 1000;
 
 export interface ScanSummary {
   filesProcessed: number;
@@ -29,7 +58,17 @@ export interface ScanSummary {
   /** Files in the workspace that matched the glob; helps spot 'no files found' cases. */
   filesMatched: number;
   /** Per-cause skip counters so we can pinpoint why files weren't processed. */
-  skipReasons?: { hashMatch: number; noExtractor: number; notCommitted: number; mdDisabled: number; error: number };
+  skipReasons?: {
+    hashMatch: number;
+    noExtractor: number;
+    notCommitted: number;
+    mdDisabled: number;
+    error: number;
+    /** Filename matched a vendor / minified / generated pattern (`*.min.js`, `*.designer.cs`, etc.). */
+    minified: number;
+    /** File size exceeded the `projectGraph.maxFileSizeKb` cap. */
+    tooLarge: number;
+  };
   /** The directory the walker actually rooted at — surfaces wrong-folder bugs. undefined when no workspace was open. */
   rootScanned?: string | undefined;
   /** Whether vscode.workspace.workspaceFolders was non-empty at scan time. */
@@ -79,7 +118,15 @@ export class ProjectGraphScanner {
     let nodesCreated = 0;
     let edgesCreated = 0;
     let firstError: string | undefined;
-    const skipReasons = { hashMatch: 0, noExtractor: 0, notCommitted: 0, mdDisabled: 0, error: 0 };
+    const skipReasons = {
+      hashMatch: 0,
+      noExtractor: 0,
+      notCommitted: 0,
+      mdDisabled: 0,
+      error: 0,
+      minified: 0,
+      tooLarge: 0,
+    };
 
     // Resolve the workspace at scan time. If workspace.workspaceFolders is empty
     // (the dev host window has no folder open, or VS Code launched on a single
@@ -129,9 +176,18 @@ export class ProjectGraphScanner {
       store.clearAll();
     }
 
+    // Read the size cap from VS Code config. Bounded so a typo can't disable
+    // the cap entirely (0/negative → fallback to default).
+    const cfgMaxKb = vscode.workspace.getConfiguration('eventHorizon').get<number>('projectGraph.maxFileSizeKb', DEFAULT_MAX_FILE_SIZE_KB);
+    const maxFileSizeBytes = (cfgMaxKb && cfgMaxKb > 0 ? cfgMaxKb : DEFAULT_MAX_FILE_SIZE_KB) * 1024;
+
     const allFiles = await walkDir(root);
     const matched = allFiles.filter((p) => {
       const ext = path.extname(p).toLowerCase();
+      const base = path.basename(p);
+      // Drop files whose basename matches a vendor / minified / generated
+      // pattern before the extension check even runs.
+      if (SKIP_FILE_PATTERNS.some((re) => re.test(base))) return false;
       return CODE_EXTENSIONS.has(ext) || MD_EXTENSIONS.has(ext);
     });
 
@@ -151,7 +207,33 @@ export class ProjectGraphScanner {
       progress?.report({ message: path.basename(filePath), increment });
 
       try {
+        // Size cap first: stat is cheaper than readFile, and large files
+        // (inline-bundled vendor scripts in the multi-MB range) are exactly
+        // the ones we don't want hashing or parsing.
+        const stat = await fs.promises.stat(filePath);
+        if (stat.size > maxFileSizeBytes) {
+          filesSkipped++;
+          skipReasons.tooLarge++;
+          continue;
+        }
+
         const source = await fs.promises.readFile(filePath, 'utf8');
+
+        // Minified-bundle heuristic: if the first non-empty line is wider
+        // than MINIFIED_FIRST_LINE_THRESHOLD chars, the file is almost
+        // certainly minified output that slipped past the filename and
+        // size filters.
+        const firstLineEnd = source.search(/\S.*$/m);
+        if (firstLineEnd >= 0) {
+          const newlineIdx = source.indexOf('\n', firstLineEnd);
+          const firstNonEmptyLineLen = (newlineIdx === -1 ? source.length : newlineIdx) - firstLineEnd;
+          if (firstNonEmptyLineLen > MINIFIED_FIRST_LINE_THRESHOLD) {
+            filesSkipped++;
+            skipReasons.minified++;
+            continue;
+          }
+        }
+
         const contentHash = crypto.createHash('sha256').update(source).digest('hex');
 
         if (!opts?.force && store.getFileState(filePath)?.contentHash === contentHash) {
@@ -266,8 +348,19 @@ export class ProjectGraphScanner {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'out', 'build', 'webview-dist',
+  // JS / TS ecosystem
+  'node_modules', 'dist', 'out', 'build', 'webview-dist',
   '.next', '.turbo', '.cache', 'coverage', '.vscode-test',
+  // VCS
+  '.git',
+  // PHP / Composer
+  'vendor',
+  // Python
+  '__pycache__', '.venv', 'venv', '.tox', '.pytest_cache', '.mypy_cache',
+  // .NET / NuGet
+  'bin', 'obj', 'packages',
+  // Generic build / vendor
+  'target',
 ]);
 
 async function walkDir(root: string): Promise<string[]> {

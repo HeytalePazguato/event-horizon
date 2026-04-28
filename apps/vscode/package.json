@@ -416,6 +416,14 @@
           "default": true,
           "description": "Allow agents to add INFERRED nodes via the eh_extract_concepts MCP tool. EH itself never makes outbound model calls.",
           "order": 43
+        },
+        "eventHorizon.projectGraph.maxFileSizeKb": {
+          "type": "number",
+          "default": 256,
+          "minimum": 16,
+          "maximum": 8192,
+          "description": "Skip files larger than this size (KB) during workspace scans. Defaults to 256 KB — comfortably fits hand-written source while excluding inline-bundled vendor scripts that explode the graph with useless nodes.",
+          "order": 44
         }
       }
     },
@@ -495,7 +503,10 @@
     "@event-horizon/ui": "workspace:*",
     "html2canvas": "^1.4.1",
     "sql.js": "^1.14.1",
+    "tree-sitter-c-sharp": "^0.23.0",
     "tree-sitter-javascript": "^0.23.0",
+    "tree-sitter-php": "^0.23.0",
+    "tree-sitter-python": "^0.23.0",
     "tree-sitter-typescript": "^0.23.0",
     "web-tree-sitter": "^0.25.0",
     "ws": "^8.20.0"

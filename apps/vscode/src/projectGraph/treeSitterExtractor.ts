@@ -20,10 +20,19 @@ import type {
   Parser as TSParser,
 } from 'web-tree-sitter';
 import type { GraphEdge, GraphNode, GraphNodeType, RelationType } from './index.js';
+import { walkPhp } from './treeSitterPhp.js';
+import { walkPython } from './treeSitterPython.js';
+import { walkCsharp } from './treeSitterCsharp.js';
 
 const MAX_FILE_BYTES = 1024 * 1024; // 1 MB
 
-export type TreeSitterLanguageKey = 'typescript' | 'tsx' | 'javascript';
+export type TreeSitterLanguageKey =
+  | 'typescript'
+  | 'tsx'
+  | 'javascript'
+  | 'php'
+  | 'python'
+  | 'csharp';
 
 export interface ExtractResult {
   nodes: GraphNode[];
@@ -60,6 +69,18 @@ function locateWasm(file: string): string {
     if (file === 'tree-sitter-javascript.wasm') {
       return require.resolve(`tree-sitter-javascript/${file}`);
     }
+    // PHP ships two grammars (full PHP w/ HTML embedding, and PHP-only). We
+    // use the PHP-only one and rename it on copy; in dev/test, fall back to
+    // resolving the upstream filename.
+    if (file === 'tree-sitter-php.wasm') {
+      return require.resolve(`tree-sitter-php/tree-sitter-php_only.wasm`);
+    }
+    if (file === 'tree-sitter-python.wasm') {
+      return require.resolve(`tree-sitter-python/${file}`);
+    }
+    if (file === 'tree-sitter-c-sharp.wasm') {
+      return require.resolve(`tree-sitter-c-sharp/tree-sitter-c_sharp.wasm`);
+    }
   } catch {
     /* fall through */
   }
@@ -71,13 +92,21 @@ export function detectLanguage(filePath: string): TreeSitterLanguageKey | null {
   if (ext === '.ts' || ext === '.mts' || ext === '.cts') return 'typescript';
   if (ext === '.tsx') return 'tsx';
   if (ext === '.jsx' || ext === '.mjs' || ext === '.cjs' || ext === '.js') return 'javascript';
+  if (ext === '.php') return 'php';
+  if (ext === '.py') return 'python';
+  if (ext === '.cs') return 'csharp';
   return null;
 }
 
 function wasmFileFor(key: TreeSitterLanguageKey): string {
-  if (key === 'typescript') return 'tree-sitter-typescript.wasm';
-  if (key === 'tsx') return 'tree-sitter-tsx.wasm';
-  return 'tree-sitter-javascript.wasm';
+  switch (key) {
+    case 'typescript': return 'tree-sitter-typescript.wasm';
+    case 'tsx': return 'tree-sitter-tsx.wasm';
+    case 'javascript': return 'tree-sitter-javascript.wasm';
+    case 'php': return 'tree-sitter-php.wasm';
+    case 'python': return 'tree-sitter-python.wasm';
+    case 'csharp': return 'tree-sitter-c-sharp.wasm';
+  }
 }
 
 type WebTreeSitterModule = typeof import('web-tree-sitter');
@@ -108,7 +137,22 @@ export class TreeSitterExtractor {
 
     try {
       const ctx = new ExtractionContext(filePath, contentHash, langKey);
-      ctx.walk(tree.rootNode, ctx.moduleNode);
+      switch (langKey) {
+        case 'typescript':
+        case 'tsx':
+        case 'javascript':
+          ctx.walkTypescript(tree.rootNode, ctx.moduleNode);
+          break;
+        case 'php':
+          walkPhp(tree.rootNode, ctx);
+          break;
+        case 'python':
+          walkPython(tree.rootNode, ctx, source);
+          break;
+        case 'csharp':
+          walkCsharp(tree.rootNode, ctx);
+          break;
+      }
       return {
         nodes: ctx.allNodes(),
         edges: ctx.edges,
@@ -159,7 +203,7 @@ export class TreeSitterExtractor {
   }
 }
 
-class ExtractionContext {
+export class ExtractionContext {
   filePath: string;
   relPath: string;
   contentHash: string;
@@ -194,7 +238,7 @@ class ExtractionContext {
     return [...this.realNodes, ...this.refNodes.values()];
   }
 
-  walk(node: TSNode, scope: GraphNode): void {
+  walkTypescript(node: TSNode, scope: GraphNode): void {
     switch (node.type) {
       case 'function_declaration': {
         const funcNode = this.makeFunctionNode(
@@ -205,7 +249,7 @@ class ExtractionContext {
         if (funcNode) {
           this.realNodes.push(funcNode);
           const body = node.childForFieldName('body');
-          if (body) this.walk(body, funcNode);
+          if (body) this.walkTypescript(body, funcNode);
         }
         return;
       }
@@ -218,7 +262,7 @@ class ExtractionContext {
         if (funcNode) {
           this.realNodes.push(funcNode);
           const body = node.childForFieldName('body');
-          if (body) this.walk(body, funcNode);
+          if (body) this.walkTypescript(body, funcNode);
         }
         return;
       }
@@ -235,7 +279,7 @@ class ExtractionContext {
           const funcNode = this.makeArrowFunctionNode(value, nameField.text, startLine);
           this.realNodes.push(funcNode);
           const body = value.childForFieldName('body');
-          if (body) this.walk(body, funcNode);
+          if (body) this.walkTypescript(body, funcNode);
           return;
         }
         break;
@@ -246,7 +290,7 @@ class ExtractionContext {
           this.realNodes.push(classNode);
           this.processClassHeritage(node, classNode);
           const body = node.childForFieldName('body');
-          if (body) this.walk(body, classNode);
+          if (body) this.walkTypescript(body, classNode);
         }
         return;
       }
@@ -256,7 +300,7 @@ class ExtractionContext {
           this.realNodes.push(ifaceNode);
           this.processInterfaceHeritage(node, ifaceNode);
           const body = node.childForFieldName('body');
-          if (body) this.walk(body, ifaceNode);
+          if (body) this.walkTypescript(body, ifaceNode);
         }
         return;
       }
@@ -267,7 +311,7 @@ class ExtractionContext {
       case 'call_expression': {
         this.processCall(node, scope);
         for (const c of node.namedChildren) {
-          if (c) this.walk(c, scope);
+          if (c) this.walkTypescript(c, scope);
         }
         return;
       }
@@ -275,8 +319,33 @@ class ExtractionContext {
 
     // Default: recurse into named children, preserving the current scope.
     for (const c of node.namedChildren) {
-      if (c) this.walk(c, scope);
+      if (c) this.walkTypescript(c, scope);
     }
+  }
+
+  // ── Helpers reused by the per-language walkers (PHP/Python/C#) ─────────
+
+  /**
+   * Push a node onto the realNodes list. Per-language walkers use this so
+   * they don't have to know about ExtractionContext's internal storage.
+   */
+  pushNode(node: GraphNode): void {
+    this.realNodes.push(node);
+  }
+
+  /** Append an edge. Per-language walkers use this. */
+  pushEdge(edge: GraphEdge): void {
+    this.edges.push(edge);
+  }
+
+  /** Lazily create a placeholder ref node for an unresolved target. */
+  ensureRef(
+    id: string,
+    label: string,
+    type: GraphNodeType,
+    extras?: { sourceFile?: string },
+  ): GraphNode {
+    return this.ensureRefNode(id, label, type, extras);
   }
 
   private makeFunctionNode(
