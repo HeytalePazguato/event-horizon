@@ -97,8 +97,8 @@ importers:
         specifier: ^1.4.11
         version: 1.4.11
       '@types/vscode':
-        specifier: ^1.100.0
-        version: 1.110.0
+        specifier: ^1.116.0
+        version: 1.116.0
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
@@ -1018,8 +1018,8 @@ packages:
   '@types/sql.js@1.4.11':
     resolution: {integrity: sha512-QXIx38p2ZThJaK9vP5ZdqdlRe1FG9I8SmCZOS7FHfB/2qPAjZwkL7/vlfPg6N/oWHuuOaGg/P/IRwfP2W0kWVQ==}
 
-  '@types/vscode@1.110.0':
-    resolution: {integrity: sha512-AGuxUEpU4F4mfuQjxPPaQVyuOMhs+VT/xRok1jiHVBubHK7lBRvCuOMZG0LKUwxncrPorJ5qq/uil3IdZBd5lA==}
+  '@types/vscode@1.116.0':
+    resolution: {integrity: sha512-sYHp4MO6BqJ2PD7Hjt0hlIS3tMaYsVPJrd0RUjDJ8HtOYnyJIEej0bLSccM8rE77WrC+Xox/kdBwEFDO8MsxNA==}
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
@@ -3323,7 +3323,7 @@ snapshots:
       '@types/emscripten': 1.41.5
       '@types/node': 25.6.0
 
-  '@types/vscode@1.110.0': {}
+  '@types/vscode@1.116.0': {}
 
   '@types/ws@8.18.1':
     dependencies:
