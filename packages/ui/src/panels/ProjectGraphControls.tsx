@@ -39,10 +39,14 @@ export interface GraphFilter {
 
 export interface ProjectGraphControlsProps {
   stats: GraphStats | null;
+  /**
+   * Build progress streamed from the extension while a `/eh:optimize-context`
+   * scan is in flight. The component renders the progress text but never
+   * triggers a build — the skill is the sole trigger.
+   */
   buildProgress: GraphBuildProgress | null;
   filter: GraphFilter;
   onFilterChange: (next: GraphFilter) => void;
-  onBuild: (force: boolean) => void;
 }
 
 // ── Filter options ─────────────────────────────────────────────────────────
@@ -88,20 +92,6 @@ const styles = {
   stats: {
     fontSize: 11,
     color: '#88aacc',
-  },
-  buildButton: {
-    background: 'linear-gradient(180deg, #2a4a7f 0%, #14202c 100%)',
-    color: '#cce0ff',
-    border: '1px solid #44ddff',
-    borderRadius: 3,
-    padding: '4px 10px',
-    fontFamily: 'monospace',
-    fontSize: 11,
-    cursor: 'pointer',
-  },
-  buildButtonDisabled: {
-    opacity: 0.5,
-    cursor: 'wait',
   },
   search: {
     flex: 1,
@@ -152,7 +142,6 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
   buildProgress,
   filter,
   onFilterChange,
-  onBuild,
 }) => {
   const [searchInput, setSearchInput] = useState(filter.search ?? '');
 
@@ -182,9 +171,8 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
 
   const isBuilding = buildProgress !== null;
   const hasGraph = stats !== null && stats.nodeCount > 0;
-  // `workspaceOpen` is only `false` when the extension explicitly told us the
-  // per-project graph DB isn't mounted. `undefined` (older messages) means
-  // assume open, matching legacy behavior.
+  // `workspaceOpen` is only `false` when the extension explicitly told us no
+  // folder is mounted. `undefined` (older messages) means assume open.
   const workspaceOpen = stats?.workspaceOpen !== false;
 
   return (
@@ -200,37 +188,15 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
           </span>
         ) : (
           <span style={styles.emptyHint}>
-            No project graph yet — click Build to scan the workspace.
+            No project graph yet — run <code>/eh:optimize-context</code> in any AI agent to build it.
           </span>
         )}
 
-        {!workspaceOpen ? null : isBuilding ? (
+        {isBuilding && workspaceOpen ? (
           <span style={styles.progress}>
             Building: {buildProgress.filesProcessed} / {buildProgress.filesTotal} ({buildProgress.phase})
           </span>
-        ) : (
-          <>
-            <button
-              type="button"
-              style={{ ...styles.buildButton, ...(isBuilding ? styles.buildButtonDisabled : {}) }}
-              disabled={isBuilding}
-              onClick={() => onBuild(false)}
-            >
-              {hasGraph ? 'Refresh' : 'Build'}
-            </button>
-            {hasGraph && (
-              <button
-                type="button"
-                style={{ ...styles.buildButton, ...(isBuilding ? styles.buildButtonDisabled : {}) }}
-                disabled={isBuilding}
-                onClick={() => onBuild(true)}
-                title="Drop existing graph and rescan everything"
-              >
-                Rebuild
-              </button>
-            )}
-          </>
-        )}
+        ) : null}
 
         <input
           type="text"

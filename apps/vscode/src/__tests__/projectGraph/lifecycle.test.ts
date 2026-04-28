@@ -1,6 +1,12 @@
 /**
- * ProjectGraphLifecycle tests — open/close, workspace swap, .gitignore
- * provisioning, dirty-flush behavior, no-folder posture.
+ * ProjectGraphLifecycle tests — verify the user-triggered rule:
+ *
+ *   - `attachIfExists(folder)` reads but never writes. No `.eh/` directory,
+ *     no `.gitignore`, no empty DB file get created.
+ *   - `openForBuild(folder)` is the ONE code path allowed to create files.
+ *
+ * The skill `/eh:optimize-context` is the user-facing trigger that reaches
+ * `openForBuild` (via the `eh_build_graph` MCP handler).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -11,8 +17,7 @@ import { ProjectGraphLifecycle } from '../../projectGraph/lifecycle.js';
 import type { GraphNode } from '../../projectGraph/index.js';
 
 function tmpWorkspace(label: string): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), `eh-lifecycle-${label}-`));
-  return root;
+  return fs.mkdtempSync(path.join(os.tmpdir(), `eh-lifecycle-${label}-`));
 }
 
 function makeNode(id: string): GraphNode {
@@ -55,101 +60,127 @@ describe('ProjectGraphLifecycle', () => {
     workspaces.length = 0;
   });
 
-  it('opens DB at <workspace>/.eh/graph.db and exposes a non-null active store', async () => {
-    const ws = newWorkspace('open');
-    await lifecycle.openForWorkspace(ws);
+  // ── attachIfExists: read-only ──────────────────────────────────────────
 
-    const store = lifecycle.getActiveStore();
-    expect(store).not.toBeNull();
+  it('attachIfExists on a folder with no graph file does NOT create .eh/, .gitignore, or graph.db', async () => {
+    const ws = newWorkspace('clean');
+    await lifecycle.attachIfExists(ws);
 
-    const expectedPath = path.join(path.resolve(ws), '.eh', 'graph.db');
-    expect(lifecycle.getActiveDbPath()).toBe(expectedPath);
+    expect(fs.existsSync(path.join(ws, '.eh'))).toBe(false);
+    expect(fs.existsSync(path.join(ws, '.eh', '.gitignore'))).toBe(false);
+    expect(fs.existsSync(path.join(ws, '.eh', 'graph.db'))).toBe(false);
+
+    // The folder is tracked (so the build handler knows which folder is current),
+    // but the store is null because no graph DB exists yet.
     expect(lifecycle.getActiveWorkspace()).toBe(path.resolve(ws));
-  });
-
-  it('writes .eh/.gitignore on first open and does NOT overwrite a user-customised one', async () => {
-    const ws = newWorkspace('gi');
-    await lifecycle.openForWorkspace(ws);
-
-    const gitignorePath = path.join(ws, '.eh', '.gitignore');
-    expect(fs.existsSync(gitignorePath)).toBe(true);
-    const initialContent = fs.readFileSync(gitignorePath, 'utf8');
-    expect(initialContent).toContain('*.db');
-
-    await lifecycle.closeActive();
-
-    // User customises the .gitignore
-    fs.writeFileSync(gitignorePath, '# user notes\n*.db\n', 'utf8');
-
-    await lifecycle.openForWorkspace(ws);
-    const finalContent = fs.readFileSync(gitignorePath, 'utf8');
-    expect(finalContent).toBe('# user notes\n*.db\n');
-  });
-
-  it('closeActive flushes dirty state to disk', async () => {
-    const ws = newWorkspace('flush');
-    await lifecycle.openForWorkspace(ws);
-
-    const store = lifecycle.getActiveStore();
-    expect(store).not.toBeNull();
-    store!.upsertNode(makeNode('n1'));
-
-    await lifecycle.closeActive();
-
-    const dbPath = path.join(ws, '.eh', 'graph.db');
-    expect(fs.existsSync(dbPath)).toBe(true);
-    expect(fs.statSync(dbPath).size).toBeGreaterThan(0);
     expect(lifecycle.getActiveStore()).toBeNull();
   });
 
-  it('swap from workspace A to B closes A and opens B', async () => {
-    const wsA = newWorkspace('a');
-    const wsB = newWorkspace('b');
-    const seen: Array<string | null> = [];
+  it('attachIfExists opens an existing graph.db produced by a prior build', async () => {
+    const ws = newWorkspace('preexisting');
 
-    lifecycle.onActiveStoreChange((s) => {
-      seen.push(s ? lifecycle.getActiveWorkspace() : null);
-    });
+    // Simulate a prior `/eh:optimize-context` run.
+    await lifecycle.openForBuild(ws);
+    lifecycle.getActiveStore()!.upsertNode(makeNode('persisted'));
+    await lifecycle.closeActive();
 
-    await lifecycle.openForWorkspace(wsA);
-    expect(lifecycle.getActiveWorkspace()).toBe(path.resolve(wsA));
-
-    await lifecycle.openForWorkspace(wsB);
-    expect(lifecycle.getActiveWorkspace()).toBe(path.resolve(wsB));
-
-    // Emitter sequence: open A → close A (null) → open B
-    expect(seen[0]).toBe(path.resolve(wsA));
-    expect(seen[1]).toBeNull();
-    expect(seen[2]).toBe(path.resolve(wsB));
+    // Activation re-attaches via attachIfExists.
+    await lifecycle.attachIfExists(ws);
+    const store = lifecycle.getActiveStore();
+    expect(store).not.toBeNull();
+    expect(store!.getNodeById('persisted')).not.toBeNull();
   });
 
-  it('opening the same workspace twice is a no-op (no swap)', async () => {
-    const ws = newWorkspace('idem');
-    await lifecycle.openForWorkspace(ws);
-    const store1 = lifecycle.getActiveStore();
-    await lifecycle.openForWorkspace(ws);
-    const store2 = lifecycle.getActiveStore();
-    expect(store2).toBe(store1);
+  // ── openForBuild: create-mode ──────────────────────────────────────────
+
+  it('openForBuild creates .eh/ + .gitignore + graph.db on a clean folder', async () => {
+    const ws = newWorkspace('build');
+    const store = await lifecycle.openForBuild(ws);
+    expect(store).not.toBeNull();
+
+    expect(fs.existsSync(path.join(ws, '.eh'))).toBe(true);
+    const gitignore = fs.readFileSync(path.join(ws, '.eh', '.gitignore'), 'utf8');
+    expect(gitignore).toContain('*.db');
+
+    // Push a row + close so the file is flushed.
+    store.upsertNode(makeNode('n1'));
+    await lifecycle.closeActive();
+    expect(fs.existsSync(path.join(ws, '.eh', 'graph.db'))).toBe(true);
+    expect(fs.statSync(path.join(ws, '.eh', 'graph.db')).size).toBeGreaterThan(0);
   });
 
-  it('with no folder ever opened, getActiveStore returns null', () => {
+  it('openForBuild does NOT overwrite a user-customised .gitignore', async () => {
+    const ws = newWorkspace('userGitignore');
+    const ehDir = path.join(ws, '.eh');
+    fs.mkdirSync(ehDir, { recursive: true });
+    fs.writeFileSync(path.join(ehDir, '.gitignore'), '# user notes\n*.db\n', 'utf8');
+
+    await lifecycle.openForBuild(ws);
+    const finalContent = fs.readFileSync(path.join(ehDir, '.gitignore'), 'utf8');
+    expect(finalContent).toBe('# user notes\n*.db\n');
+  });
+
+  it('openForBuild upgrades an attachIfExists-tracked folder in place', async () => {
+    const ws = newWorkspace('upgrade');
+    await lifecycle.attachIfExists(ws);
+    expect(lifecycle.getActiveStore()).toBeNull();
+
+    const store = await lifecycle.openForBuild(ws);
+    expect(store).not.toBeNull();
+    expect(lifecycle.getActiveWorkspace()).toBe(path.resolve(ws));
+  });
+
+  // ── Lifecycle behaviors ────────────────────────────────────────────────
+
+  it('closeActive flushes dirty state to disk', async () => {
+    const ws = newWorkspace('flush');
+    const store = await lifecycle.openForBuild(ws);
+    store.upsertNode(makeNode('flush-me'));
+
+    await lifecycle.closeActive();
+
+    expect(fs.existsSync(path.join(ws, '.eh', 'graph.db'))).toBe(true);
     expect(lifecycle.getActiveStore()).toBeNull();
     expect(lifecycle.getActiveWorkspace()).toBeNull();
   });
 
-  it('persists a buffer across open/close cycles', async () => {
-    const ws = newWorkspace('persist');
-    await lifecycle.openForWorkspace(ws);
+  it('attaching from workspace A to B closes A and tracks B (no files created in B)', async () => {
+    const wsA = newWorkspace('a');
+    const wsB = newWorkspace('b');
 
-    const storeA = lifecycle.getActiveStore()!;
-    storeA.upsertNode(makeNode('persist-1'));
-    await lifecycle.closeActive();
+    await lifecycle.openForBuild(wsA);
+    expect(lifecycle.getActiveWorkspace()).toBe(path.resolve(wsA));
 
-    // Re-open the same workspace, expect the node survives
-    await lifecycle.openForWorkspace(ws);
-    const storeB = lifecycle.getActiveStore()!;
-    const found = storeB.getNodeById('persist-1');
-    expect(found).not.toBeNull();
-    expect(found!.label).toBe('persist-1');
+    await lifecycle.attachIfExists(wsB);
+    expect(lifecycle.getActiveWorkspace()).toBe(path.resolve(wsB));
+    expect(lifecycle.getActiveStore()).toBeNull();
+    expect(fs.existsSync(path.join(wsB, '.eh'))).toBe(false);
+  });
+
+  it('attachIfExists on the same workspace twice is a no-op', async () => {
+    const ws = newWorkspace('idem');
+    await lifecycle.attachIfExists(ws);
+    const ws1 = lifecycle.getActiveWorkspace();
+    await lifecycle.attachIfExists(ws);
+    expect(lifecycle.getActiveWorkspace()).toBe(ws1);
+  });
+
+  it('with no folder ever attached, getActiveStore and getActiveWorkspace return null', () => {
+    expect(lifecycle.getActiveStore()).toBeNull();
+    expect(lifecycle.getActiveWorkspace()).toBeNull();
+  });
+
+  it('emits onActiveStoreChange in the right order when transitioning attach → build → close', async () => {
+    const ws = newWorkspace('emit');
+    const seen: Array<'store' | 'null'> = [];
+    lifecycle.onActiveStoreChange((s) => {
+      seen.push(s ? 'store' : 'null');
+    });
+
+    await lifecycle.attachIfExists(ws);  // no DB yet → fires null
+    await lifecycle.openForBuild(ws);    // creates DB → fires store
+    await lifecycle.closeActive();       // → fires null
+
+    expect(seen).toEqual(['null', 'store', 'null']);
   });
 });

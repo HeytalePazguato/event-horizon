@@ -2197,9 +2197,19 @@ export class McpServer {
       }
 
       case 'eh_build_graph': {
-        const { projectGraphScanner } = this.deps;
+        const { projectGraphScanner, projectGraphLifecycle } = this.deps;
         if (!projectGraphScanner) {
           return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
+        }
+        // The skill is the only path that creates `<folder>/.eh/graph.db`.
+        // openForBuild ensures the directory + .gitignore + DB file exist
+        // before the scanner writes anything.
+        if (projectGraphLifecycle) {
+          const folder = projectGraphLifecycle.getActiveWorkspace();
+          if (!folder) {
+            return { error: 'No workspace folder open. Open a folder in VS Code before running /eh:optimize-context.' };
+          }
+          await projectGraphLifecycle.openForBuild(folder);
         }
         const force = typeof args.force === 'boolean' ? args.force : false;
         // force=true also wipes the existing graph so a previously-polluted scan

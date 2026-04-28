@@ -12,7 +12,7 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphScanner, getProjectGraphLifecycle } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphLifecycle } from './eventServer.js';
 import { getDatabase, resetBroadcastHashes } from './extension.js';
 import { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import type { GraphNodeType, GraphTag } from './projectGraph/index.js';
@@ -742,45 +742,6 @@ function wireUniverseWebview(
         } catch (err) {
           void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: String(err) });
         }
-      })();
-    } else if (msg?.type === 'graph-build-request') {
-      void (async () => {
-        const scanner = getProjectGraphScanner();
-        const store = getProjectGraphStore();
-        if (!scanner || !store) {
-          const workspaceOpen = !!getProjectGraphLifecycle()?.getActiveWorkspace();
-          void webview.postMessage({
-            type: 'graph-stats-update',
-            stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
-          });
-          return;
-        }
-        let filesProcessed = 0;
-        const progress: import('vscode').Progress<{ message?: string; increment?: number }> = {
-          report({ message, increment }) {
-            if (increment !== undefined && increment > 0) {
-              const filesTotal = Math.round(100 / increment);
-              void webview.postMessage({
-                type: 'graph-build-progress',
-                filesProcessed: ++filesProcessed,
-                filesTotal,
-                nodesCreated: 0,
-                edgesCreated: 0,
-                phase: message ?? 'scanning',
-              });
-            }
-          },
-        };
-        try {
-          await scanner.scanWorkspace(progress);
-        } catch { /* scan failed */ }
-        const stats = store.getStats();
-        void webview.postMessage({
-          type: 'graph-stats-update',
-          stats: { ...stats, lastBuildAt: Date.now(), workspaceOpen: true },
-        });
-        // Signal completion so the UI clears the "Building..." state.
-        void webview.postMessage({ type: 'graph-build-progress', done: true });
       })();
     } else if (msg?.type === 'graph-browse-request') {
       void (async () => {

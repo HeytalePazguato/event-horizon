@@ -1,18 +1,24 @@
 /**
  * Per-workspace lifecycle for the project graph database.
  *
- * The extension owns one `ProjectGraphLifecycle` instance for the duration
- * of an activation. It opens `<workspace>/.eh/graph.db` for the primary
- * workspace folder, swaps DBs when the user changes folders, and closes
- * everything cleanly on deactivation. A 60s save loop persists dirty state
- * to disk in the background.
+ * Two distinct entry points enforce the user-triggered rule:
  *
- * Consumers (scanner, query engine, MCP handlers, webview) ask the
- * lifecycle for `getActiveStore()` at call time. When no folder is open
- * the store is `null` and consumers report a clear "no workspace" state
- * instead of silently writing into a polluted global DB — the workspace-
- * folder ambiguity that bit us during 3.0.0 dogfooding becomes structurally
- * impossible because the graph file's location *is* the project.
+ *   - `attachIfExists(folder)` — called on extension activation and on
+ *     workspace-folder change. ONLY opens an existing `<folder>/.eh/graph.db`
+ *     if one is already on disk (built by a prior `/eh:optimize-context` run).
+ *     **Creates nothing** — no `.eh/` directory, no `.gitignore`, no empty
+ *     `graph.db` file. If no graph exists, the lifecycle attaches the folder
+ *     name (so `getActiveWorkspace()` knows which folder is current) but
+ *     leaves `getActiveStore()` returning `null`.
+ *
+ *   - `openForBuild(folder)` — called only by the `eh_build_graph` MCP
+ *     handler (which is reachable solely via `/eh:optimize-context`). This
+ *     is the ONE code path allowed to create files: it `mkdir`s `.eh/`,
+ *     writes `.gitignore` if absent, and creates `graph.db` if missing.
+ *
+ * The user-triggered rule from the plan: nothing touches disk until the
+ * user explicitly invokes the skill. Activation is allowed to *read* an
+ * existing graph; it is not allowed to *create* one.
  */
 
 import * as vscode from 'vscode';
@@ -31,13 +37,24 @@ export class ProjectGraphLifecycle {
   private saveInterval: ReturnType<typeof setInterval> | null = null;
   private readonly emitter = new vscode.EventEmitter<ProjectGraphStore | null>();
 
-  /** Fires whenever the active store changes (open, close, or swap). */
+  /** Fires whenever the active store changes (attach, build, close, swap). */
   readonly onActiveStoreChange: vscode.Event<ProjectGraphStore | null> = this.emitter.event;
 
+  /**
+   * The currently-tracked workspace folder, if any. Set by both
+   * `attachIfExists` and `openForBuild`. Independent of whether a graph DB
+   * is actually open — used by the MCP build handler to know which folder
+   * to call `openForBuild` against.
+   */
   getActiveWorkspace(): string | null {
     return this.activeWorkspace;
   }
 
+  /**
+   * The currently-loaded graph store, if any. Returns `null` when no graph
+   * file exists on disk yet (the user hasn't run the skill) or no folder is
+   * mounted at all.
+   */
   getActiveStore(): ProjectGraphStore | null {
     return this.activeDb?.getStore() ?? null;
   }
@@ -47,21 +64,61 @@ export class ProjectGraphLifecycle {
   }
 
   /**
-   * Open (or re-open) the graph DB for the given workspace folder. If a
-   * different workspace is active, it is closed with a final flush before
-   * the new one is opened. Calling this with the currently-active folder
-   * is a no-op.
+   * Read-only attach: tracks the folder and opens `<folder>/.eh/graph.db`
+   * **only if the file already exists**. Never creates the directory or
+   * any files. Safe to call on activation — the user can open any folder
+   * in VS Code without writing anything to disk.
    *
-   * Side effects on first open for a folder:
-   *   - Creates `<folder>/.eh/` if missing
-   *   - Writes `<folder>/.eh/.gitignore` (`*.db`, `*.db-shm`, `*.db-wal`)
-   *     only if it does not already exist (never overwrites a user-edited file)
+   * If the lifecycle is currently attached to a different folder, that one
+   * is closed (with a final flush of any dirty state) before the new one
+   * is attached.
    */
-  async openForWorkspace(folder: string): Promise<void> {
+  async attachIfExists(folder: string): Promise<void> {
     const normalized = path.resolve(folder);
-    if (this.activeWorkspace === normalized && this.activeDb) return;
 
-    if (this.activeDb) {
+    // Same folder, same state — no work.
+    if (this.activeWorkspace === normalized) return;
+
+    if (this.activeDb || this.activeWorkspace) {
+      await this.closeActive();
+    }
+
+    this.activeWorkspace = normalized;
+
+    const dbPath = path.join(normalized, '.eh', 'graph.db');
+    let buffer: Uint8Array | undefined;
+    try {
+      buffer = await fs.promises.readFile(dbPath);
+    } catch {
+      // No existing graph file — that's the normal pre-skill state. We
+      // intentionally do NOT create the directory or an empty DB here.
+      this.emitter.fire(null);
+      return;
+    }
+
+    const db = await ProjectGraphDB.create(buffer);
+    this.activeDb = db;
+    this.activeDbPath = dbPath;
+    this.saveInterval = setInterval(() => this.tickSave(), SAVE_INTERVAL_MS);
+
+    this.emitter.fire(db.getStore());
+  }
+
+  /**
+   * Build-mode open: ensures `<folder>/.eh/` exists, writes `.gitignore` if
+   * absent, and opens (or creates) `<folder>/.eh/graph.db`. Returns the
+   * active store. Called only by the `eh_build_graph` MCP handler — i.e.
+   * only when the user has invoked `/eh:optimize-context`.
+   *
+   * If the lifecycle is already attached to this folder via `attachIfExists`
+   * but no DB file existed yet, this upgrades the attachment in place by
+   * creating the file and opening it. If attached to a *different* folder,
+   * that one is closed first.
+   */
+  async openForBuild(folder: string): Promise<ProjectGraphStore> {
+    const normalized = path.resolve(folder);
+
+    if (this.activeWorkspace !== normalized && (this.activeDb || this.activeWorkspace)) {
       await this.closeActive();
     }
 
@@ -75,57 +132,63 @@ export class ProjectGraphLifecycle {
       await fs.promises.writeFile(gitignorePath, GITIGNORE_CONTENT, 'utf8');
     }
 
-    let buffer: Uint8Array | undefined;
-    try {
-      buffer = await fs.promises.readFile(dbPath);
-    } catch {
-      // No existing graph DB on disk — start with a fresh one.
+    if (!this.activeDb || this.activeWorkspace !== normalized) {
+      let buffer: Uint8Array | undefined;
+      try {
+        buffer = await fs.promises.readFile(dbPath);
+      } catch {
+        // First-ever build — create an empty DB. ProjectGraphDB.create()
+        // marks itself dirty so the first save loop persists the schema.
+      }
+      const db = await ProjectGraphDB.create(buffer);
+      this.activeDb = db;
+      this.activeWorkspace = normalized;
+      this.activeDbPath = dbPath;
+      if (this.saveInterval === null) {
+        this.saveInterval = setInterval(() => this.tickSave(), SAVE_INTERVAL_MS);
+      }
+      this.emitter.fire(db.getStore());
     }
 
-    const db = await ProjectGraphDB.create(buffer);
-
-    this.activeWorkspace = normalized;
-    this.activeDb = db;
-    this.activeDbPath = dbPath;
-    this.saveInterval = setInterval(() => this.tickSave(), SAVE_INTERVAL_MS);
-
-    this.emitter.fire(db.getStore());
+    return this.activeDb.getStore();
   }
 
   /**
-   * Flush dirty state and close the active DB. After this, `getActiveStore()`
-   * returns `null` until `openForWorkspace()` is called again. Idempotent.
+   * Flush dirty state and close the active DB. After this both
+   * `getActiveStore()` and `getActiveWorkspace()` return `null` until the
+   * lifecycle is re-attached. Idempotent.
    */
   async closeActive(): Promise<void> {
-    if (!this.activeDb) return;
-
     if (this.saveInterval) {
       clearInterval(this.saveInterval);
       this.saveInterval = null;
     }
 
-    if (this.activeDb.isDirty() && this.activeDbPath) {
+    if (this.activeDb && this.activeDb.isDirty() && this.activeDbPath) {
       try {
         const data = this.activeDb.save();
         await fs.promises.writeFile(this.activeDbPath, data);
       } catch {
-        // Final-flush failure is non-fatal — the next session will rebuild
-        // anything that didn't make it to disk. The graph is regeneratable
-        // by re-running /eh:optimize-context.
+        // Final-flush failure is non-fatal — the user's next skill run
+        // rebuilds anything that didn't make it to disk.
       }
     }
 
-    try {
-      this.activeDb.close();
-    } catch {
-      /* close best-effort */
+    if (this.activeDb) {
+      try {
+        this.activeDb.close();
+      } catch {
+        /* close best-effort */
+      }
     }
+
+    const wasActive = this.activeDb !== null || this.activeWorkspace !== null;
 
     this.activeDb = null;
     this.activeWorkspace = null;
     this.activeDbPath = null;
 
-    this.emitter.fire(null);
+    if (wasActive) this.emitter.fire(null);
   }
 
   /** Dispose the underlying EventEmitter. Call once on deactivation. */
@@ -141,8 +204,8 @@ export class ProjectGraphLifecycle {
       void fs.promises.writeFile(this.activeDbPath, data);
     } catch {
       // Intermittent disk errors will retry on the next tick. If the
-      // workspace is read-only, every tick will fail silently — the
-      // graph still works in-memory for the current session.
+      // workspace is read-only, every tick fails silently — the graph
+      // still works in-memory for the current session.
     }
   }
 }

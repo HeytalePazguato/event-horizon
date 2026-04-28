@@ -248,18 +248,18 @@ export function activate(context: vscode.ExtensionContext): void {
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
         setEventSearchEngine(eventSearchEngine);
 
-        // Per-project graph DB: opens `<workspaceFolder>/.eh/graph.db`, swaps when the
-        // primary folder changes, closes on extension deactivation. The graph file's
-        // location is the project — no more "which workspace did this row belong to?"
-        // ambiguity.
+        // Per-project graph DB lifecycle. Activation does NOT create any
+        // files — it only attaches to a pre-existing `<folder>/.eh/graph.db`
+        // if one is already on disk (built by a prior `/eh:optimize-context`
+        // run). The skill is the sole code path that creates the directory
+        // and the DB file.
         const projectGraphLifecycle = new ProjectGraphLifecycle();
         const initialFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (initialFolder) {
           try {
-            await projectGraphLifecycle.openForWorkspace(initialFolder);
-            console.log(`[Event Horizon] Graph DB opened at ${initialFolder}/.eh/graph.db`);
+            await projectGraphLifecycle.attachIfExists(initialFolder);
           } catch (err) {
-            console.error('[Event Horizon] Failed to open project graph DB:', err);
+            console.error('[Event Horizon] Failed to attach project graph DB:', err);
           }
         }
         setProjectGraphLifecycle(projectGraphLifecycle);
@@ -277,10 +277,9 @@ export function activate(context: vscode.ExtensionContext): void {
             }
             if (projectGraphLifecycle.getActiveWorkspace() === path.resolve(newFolder)) return;
             try {
-              await projectGraphLifecycle.openForWorkspace(newFolder);
-              console.log(`[Event Horizon] Graph DB swapped to ${newFolder}/.eh/graph.db`);
+              await projectGraphLifecycle.attachIfExists(newFolder);
             } catch (err) {
-              console.error('[Event Horizon] Failed to swap project graph DB:', err);
+              console.error('[Event Horizon] Failed to attach project graph DB:', err);
             }
           }),
         );
@@ -308,50 +307,12 @@ export function activate(context: vscode.ExtensionContext): void {
         const graphQueryEngine = new GraphQueryEngine(getActiveStore);
         setProjectGraphQueryEngine(graphQueryEngine);
 
-        // Register project graph commands now that scanner and store are ready
-        context.subscriptions.push(
-          vscode.commands.registerCommand('eventHorizon.buildProjectGraph', () => {
-            void vscode.window.withProgress(
-              { location: vscode.ProgressLocation.Notification, title: 'Event Horizon: Building project graph…', cancellable: false },
-              async (progress) => {
-                try {
-                  const summary = await projectGraphScanner.scanWorkspace(progress);
-                  void vscode.window.showInformationMessage(
-                    `Event Horizon: Graph built — ${summary.filesProcessed} files, ${summary.nodesCreated} nodes (${summary.durationMs}ms)`,
-                  );
-                } catch (err) {
-                  void vscode.window.showErrorMessage(`Event Horizon: Graph build failed — ${String(err)}`);
-                }
-              },
-            );
-          }),
-        );
-
-        context.subscriptions.push(
-          vscode.commands.registerCommand('eventHorizon.rebuildProjectGraph', () => {
-            void vscode.window.withProgress(
-              { location: vscode.ProgressLocation.Notification, title: 'Event Horizon: Rebuilding project graph…', cancellable: false },
-              async (progress) => {
-                try {
-                  const store = getActiveStore();
-                  if (!store) {
-                    void vscode.window.showErrorMessage('Event Horizon: No workspace folder open. Open a folder before rebuilding the graph.');
-                    return;
-                  }
-                  for (const file of store.getTrackedFiles()) {
-                    store.deleteFile(file);
-                  }
-                  const summary = await projectGraphScanner.scanWorkspace(progress);
-                  void vscode.window.showInformationMessage(
-                    `Event Horizon: Graph rebuilt — ${summary.filesProcessed} files, ${summary.nodesCreated} nodes (${summary.durationMs}ms)`,
-                  );
-                } catch (err) {
-                  void vscode.window.showErrorMessage(`Event Horizon: Graph rebuild failed — ${String(err)}`);
-                }
-              },
-            );
-          }),
-        );
+        // No Command Palette commands and no UI button for graph builds.
+        // The skill `eh:optimize-context` is the only trigger — it calls the
+        // `eh_build_graph` MCP tool, which in turn calls
+        // `lifecycle.openForBuild()` and runs the scanner. Keeping the trigger
+        // surface to a single skill prevents accidental builds from button
+        // clicks or palette typos.
 
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {

@@ -22,7 +22,6 @@ export interface ProjectGraphSectionProps {
   filter: GraphFilter;
   selectedNodeDetails: NodeDetails | null;
   onFilterChange: (next: GraphFilter) => void;
-  onBuild: (force: boolean) => void;
   onNodeSelect: (nodeId: string | null) => void;
   onRevealInEditor: (filePath: string, line?: number) => void;
 }
@@ -35,7 +34,6 @@ export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
   filter,
   selectedNodeDetails,
   onFilterChange,
-  onBuild,
   onNodeSelect,
   onRevealInEditor,
 }) => {
@@ -81,7 +79,6 @@ export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
         buildProgress={buildProgress}
         filter={filter}
         onFilterChange={onFilterChange}
-        onBuild={onBuild}
       />
       <div ref={containerRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <ProjectGraphCanvas

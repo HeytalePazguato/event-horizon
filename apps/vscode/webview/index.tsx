@@ -314,7 +314,6 @@ function App() {
         filter={graphFilter}
         selectedNodeDetails={details}
         onFilterChange={setGraphFilter}
-        onBuild={(force) => vscodeApi?.postMessage({ type: 'graph-build-request', force })}
         onNodeSelect={(nodeId) => {
           if (!nodeId) {
             setGraphNodeDetails(null);

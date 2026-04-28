@@ -82,14 +82,6 @@
         "command": "eventHorizon.exportData",
         "title": "Event Horizon: Export Data...",
         "icon": "$(export)"
-      },
-      {
-        "command": "eventHorizon.buildProjectGraph",
-        "title": "Event Horizon: Build Project Graph"
-      },
-      {
-        "command": "eventHorizon.rebuildProjectGraph",
-        "title": "Event Horizon: Rebuild Project Graph"
       }
     ],
     "menus": {
