@@ -47,24 +47,33 @@ export interface ProjectGraphCanvasProps {
 
 // ── Visual constants ───────────────────────────────────────────────────────
 
-const NODE_W = 96;
-const NODE_H = 64;
-const NODE_RADIUS = 8;
+const NODE_W = 80;
+const NODE_H = 48;
+const NODE_RADIUS = 6;
 const GRID_SPACING = 16;
+// Minimum centre-to-centre distance to prevent visual overlap. The
+// repulsion below pushes nodes that come within this radius apart by
+// the deficit each iteration. Tuned slightly larger than `NODE_W` so
+// labels and halos don't bleed into each other.
+const MIN_NODE_DISTANCE = NODE_W + 32;
 
+// Green-leaning palette to match the Event Horizon Universe view. Functions
+// (the most common node type) anchor the theme; other types use closely
+// related hues to keep the canvas cohesive instead of a rainbow.
 const NODE_COLORS: Record<string, string> = {
-  function: '#44ddff',
-  class: '#ffaa44',
+  function: '#44ff88',
+  class: '#ffcc66',
   module: '#88ffaa',
-  interface: '#88aaff',
-  concept: '#ff44ff',
-  doc_section: '#cc88ff',
-  rationale: '#ccff66',
+  interface: '#aaffcc',
+  concept: '#cc88ff',
+  doc_section: '#ccff88',
+  rationale: '#ffff88',
   agent_activity: '#ff8844',
   knowledge: '#ffffff',
 };
 
-const DEFAULT_NODE_COLOR = '#aaaaaa';
+const DEFAULT_NODE_COLOR = '#88cc99';
+const EDGE_COLOR = '#44ff88';
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -122,9 +131,9 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
           <path
             d={`M ${GRID_SPACING} 0 L 0 0 0 ${GRID_SPACING}`}
             fill="none"
-            stroke="#224488"
+            stroke="#226644"
             strokeWidth="1"
-            strokeOpacity="0.08"
+            strokeOpacity="0.1"
           />
         </pattern>
       </defs>
@@ -155,7 +164,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
               y1={a.y}
               x2={b.x}
               y2={b.y}
-              stroke="#44ddff"
+              stroke={EDGE_COLOR}
               strokeWidth="1.5"
               strokeOpacity="0.4"
             />
@@ -318,6 +327,36 @@ function layoutNodes(
       p.y += p.vy;
       p.vx *= DAMPING;
       p.vy *= DAMPING;
+    }
+
+    // Hard collision constraint: push apart any pair of nodes whose
+    // centres are closer than MIN_NODE_DISTANCE. Force-directed alone
+    // doesn't guarantee non-overlap, especially for densely connected
+    // hubs. Applying this each iteration converges to a non-overlapping
+    // layout in practice.
+    for (let i = 0; i < nodes.length; i++) {
+      const pa = pos.get(nodes[i].id);
+      if (!pa) continue;
+      for (let j = i + 1; j < nodes.length; j++) {
+        const pb = pos.get(nodes[j].id);
+        if (!pb) continue;
+        const dx = pb.x - pa.x;
+        const dy = pb.y - pa.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < MIN_NODE_DISTANCE && dist > 0.001) {
+          const push = (MIN_NODE_DISTANCE - dist) / 2;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          pa.x -= nx * push;
+          pa.y -= ny * push;
+          pb.x += nx * push;
+          pb.y += ny * push;
+        } else if (dist <= 0.001) {
+          // Coincident nodes — nudge one along a deterministic axis so
+          // the next iteration's repulsion has a direction to act on.
+          pb.x += MIN_NODE_DISTANCE / 2;
+        }
+      }
     }
   }
 

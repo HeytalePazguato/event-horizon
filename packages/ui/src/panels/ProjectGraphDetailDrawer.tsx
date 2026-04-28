@@ -95,8 +95,19 @@ const styles = {
     padding: '1px 6px',
     borderRadius: 2,
   },
-  confidenceBar: {
+  confidenceRow: {
     marginTop: 6,
+    display: 'flex' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+  },
+  confidenceLabel: {
+    fontSize: 9,
+    color: '#88aacc',
+    width: 70,
+  },
+  confidenceBar: {
+    flex: 1,
     height: 4,
     background: 'rgba(68, 136, 187, 0.2)',
     borderRadius: 2,
@@ -104,7 +115,13 @@ const styles = {
   },
   confidenceFill: {
     height: '100%',
-    background: 'linear-gradient(90deg, #44ddff, #88ffaa)',
+    background: 'linear-gradient(90deg, #44ff88, #ccff88)',
+  },
+  confidencePct: {
+    fontSize: 9,
+    color: '#cce0ff',
+    width: 30,
+    textAlign: 'right' as const,
   },
   sourceLink: {
     color: '#88ddff',
@@ -207,8 +224,15 @@ export const ProjectGraphDetailDrawer: React.FC<ProjectGraphDetailDrawerProps> =
           </span>
         </div>
         {typeof node.confidence === 'number' && (
-          <div style={styles.confidenceBar}>
-            <div style={{ ...styles.confidenceFill, width: `${Math.round(node.confidence * 100)}%` }} />
+          <div
+            style={styles.confidenceRow}
+            title="Extractor confidence (0–100%). Tree-sitter extractions are 100% (EXTRACTED). Heuristic doc/markdown extractions are ~70% (INFERRED). Agent-supplied extractions below 50% are downgraded to AMBIGUOUS."
+          >
+            <span style={styles.confidenceLabel}>confidence</span>
+            <div style={styles.confidenceBar}>
+              <div style={{ ...styles.confidenceFill, width: `${Math.round(node.confidence * 100)}%` }} />
+            </div>
+            <span style={styles.confidencePct}>{Math.round(node.confidence * 100)}%</span>
           </div>
         )}
         {node.sourceFile && (

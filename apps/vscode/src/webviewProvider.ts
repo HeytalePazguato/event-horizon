@@ -345,7 +345,16 @@ function wireUniverseWebview(
       }
     };
 
-    const lifecycleListener = lifecycle.onActiveStoreChange(pushCurrent);
+    // When the lifecycle attaches (e.g. activation finished AFTER the
+    // initial graph-browse-request fired), push fresh stats AND ask the
+    // webview to re-fetch — the first browse-request likely hit a null
+    // store and got an empty result.
+    const lifecycleListener = lifecycle.onActiveStoreChange((store) => {
+      pushCurrent();
+      if (store) {
+        void webview.postMessage({ type: 'graph-data-changed' });
+      }
+    });
     context.subscriptions.push(lifecycleListener);
 
     // After a build completes, fire a fresh stats push AND ask the webview
