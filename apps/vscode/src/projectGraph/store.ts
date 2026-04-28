@@ -41,10 +41,19 @@ interface ExistingFtsRow {
 export class ProjectGraphStore {
   private db: Database;
   private ftsAvailable: boolean;
+  private onMutate?: () => void;
 
-  constructor(db: Database) {
+  /**
+   * @param db sql.js database with `GRAPH_SCHEMA_SQL` already applied.
+   * @param onMutate Optional callback fired after every write (upsert/delete/clear).
+   *   Used by `ProjectGraphDB` to flag the wrapping DB as dirty so the auto-save
+   *   loop knows to flush. Existing call sites (where the global EventHorizonDB
+   *   tracked dirty via event ingestion) can omit this argument.
+   */
+  constructor(db: Database, onMutate?: () => void) {
     this.db = db;
     this.ftsAvailable = this.detectFts();
+    this.onMutate = onMutate;
   }
 
   private detectFts(): boolean {
@@ -86,6 +95,7 @@ export class ProjectGraphStore {
     );
 
     this.insertFtsRow(node, propertiesJson);
+    this.onMutate?.();
   }
 
   upsertEdge(edge: GraphEdge): void {
@@ -105,6 +115,7 @@ export class ProjectGraphStore {
         edge.createdAt,
       ],
     );
+    this.onMutate?.();
   }
 
   // ── Per-file atomic replace with shrink guard ──────────────────────────
@@ -214,6 +225,7 @@ export class ProjectGraphStore {
       );
 
       this.db.exec('COMMIT');
+      this.onMutate?.();
       return { committed: true, deleted: existingCount };
     } catch (err) {
       try {
@@ -253,6 +265,7 @@ export class ProjectGraphStore {
       this.db.run(`DELETE FROM graph_edges WHERE source_file = ?`, [file]);
       this.db.run(`DELETE FROM graph_file_state WHERE source_file = ?`, [file]);
       this.db.exec('COMMIT');
+      this.onMutate?.();
     } catch (err) {
       try {
         this.db.exec('ROLLBACK');
@@ -425,16 +438,19 @@ export class ProjectGraphStore {
         this.db.run(`INSERT INTO graph_nodes_fts(graph_nodes_fts) VALUES('delete-all')`);
       } catch { /* FTS rebuild on next insert */ }
     }
+    this.onMutate?.();
   }
 
   deleteNode(id: string): void {
     const existing = this.readFtsRowByNodeId(id);
     if (existing) this.deleteFtsRow(existing);
     this.db.run(`DELETE FROM graph_nodes WHERE id = ?`, [id]);
+    this.onMutate?.();
   }
 
   deleteEdge(id: string): void {
     this.db.run(`DELETE FROM graph_edges WHERE id = ?`, [id]);
+    this.onMutate?.();
   }
 
   // ── FTS sync helpers ───────────────────────────────────────────────────

@@ -37,7 +37,7 @@ export interface ScanSummary {
 }
 
 export class ProjectGraphScanner {
-  private store: ProjectGraphStore;
+  private storeResolver: () => ProjectGraphStore | null;
   private extractors: {
     treeSitter: TreeSitterExtractor;
     markdown?: typeof extractMarkdown;
@@ -45,8 +45,15 @@ export class ProjectGraphScanner {
   };
   private opts: { workspaceFolder: string; maxFiles: number; includeMarkdown: boolean };
 
+  /**
+   * @param storeOrResolver Either a concrete store (for tests) or a
+   *   `() => ProjectGraphStore | null` resolver (for the extension host
+   *   wired through `ProjectGraphLifecycle`). When the resolver returns
+   *   `null` the scanner returns a clean ScanSummary with an explanatory
+   *   `firstError` instead of crashing.
+   */
   constructor(
-    store: ProjectGraphStore,
+    storeOrResolver: ProjectGraphStore | (() => ProjectGraphStore | null),
     extractors: {
       treeSitter: TreeSitterExtractor;
       markdown?: typeof extractMarkdown;
@@ -54,7 +61,10 @@ export class ProjectGraphScanner {
     },
     opts: { workspaceFolder: string; maxFiles: number; includeMarkdown: boolean },
   ) {
-    this.store = store;
+    this.storeResolver =
+      typeof storeOrResolver === 'function'
+        ? storeOrResolver
+        : (): ProjectGraphStore | null => storeOrResolver;
     this.extractors = extractors;
     this.opts = opts;
   }
@@ -64,10 +74,6 @@ export class ProjectGraphScanner {
     opts?: { force?: boolean; clearFirst?: boolean },
   ): Promise<ScanSummary> {
     const start = Date.now();
-    if (opts?.clearFirst) {
-      // Wipe all rows so a polluted graph (e.g. wrong workspace folder) gets reset.
-      this.store.clearAll();
-    }
     let filesProcessed = 0;
     let filesSkipped = 0;
     let nodesCreated = 0;
@@ -97,6 +103,32 @@ export class ProjectGraphScanner {
     }
     const root = liveFolder;
 
+    // Resolve the active per-project graph store. With the lifecycle in place
+    // this is non-null whenever workspaceFolders[0] is set, but we re-check
+    // here so an out-of-band lifecycle close (rare) still produces a clean
+    // error instead of a TypeError.
+    const store = this.storeResolver();
+    if (!store) {
+      return {
+        filesProcessed: 0,
+        filesSkipped: 0,
+        nodesCreated: 0,
+        edgesCreated: 0,
+        durationMs: Date.now() - start,
+        filesMatched: 0,
+        skipReasons,
+        rootScanned: root,
+        workspaceFoldersAvailable: !!liveFolder,
+        firstError:
+          'Project graph DB not open for this workspace. Reload the window and re-run the build.',
+      } as ScanSummary;
+    }
+
+    if (opts?.clearFirst) {
+      // Wipe all rows so a polluted graph (e.g. wrong workspace folder) gets reset.
+      store.clearAll();
+    }
+
     const allFiles = await walkDir(root);
     const matched = allFiles.filter((p) => {
       const ext = path.extname(p).toLowerCase();
@@ -122,13 +154,13 @@ export class ProjectGraphScanner {
         const source = await fs.promises.readFile(filePath, 'utf8');
         const contentHash = crypto.createHash('sha256').update(source).digest('hex');
 
-        if (!opts?.force && this.store.getFileState(filePath)?.contentHash === contentHash) {
+        if (!opts?.force && store.getFileState(filePath)?.contentHash === contentHash) {
           filesSkipped++;
           skipReasons.hashMatch++;
           continue;
         }
 
-        const extracted = await this.runExtractor(filePath, ext, source);
+        const extracted = await this.runExtractor(store, filePath, ext, source);
         if (!extracted) {
           filesSkipped++;
           skipReasons.noExtractor++;
@@ -136,7 +168,7 @@ export class ProjectGraphScanner {
         }
 
         const { nodes, edges, extractorName } = extracted;
-        const result = this.store.replaceFileNodes(filePath, extractorName, nodes, edges, contentHash);
+        const result = store.replaceFileNodes(filePath, extractorName, nodes, edges, contentHash);
         if (result.committed) {
           filesProcessed++;
           nodesCreated += nodes.length;
@@ -174,6 +206,11 @@ export class ProjectGraphScanner {
       return { committed: false, reason: 'markdown-disabled' };
     }
 
+    const store = this.storeResolver();
+    if (!store) {
+      return { committed: false, reason: 'no-workspace' };
+    }
+
     let source: string;
     try {
       source = await fs.promises.readFile(filePath, 'utf8');
@@ -182,27 +219,28 @@ export class ProjectGraphScanner {
     }
 
     const contentHash = crypto.createHash('sha256').update(source).digest('hex');
-    if (this.store.getFileState(filePath)?.contentHash === contentHash) {
+    if (store.getFileState(filePath)?.contentHash === contentHash) {
       return { committed: false, reason: 'unchanged' };
     }
 
-    const extracted = await this.runExtractor(filePath, ext, source);
+    const extracted = await this.runExtractor(store, filePath, ext, source);
     if (!extracted) {
       return { committed: false, reason: 'no-extractor' };
     }
 
     const { nodes, edges, extractorName } = extracted;
-    const result = this.store.replaceFileNodes(filePath, extractorName, nodes, edges, contentHash);
+    const result = store.replaceFileNodes(filePath, extractorName, nodes, edges, contentHash);
     return { committed: result.committed, reason: result.reason };
   }
 
   private async runExtractor(
+    store: ProjectGraphStore,
     filePath: string,
     ext: string,
     source: string,
   ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[]; extractorName: string } | null> {
     const resolveByLabel = (label: string): GraphNode | null =>
-      this.store.searchNodes(label, { limit: 1 })[0] ?? null;
+      store.searchNodes(label, { limit: 1 })[0] ?? null;
 
     if (CODE_EXTENSIONS.has(ext)) {
       const result = await this.extractors.treeSitter.extract(filePath, source);

@@ -3,13 +3,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { EventHorizonDB } from '../../persistence.js';
+import { ProjectGraphDB } from '../../projectGraph/projectGraphDb.js';
 
 describe('Project Graph schema', () => {
-  let db: EventHorizonDB;
+  let db: ProjectGraphDB;
 
   beforeEach(async () => {
-    db = await EventHorizonDB.create();
+    db = await ProjectGraphDB.create();
   });
 
   afterEach(() => {
@@ -17,7 +17,7 @@ describe('Project Graph schema', () => {
   });
 
   it('creates graph_nodes, graph_edges, graph_file_state tables on init', () => {
-    const store = db.getProjectGraphStore();
+    const store = db.getStore();
     const stats = store.getStats();
     expect(stats.nodeCount).toBe(0);
     expect(stats.edgeCount).toBe(0);
@@ -25,20 +25,20 @@ describe('Project Graph schema', () => {
   });
 
   it('search on empty graph returns no results without errors', () => {
-    const store = db.getProjectGraphStore();
+    const store = db.getStore();
     const results = store.searchNodes('anything');
     expect(results).toEqual([]);
   });
 
   it('returns the same store instance across calls (lazy singleton)', () => {
-    const a = db.getProjectGraphStore();
-    const b = db.getProjectGraphStore();
+    const a = db.getStore();
+    const b = db.getStore();
     expect(a).toBe(b);
   });
 
   it('survives multiple create() calls (schema is idempotent via IF NOT EXISTS)', async () => {
-    const db2 = await EventHorizonDB.create();
-    const store = db2.getProjectGraphStore();
+    const db2 = await ProjectGraphDB.create();
+    const store = db2.getStore();
     expect(store.getStats().nodeCount).toBe(0);
     db2.close();
   });

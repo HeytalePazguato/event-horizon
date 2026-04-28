@@ -9,6 +9,10 @@
  *
  * BFS traversals cap visited-set size at MAX_VISITED to keep cycles and
  * pathologically dense graphs from hanging the extension host.
+ *
+ * Each public method resolves the active store from the lifecycle at call
+ * time. When no workspace is open the store is `null` and the method returns
+ * an empty/null result instead of throwing.
  */
 
 import type {
@@ -62,21 +66,41 @@ export interface RecentActivityResult {
 }
 
 export class GraphQueryEngine {
-  private store: ProjectGraphStore;
+  private storeResolver: () => ProjectGraphStore | null;
 
-  constructor(store: ProjectGraphStore) {
-    this.store = store;
+  /**
+   * @param storeOrResolver Either a concrete `ProjectGraphStore` (for tests
+   *   that own a single in-memory DB) or a `() => ProjectGraphStore | null`
+   *   resolver (for the extension host, which routes through
+   *   `ProjectGraphLifecycle`).
+   */
+  constructor(storeOrResolver: ProjectGraphStore | (() => ProjectGraphStore | null)) {
+    this.storeResolver =
+      typeof storeOrResolver === 'function'
+        ? storeOrResolver
+        : (): ProjectGraphStore | null => storeOrResolver;
+  }
+
+  /** Whether a graph store is currently active (workspace folder is open). */
+  hasActiveStore(): boolean {
+    return this.storeResolver() !== null;
   }
 
   callers(nodeId: string, depth: number = DEFAULT_BFS_DEPTH): GraphNode[] {
-    return this.bfsCalls(nodeId, depth, 'in');
+    const store = this.storeResolver();
+    if (!store) return [];
+    return this.bfsCalls(store, nodeId, depth, 'in');
   }
 
   callees(nodeId: string, depth: number = DEFAULT_BFS_DEPTH): GraphNode[] {
-    return this.bfsCalls(nodeId, depth, 'out');
+    const store = this.storeResolver();
+    if (!store) return [];
+    return this.bfsCalls(store, nodeId, depth, 'out');
   }
 
   neighbors(nodeId: string, opts: NeighborsOpts = {}): NeighborEntry[] {
+    const store = this.storeResolver();
+    if (!store) return [];
     const direction: Direction = opts.direction ?? 'both';
     const limit = opts.limit ?? DEFAULT_NEIGHBOR_LIMIT;
     const relationTypes = opts.relationTypes;
@@ -84,12 +108,12 @@ export class GraphQueryEngine {
     const entries: NeighborEntry[] = [];
 
     const fetchNode = (id: string): GraphNode | null => {
-      if (!nodeCache.has(id)) nodeCache.set(id, this.store.getNodeById(id));
+      if (!nodeCache.has(id)) nodeCache.set(id, store.getNodeById(id));
       return nodeCache.get(id) ?? null;
     };
 
     const collect = (dir: 'in' | 'out'): boolean => {
-      const edges = this.fetchEdges(nodeId, dir, relationTypes);
+      const edges = this.fetchEdges(store, nodeId, dir, relationTypes);
       for (const edge of edges) {
         const otherId = dir === 'in' ? edge.sourceId : edge.targetId;
         const node = fetchNode(otherId);
@@ -114,11 +138,13 @@ export class GraphQueryEngine {
     targetId: string,
     opts: ShortestPathOpts = {},
   ): GraphNode[] | null {
+    const store = this.storeResolver();
+    if (!store) return null;
     const maxDepth = opts.maxDepth ?? DEFAULT_PATH_MAX_DEPTH;
     const relationTypes = opts.relationTypes;
 
     if (sourceId === targetId) {
-      const node = this.store.getNodeById(sourceId);
+      const node = store.getNodeById(sourceId);
       return node ? [node] : null;
     }
 
@@ -131,7 +157,7 @@ export class GraphQueryEngine {
       for (const id of frontier) {
         if (visited.size >= MAX_VISITED) return null;
 
-        const edges = this.fetchEdges(id, 'out', relationTypes);
+        const edges = this.fetchEdges(store, id, 'out', relationTypes);
         for (const edge of edges) {
           const neighborId = edge.targetId;
           if (visited.has(neighborId)) continue;
@@ -139,7 +165,7 @@ export class GraphQueryEngine {
           parent.set(neighborId, id);
 
           if (neighborId === targetId) {
-            return this.reconstructPath(parent, sourceId, targetId);
+            return this.reconstructPath(store, parent, sourceId, targetId);
           }
           next.push(neighborId);
           if (visited.size >= MAX_VISITED) return null;
@@ -152,7 +178,9 @@ export class GraphQueryEngine {
   }
 
   search(query: string, opts: SearchOpts = {}): GraphNode[] {
-    const results = this.store.searchNodes(query, {
+    const store = this.storeResolver();
+    if (!store) return [];
+    const results = store.searchNodes(query, {
       type: opts.type,
       tag: opts.tag,
       limit: opts.limit,
@@ -164,21 +192,23 @@ export class GraphQueryEngine {
   }
 
   explain(nodeId: string): ExplainResult | null {
-    const node = this.store.getNodeById(nodeId);
+    const store = this.storeResolver();
+    if (!store) return null;
+    const node = store.getNodeById(nodeId);
     if (!node) return null;
 
-    const inEdges = this.store.getEdges({ targetId: nodeId });
-    const outEdges = this.store.getEdges({ sourceId: nodeId });
+    const inEdges = store.getEdges({ targetId: nodeId });
+    const outEdges = store.getEdges({ sourceId: nodeId });
 
     const inEntries: NeighborEntry[] = [];
     for (const edge of inEdges) {
-      const other = this.store.getNodeById(edge.sourceId);
+      const other = store.getNodeById(edge.sourceId);
       if (other) inEntries.push({ node: other, edge });
     }
 
     const outEntries: NeighborEntry[] = [];
     for (const edge of outEdges) {
-      const other = this.store.getNodeById(edge.targetId);
+      const other = store.getNodeById(edge.targetId);
       if (other) outEntries.push({ node: other, edge });
     }
 
@@ -188,7 +218,7 @@ export class GraphQueryEngine {
       if (edge.relationType !== 'rationale_for') continue;
       if (seenRationale.has(edge.sourceId)) continue;
       seenRationale.add(edge.sourceId);
-      const r = this.store.getNodeById(edge.sourceId);
+      const r = store.getNodeById(edge.sourceId);
       if (r) rationale.push(r);
     }
 
@@ -196,12 +226,14 @@ export class GraphQueryEngine {
   }
 
   recentActivity(filePath: string, sinceMs: number): RecentActivityResult {
+    const store = this.storeResolver();
+    if (!store) return { agents: [], activities: [] };
     const moduleNodeId = `module:${filePath}`;
-    const touched = this.store.getEdges({
+    const touched = store.getEdges({
       targetId: moduleNodeId,
       relationType: 'touched',
     });
-    const authored = this.store.getEdges({
+    const authored = store.getEdges({
       targetId: moduleNodeId,
       relationType: 'authored',
     });
@@ -211,7 +243,7 @@ export class GraphQueryEngine {
 
     for (const edge of [...touched, ...authored]) {
       if (activitiesById.has(edge.sourceId)) continue;
-      const node = this.store.getNodeById(edge.sourceId);
+      const node = store.getNodeById(edge.sourceId);
       if (!node || node.type !== 'agent_activity') continue;
 
       const ts =
@@ -236,6 +268,7 @@ export class GraphQueryEngine {
   // ── Internals ────────────────────────────────────────────────────────────
 
   private bfsCalls(
+    store: ProjectGraphStore,
     startId: string,
     depth: number,
     direction: 'in' | 'out',
@@ -253,15 +286,15 @@ export class GraphQueryEngine {
 
         const edges =
           direction === 'in'
-            ? this.store.getEdges({ targetId: id, relationType: 'calls' })
-            : this.store.getEdges({ sourceId: id, relationType: 'calls' });
+            ? store.getEdges({ targetId: id, relationType: 'calls' })
+            : store.getEdges({ sourceId: id, relationType: 'calls' });
 
         for (const edge of edges) {
           const neighborId = direction === 'in' ? edge.sourceId : edge.targetId;
           if (visited.has(neighborId)) continue;
           visited.add(neighborId);
 
-          const node = this.store.getNodeById(neighborId);
+          const node = store.getNodeById(neighborId);
           if (node) result.push(node);
           next.push(neighborId);
 
@@ -276,6 +309,7 @@ export class GraphQueryEngine {
   }
 
   private fetchEdges(
+    store: ProjectGraphStore,
     nodeId: string,
     direction: 'in' | 'out',
     relationTypes?: RelationType[],
@@ -284,14 +318,15 @@ export class GraphQueryEngine {
     if (relationTypes && relationTypes.length > 0) {
       const all: GraphEdge[] = [];
       for (const rt of relationTypes) {
-        all.push(...this.store.getEdges({ ...baseOpts, relationType: rt }));
+        all.push(...store.getEdges({ ...baseOpts, relationType: rt }));
       }
       return all;
     }
-    return this.store.getEdges(baseOpts);
+    return store.getEdges(baseOpts);
   }
 
   private reconstructPath(
+    store: ProjectGraphStore,
     parent: Map<string, string>,
     sourceId: string,
     targetId: string,
@@ -307,7 +342,7 @@ export class GraphQueryEngine {
     ids.reverse();
     const out: GraphNode[] = [];
     for (const id of ids) {
-      const node = this.store.getNodeById(id);
+      const node = store.getNodeById(id);
       if (!node) return null;
       out.push(node);
     }

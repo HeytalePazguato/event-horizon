@@ -56,3 +56,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS graph_nodes_fts USING fts5(
   content=graph_nodes, content_rowid=rowid
 );
 `;
+
+/**
+ * Idempotent DROP for the four graph tables. Used once during the upgrade
+ * from v3.0.0-dev (graph stored in the global EventHorizonDB) to v3.0.0
+ * release (graph stored per-project at `<workspace>/.eh/graph.db`).
+ *
+ * Safe to run on a DB that doesn't have these tables — the `IF EXISTS`
+ * clauses make every statement a no-op when the table is absent.
+ */
+export const GRAPH_SCHEMA_DROP_SQL = `
+DROP TABLE IF EXISTS graph_nodes_fts;
+DROP TABLE IF EXISTS graph_file_state;
+DROP TABLE IF EXISTS graph_edges;
+DROP TABLE IF EXISTS graph_nodes;
+`;

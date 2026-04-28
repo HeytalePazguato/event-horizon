@@ -40,7 +40,7 @@ let callbacks: EventServerCallbacks | null = null;
 let activeBridge: EventBridge | null = null;
 const activeSockets = new Set<import('net').Socket>();
 
-let activeGraphStore: import('./projectGraph/index.js').ProjectGraphStore | null = null;
+let activeGraphLifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle | null = null;
 let activeGraphScanner: import('./projectGraph/scanner.js').ProjectGraphScanner | null = null;
 let activeGraphQueryEngine: import('./projectGraph/queryEngine.js').GraphQueryEngine | null = null;
 
@@ -193,10 +193,17 @@ export function setEventSearchEngine(eventSearch: { search: (query: string, opts
   if (mcpServer) mcpServer.setEventSearch(eventSearch);
 }
 
-/** Wire the project graph store into the MCP server after the persistence DB is ready. */
-export function setProjectGraphStore(store: import('./projectGraph/index.js').ProjectGraphStore): void {
-  activeGraphStore = store;
-  if (mcpServer) mcpServer.setProjectGraphStore(store);
+/**
+ * Wire the project-graph lifecycle into the MCP server. The lifecycle
+ * resolves the active per-workspace store at call time — when no folder is
+ * open, `getProjectGraphStore()` returns `null` and consumers surface a
+ * clear "no workspace open" error.
+ */
+export function setProjectGraphLifecycle(
+  lifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle,
+): void {
+  activeGraphLifecycle = lifecycle;
+  if (mcpServer) mcpServer.setProjectGraphLifecycle(lifecycle);
 }
 
 /** Wire the project graph scanner into the MCP server so agents can trigger workspace scans. */
@@ -216,7 +223,11 @@ export function getProjectGraphQueryEngine(): import('./projectGraph/queryEngine
 }
 
 export function getProjectGraphStore(): import('./projectGraph/index.js').ProjectGraphStore | null {
-  return activeGraphStore;
+  return activeGraphLifecycle?.getActiveStore() ?? null;
+}
+
+export function getProjectGraphLifecycle(): import('./projectGraph/index.js').ProjectGraphLifecycle | null {
+  return activeGraphLifecycle;
 }
 
 export function getProjectGraphScanner(): import('./projectGraph/scanner.js').ProjectGraphScanner | null {

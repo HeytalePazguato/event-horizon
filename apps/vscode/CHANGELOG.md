@@ -16,6 +16,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ### Changed
 - **`eh:optimize-context` rewritten end to end**: now does three things on invocation — (1) builds or refreshes the project knowledge graph, (2) tiers instruction files (CLAUDE.md / .cursorrules / etc.) as before, (3) when invoked with a task description, hands the agent the relevant slice of the graph instead of a generic summary. `eh:research` and `eh:debug` query the graph before grep, with graceful fallback when no graph exists.
+- **Project graph now stored per-workspace at `<workspace>/.eh/graph.db`**: graph data lives with the project that owns it instead of in a single global SQLite file. Auto-creates `.eh/.gitignore` excluding `*.db` so the graph file never gets committed by accident. Events, sessions, and shared knowledge remain global. Existing graph rows from earlier 3.0.0 dev builds are dropped on upgrade — re-run `/eh:optimize-context` once after updating to rebuild.
+- **Workspace-folder ambiguity fixed**: the scanner can no longer index files outside the current workspace. The graph file's location *is* the project; if no folder is open, project-graph tools surface a clear "open a folder in VS Code" message instead of silently writing into the wrong DB. The Knowledge → Graph tab shows the same prompt when no folder is mounted, and stats refresh automatically when you switch the primary workspace folder.
 
 ## [2.1.1] — 2026-04-22
 

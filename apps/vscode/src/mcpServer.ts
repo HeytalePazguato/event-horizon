@@ -21,7 +21,7 @@ import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
 import type { TokenAnalyzer } from './tokenAnalyzer.js';
-import type { ProjectGraphStore, GraphNodeType, RelationType } from './projectGraph/index.js';
+import type { ProjectGraphStore, ProjectGraphLifecycle, GraphNodeType, RelationType } from './projectGraph/index.js';
 import type { ProjectGraphScanner } from './projectGraph/scanner.js';
 import type { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import { exec } from 'child_process';
@@ -799,6 +799,7 @@ export interface McpServerDeps {
   tokenAnalyzer?: TokenAnalyzer;
   eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
   projectGraphStore?: ProjectGraphStore;
+  projectGraphLifecycle?: ProjectGraphLifecycle;
   projectGraphScanner?: ProjectGraphScanner;
   projectGraphQueryEngine?: GraphQueryEngine;
   isAgentExtractionEnabled?: () => boolean;
@@ -820,6 +821,29 @@ export class McpServer {
 
   setProjectGraphStore(store: ProjectGraphStore): void {
     this.deps.projectGraphStore = store;
+  }
+
+  /**
+   * Wire the per-project graph lifecycle. Once set, all graph MCP handlers
+   * resolve the active store via `lifecycle.getActiveStore()` at call time
+   * instead of using a fixed reference, so workspace-folder swaps land
+   * automatically.
+   */
+  setProjectGraphLifecycle(lifecycle: ProjectGraphLifecycle): void {
+    this.deps.projectGraphLifecycle = lifecycle;
+  }
+
+  /**
+   * Resolve the currently-active project graph store. Prefers the lifecycle
+   * (per-workspace `<folder>/.eh/graph.db`) when wired; falls back to a
+   * direct store reference for legacy callers and tests. Returns `null`
+   * when no workspace folder is open.
+   */
+  private getActiveGraphStore(): ProjectGraphStore | null {
+    if (this.deps.projectGraphLifecycle) {
+      return this.deps.projectGraphLifecycle.getActiveStore();
+    }
+    return this.deps.projectGraphStore ?? null;
   }
 
   setProjectGraphScanner(scanner: ProjectGraphScanner): void {
@@ -2073,8 +2097,11 @@ export class McpServer {
       }
 
       case 'eh_extract_concepts': {
-        const { projectGraphStore, isAgentExtractionEnabled } = this.deps;
-        if (!projectGraphStore) return { error: 'Project graph not available (persistence may be disabled)' };
+        const projectGraphStore = this.getActiveGraphStore();
+        const { isAgentExtractionEnabled } = this.deps;
+        if (!projectGraphStore) {
+          return { error: 'No workspace folder open. Open a folder in VS Code before using project-graph tools.' };
+        }
         if (isAgentExtractionEnabled && !isAgentExtractionEnabled()) {
           return { error: 'eh_extract_concepts disabled — enable eventHorizon.projectGraph.allowAgentLLMExtraction to use this tool.' };
         }
@@ -2186,6 +2213,9 @@ export class McpServer {
         if (!engine) {
           return { ok: false, message: 'No project graph yet — invoke /eh:optimize-context to build one.' };
         }
+        if (!engine.hasActiveStore()) {
+          return { ok: false, message: 'No workspace folder open. Open a folder in VS Code before using project-graph tools.' };
+        }
 
         const op = args.op as string;
         const nodeId = args.node_id as string | undefined;
@@ -2235,6 +2265,9 @@ export class McpServer {
         const engine = this.deps.projectGraphQueryEngine;
         if (!engine) {
           return { ok: false, message: 'No project graph yet — invoke /eh:optimize-context to build one.' };
+        }
+        if (!engine.hasActiveStore()) {
+          return { ok: false, message: 'No workspace folder open. Open a folder in VS Code before using project-graph tools.' };
         }
 
         const taskDescription = args.task_description as string | undefined;

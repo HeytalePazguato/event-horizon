@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { EventHorizonDB } from '../../persistence.js';
+import { ProjectGraphDB } from '../../projectGraph/projectGraphDb.js';
 import type { ProjectGraphStore } from '../../projectGraph/store.js';
 import type { GraphNode, GraphEdge } from '../../projectGraph/index.js';
 
@@ -38,12 +38,12 @@ function makeEdge(overrides?: Partial<GraphEdge>): GraphEdge {
 }
 
 describe('ProjectGraphStore', () => {
-  let db: EventHorizonDB;
+  let db: ProjectGraphDB;
   let store: ProjectGraphStore;
 
   beforeEach(async () => {
-    db = await EventHorizonDB.create();
-    store = db.getProjectGraphStore();
+    db = await ProjectGraphDB.create();
+    store = db.getStore();
   });
 
   afterEach(() => {

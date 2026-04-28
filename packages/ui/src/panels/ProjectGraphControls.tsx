@@ -17,6 +17,12 @@ export interface GraphStats {
   edgeCount: number;
   fileCount: number;
   lastBuildAt?: number;
+  /**
+   * `true` when a workspace folder is open (per-project graph DB is mounted).
+   * `false` when no folder is open — UI shows an instructive empty state and
+   * suppresses the Build button. Optional for backward compatibility.
+   */
+  workspaceOpen?: boolean;
 }
 
 export interface GraphBuildProgress {
@@ -176,11 +182,19 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
 
   const isBuilding = buildProgress !== null;
   const hasGraph = stats !== null && stats.nodeCount > 0;
+  // `workspaceOpen` is only `false` when the extension explicitly told us the
+  // per-project graph DB isn't mounted. `undefined` (older messages) means
+  // assume open, matching legacy behavior.
+  const workspaceOpen = stats?.workspaceOpen !== false;
 
   return (
     <div style={styles.root}>
       <div style={styles.topRow}>
-        {hasGraph ? (
+        {!workspaceOpen ? (
+          <span style={styles.emptyHint}>
+            Open a folder in VS Code to enable the project graph.
+          </span>
+        ) : hasGraph ? (
           <span style={styles.stats}>
             {formatStats(stats)}
           </span>
@@ -190,7 +204,7 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
           </span>
         )}
 
-        {isBuilding ? (
+        {!workspaceOpen ? null : isBuilding ? (
           <span style={styles.progress}>
             Building: {buildProgress.filesProcessed} / {buildProgress.filesTotal} ({buildProgress.phase})
           </span>

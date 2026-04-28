@@ -3,23 +3,43 @@ import type { AgentEvent } from '@event-horizon/core';
 import type { ProjectGraphStore } from './index.js';
 import type { KnowledgeEntry } from '../sharedKnowledge.js';
 
+/**
+ * Bridges live runtime data (agent events, shared knowledge mutations) into
+ * the project graph. Each public entry resolves the active store from the
+ * lifecycle at call time — when no workspace is open the store is `null`
+ * and ingestion silently no-ops, never erroring.
+ */
 export class EventBridge {
-  private store: ProjectGraphStore;
+  private getStore: () => ProjectGraphStore | null;
   private workspaceFolder: string;
   private agentLastActivity = new Map<string, { id: string; timestamp: number }>();
   private agentSessionStart = new Map<string, number>();
 
-  constructor(store: ProjectGraphStore, opts: { workspaceFolder: string }) {
-    this.store = store;
+  /**
+   * @param storeOrResolver Either a concrete `ProjectGraphStore` (used by
+   *   tests that own a single in-memory DB) or a `() => ProjectGraphStore | null`
+   *   resolver (used by the extension host, which routes through
+   *   `ProjectGraphLifecycle`).
+   */
+  constructor(
+    storeOrResolver: ProjectGraphStore | (() => ProjectGraphStore | null),
+    opts: { workspaceFolder: string },
+  ) {
+    this.getStore =
+      typeof storeOrResolver === 'function'
+        ? storeOrResolver
+        : (): ProjectGraphStore | null => storeOrResolver;
     this.workspaceFolder = opts.workspaceFolder;
   }
 
   ingestEvent(event: AgentEvent): void {
+    const store = this.getStore();
+    if (!store) return;
     try {
       if (event.type === 'task.complete' || event.type === 'task.fail') {
-        this.handleTaskEvent(event);
+        this.handleTaskEvent(store, event);
       } else if (event.type === 'file.write' || event.type === 'file.read') {
-        this.handleFileEvent(event);
+        this.handleFileEvent(store, event);
       }
     } catch {
       // Never crash the event pipeline
@@ -27,24 +47,26 @@ export class EventBridge {
   }
 
   ingestKnowledge(entry: KnowledgeEntry, op: 'write' | 'delete'): void {
+    const store = this.getStore();
+    if (!store) return;
     try {
       const nodeId = `knowledge:${entry.key}`;
       if (op === 'delete') {
-        this.deleteKnowledgeNode(nodeId);
+        this.deleteKnowledgeNode(store, nodeId);
       } else {
-        this.writeKnowledgeNode(nodeId, entry);
+        this.writeKnowledgeNode(store, nodeId, entry);
       }
     } catch {
       // Never crash
     }
   }
 
-  private handleTaskEvent(event: AgentEvent): void {
+  private handleTaskEvent(store: ProjectGraphStore, event: AgentEvent): void {
     const now = Date.now();
     const nodeId = `activity:${event.id}`;
     const payload = event.payload as Record<string, unknown>;
 
-    this.store.upsertNode({
+    store.upsertNode({
       id: nodeId,
       label: `${event.agentId} ${event.type}`,
       type: 'agent_activity',
@@ -68,7 +90,7 @@ export class EventBridge {
     }
   }
 
-  private handleFileEvent(event: AgentEvent): void {
+  private handleFileEvent(store: ProjectGraphStore, event: AgentEvent): void {
     const payload = event.payload as Record<string, unknown>;
     const rawPath = (payload['path'] ?? payload['file'] ?? payload['filePath']) as string | undefined;
     if (!rawPath) return;
@@ -78,20 +100,20 @@ export class EventBridge {
       : path.join(this.workspaceFolder, rawPath);
 
     const moduleNodeId = `module:${absPath}`;
-    const moduleNode = this.store.getNodeById(moduleNodeId);
+    const moduleNode = store.getNodeById(moduleNodeId);
 
     // Never create edges to non-existent nodes (covers empty-graph case too)
     if (!moduleNode) {
-      this.ensureActivityNode(event);
+      this.ensureActivityNode(store, event);
       return;
     }
 
-    const activityNodeId = this.ensureActivityNode(event);
+    const activityNodeId = this.ensureActivityNode(store, event);
     const relationType: 'touched' | 'authored' = event.type === 'file.read' ? 'touched' : 'authored';
     const edgeId = `edge:${activityNodeId}:${moduleNodeId}:${relationType}`;
     const now = Date.now();
 
-    this.store.upsertEdge({
+    store.upsertEdge({
       id: edgeId,
       sourceId: activityNodeId,
       targetId: moduleNodeId,
@@ -102,7 +124,7 @@ export class EventBridge {
     });
   }
 
-  private ensureActivityNode(event: AgentEvent): string {
+  private ensureActivityNode(store: ProjectGraphStore, event: AgentEvent): string {
     const lastActivity = this.agentLastActivity.get(event.agentId);
     if (lastActivity) return lastActivity.id;
 
@@ -112,9 +134,9 @@ export class EventBridge {
     const sessionStart = this.agentSessionStart.get(event.agentId)!;
     const syntheticId = `activity:session:${event.agentId}:${sessionStart}`;
 
-    if (!this.store.getNodeById(syntheticId)) {
+    if (!store.getNodeById(syntheticId)) {
       const now = Date.now();
-      this.store.upsertNode({
+      store.upsertNode({
         id: syntheticId,
         label: `${event.agentId} session`,
         type: 'agent_activity',
@@ -134,16 +156,16 @@ export class EventBridge {
     return syntheticId;
   }
 
-  private writeKnowledgeNode(nodeId: string, entry: KnowledgeEntry): void {
+  private writeKnowledgeNode(store: ProjectGraphStore, nodeId: string, entry: KnowledgeEntry): void {
     const now = Date.now();
 
     // Delete prior references edges before re-writing to avoid stale links
-    const priorEdges = this.store.getEdges({ sourceId: nodeId, relationType: 'references' });
+    const priorEdges = store.getEdges({ sourceId: nodeId, relationType: 'references' });
     for (const edge of priorEdges) {
-      this.store.deleteEdge(edge.id);
+      store.deleteEdge(edge.id);
     }
 
-    this.store.upsertNode({
+    store.upsertNode({
       id: nodeId,
       label: entry.key,
       type: 'knowledge',
@@ -166,9 +188,9 @@ export class EventBridge {
     while ((match = backtickPattern.exec(entry.value)) !== null) {
       const identifier = match[1].trim();
       if (!identifier) continue;
-      const hits = this.store.searchNodes(identifier, { type: 'function' });
+      const hits = store.searchNodes(identifier, { type: 'function' });
       for (const node of hits) {
-        this.store.upsertEdge({
+        store.upsertEdge({
           id: `edge:${nodeId}:${node.id}:references`,
           sourceId: nodeId,
           targetId: node.id,
@@ -181,11 +203,11 @@ export class EventBridge {
     }
   }
 
-  private deleteKnowledgeNode(nodeId: string): void {
-    const edges = this.store.getEdges({ sourceId: nodeId });
+  private deleteKnowledgeNode(store: ProjectGraphStore, nodeId: string): void {
+    const edges = store.getEdges({ sourceId: nodeId });
     for (const edge of edges) {
-      this.store.deleteEdge(edge.id);
+      store.deleteEdge(edge.id);
     }
-    this.store.deleteNode(nodeId);
+    store.deleteNode(nodeId);
   }
 }

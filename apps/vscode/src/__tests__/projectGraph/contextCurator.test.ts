@@ -2,12 +2,12 @@
  * ContextCurator tests — fixture graph with 8 acceptance cases.
  *
  * Setup pattern (matches queryEngine.test.ts):
- *   EventHorizonDB.create() → getProjectGraphStore() → upsert nodes/edges
+ *   ProjectGraphDB.create() → getStore() → upsert nodes/edges
  *   → new GraphQueryEngine(store) → new ContextCurator(engine)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { EventHorizonDB } from '../../persistence.js';
+import { ProjectGraphDB } from '../../projectGraph/projectGraphDb.js';
 import { GraphQueryEngine } from '../../projectGraph/queryEngine.js';
 import { ContextCurator } from '../../projectGraph/contextCurator.js';
 import type { ProjectGraphStore } from '../../projectGraph/store.js';
@@ -53,14 +53,14 @@ function makeEdge(
 // ── Suite ──────────────────────────────────────────────────────────────────
 
 describe('ContextCurator', () => {
-  let db: EventHorizonDB;
+  let db: ProjectGraphDB;
   let store: ProjectGraphStore;
   let engine: GraphQueryEngine;
   let curator: ContextCurator;
 
   beforeEach(async () => {
-    db = await EventHorizonDB.create();
-    store = db.getProjectGraphStore();
+    db = await ProjectGraphDB.create();
+    store = db.getStore();
     engine = new GraphQueryEngine(store);
     curator = new ContextCurator(engine);
   });

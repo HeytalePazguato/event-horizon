@@ -11,7 +11,7 @@ import { MessageQueue } from '../messageQueue.js';
 import { RoleManager } from '../roleManager.js';
 import { AgentProfiler } from '../agentProfiler.js';
 import { SharedKnowledgeStore } from '../sharedKnowledge.js';
-import { EventHorizonDB } from '../persistence.js';
+import { ProjectGraphDB } from '../projectGraph/projectGraphDb.js';
 import { GraphQueryEngine } from '../projectGraph/queryEngine.js';
 
 let lockManager: LockManager;
@@ -280,12 +280,12 @@ describe('FileActivityTracker', () => {
 // ── eh_query_graph ──────────────────────────────────────────────────────────
 
 describe('eh_query_graph', () => {
-  let db: EventHorizonDB;
+  let db: ProjectGraphDB;
   let mcpWithGraph: McpServer;
 
   beforeEach(async () => {
-    db = await EventHorizonDB.create();
-    const store = db.getProjectGraphStore();
+    db = await ProjectGraphDB.create();
+    const store = db.getStore();
     const engine = new GraphQueryEngine(store);
     mcpWithGraph = new McpServer({
       lockManager,

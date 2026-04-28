@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphStore, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -31,6 +31,7 @@ import { ProjectGraphScanner } from './projectGraph/scanner';
 import { treeSitterExtractor } from './projectGraph/treeSitterExtractor';
 import { extractMarkdown } from './projectGraph/markdownExtractor';
 import { GraphQueryEngine } from './projectGraph/queryEngine';
+import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -243,29 +244,68 @@ export function activate(context: vscode.ExtensionContext): void {
         }, 60_000);
         context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
 
-        // Wire event search engine and project graph store into MCP server now that DB is ready
+        // Wire event search engine and project graph lifecycle into MCP server now that DB is ready
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
         setEventSearchEngine(eventSearchEngine);
-        const projectGraphStore = ehDatabase.getProjectGraphStore();
-        setProjectGraphStore(projectGraphStore);
+
+        // Per-project graph DB: opens `<workspaceFolder>/.eh/graph.db`, swaps when the
+        // primary folder changes, closes on extension deactivation. The graph file's
+        // location is the project — no more "which workspace did this row belong to?"
+        // ambiguity.
+        const projectGraphLifecycle = new ProjectGraphLifecycle();
+        const initialFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (initialFolder) {
+          try {
+            await projectGraphLifecycle.openForWorkspace(initialFolder);
+            console.log(`[Event Horizon] Graph DB opened at ${initialFolder}/.eh/graph.db`);
+          } catch (err) {
+            console.error('[Event Horizon] Failed to open project graph DB:', err);
+          }
+        }
+        setProjectGraphLifecycle(projectGraphLifecycle);
+        context.subscriptions.push({
+          dispose: () => {
+            void projectGraphLifecycle.closeActive().then(() => projectGraphLifecycle.dispose());
+          },
+        });
+        context.subscriptions.push(
+          vscode.workspace.onDidChangeWorkspaceFolders(async () => {
+            const newFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (!newFolder) {
+              await projectGraphLifecycle.closeActive();
+              return;
+            }
+            if (projectGraphLifecycle.getActiveWorkspace() === path.resolve(newFolder)) return;
+            try {
+              await projectGraphLifecycle.openForWorkspace(newFolder);
+              console.log(`[Event Horizon] Graph DB swapped to ${newFolder}/.eh/graph.db`);
+            } catch (err) {
+              console.error('[Event Horizon] Failed to swap project graph DB:', err);
+            }
+          }),
+        );
+
+        const getActiveStore = (): import('./projectGraph/index.js').ProjectGraphStore | null =>
+          projectGraphLifecycle.getActiveStore();
+
         setMcpOnEvent(onAgentEvent);
 
         // Create event bridge and wire into shared knowledge + event server for graph ingestion
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-        const eventBridge = new EventBridge(projectGraphStore, { workspaceFolder });
+        const workspaceFolder = initialFolder ?? process.cwd();
+        const eventBridge = new EventBridge(getActiveStore, { workspaceFolder });
         setEventBridgeOnSharedKnowledge(eventBridge);
         setActiveBridge(eventBridge);
 
         // Create and wire project graph scanner for agents to trigger workspace scans
         const projectGraphScanner = new ProjectGraphScanner(
-          projectGraphStore,
+          getActiveStore,
           { treeSitter: treeSitterExtractor, markdown: extractMarkdown },
           { workspaceFolder, maxFiles: 5000, includeMarkdown: true },
         );
         setProjectGraphScanner(projectGraphScanner);
 
         // Create and wire project graph query engine for eh_query_graph / eh_curate_context
-        const graphQueryEngine = new GraphQueryEngine(projectGraphStore);
+        const graphQueryEngine = new GraphQueryEngine(getActiveStore);
         setProjectGraphQueryEngine(graphQueryEngine);
 
         // Register project graph commands now that scanner and store are ready
@@ -293,8 +333,13 @@ export function activate(context: vscode.ExtensionContext): void {
               { location: vscode.ProgressLocation.Notification, title: 'Event Horizon: Rebuilding project graph…', cancellable: false },
               async (progress) => {
                 try {
-                  for (const file of projectGraphStore.getTrackedFiles()) {
-                    projectGraphStore.deleteFile(file);
+                  const store = getActiveStore();
+                  if (!store) {
+                    void vscode.window.showErrorMessage('Event Horizon: No workspace folder open. Open a folder before rebuilding the graph.');
+                    return;
+                  }
+                  for (const file of store.getTrackedFiles()) {
+                    store.deleteFile(file);
                   }
                   const summary = await projectGraphScanner.scanWorkspace(progress);
                   void vscode.window.showInformationMessage(

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
-import { EventHorizonDB } from '../../persistence.js';
+import { ProjectGraphDB } from '../../projectGraph/projectGraphDb.js';
 import { EventBridge } from '../../projectGraph/eventBridge.js';
 import type { ProjectGraphStore } from '../../projectGraph/store.js';
 import type { AgentEvent } from '@event-horizon/core';
@@ -42,13 +42,13 @@ function makeKnowledgeEntry(overrides?: Partial<KnowledgeEntry>): KnowledgeEntry
 }
 
 describe('EventBridge', () => {
-  let db: EventHorizonDB;
+  let db: ProjectGraphDB;
   let store: ProjectGraphStore;
   let bridge: EventBridge;
 
   beforeEach(async () => {
-    db = await EventHorizonDB.create();
-    store = db.getProjectGraphStore();
+    db = await ProjectGraphDB.create();
+    store = db.getStore();
     bridge = new EventBridge(store, { workspaceFolder: WORKSPACE });
   });
 

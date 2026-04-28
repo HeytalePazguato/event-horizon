@@ -12,7 +12,7 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphScanner } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphScanner, getProjectGraphLifecycle } from './eventServer.js';
 import { getDatabase, resetBroadcastHashes } from './extension.js';
 import { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import type { GraphNodeType, GraphTag } from './projectGraph/index.js';
@@ -313,6 +313,32 @@ function wireUniverseWebview(
   });
   // Clean up listener when webview is disposed (handled by caller via context.subscriptions)
   context.subscriptions.push(configListener);
+
+  // Refresh the Knowledge → Graph stats whenever the per-project graph DB
+  // swaps (workspace folder change) or closes (folder removed). Without this
+  // the stats line keeps showing the prior project's counts after a swap.
+  const lifecycle = getProjectGraphLifecycle();
+  if (lifecycle) {
+    const lifecycleListener = lifecycle.onActiveStoreChange((store) => {
+      if (store) {
+        const stats = store.getStats();
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: {
+            ...stats,
+            lastBuildAt: stats.fileCount > 0 ? Date.now() : undefined,
+            workspaceOpen: true,
+          },
+        });
+      } else {
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen: false },
+        });
+      }
+    });
+    context.subscriptions.push(lifecycleListener);
+  }
 
   function hydrateWebview() {
     void getConnectedAgentTypes().then((agentTypes) => {
@@ -722,7 +748,11 @@ function wireUniverseWebview(
         const scanner = getProjectGraphScanner();
         const store = getProjectGraphStore();
         if (!scanner || !store) {
-          void webview.postMessage({ type: 'graph-stats-update', stats: { nodeCount: 0, edgeCount: 0, fileCount: 0 } });
+          const workspaceOpen = !!getProjectGraphLifecycle()?.getActiveWorkspace();
+          void webview.postMessage({
+            type: 'graph-stats-update',
+            stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
+          });
           return;
         }
         let filesProcessed = 0;
@@ -745,7 +775,10 @@ function wireUniverseWebview(
           await scanner.scanWorkspace(progress);
         } catch { /* scan failed */ }
         const stats = store.getStats();
-        void webview.postMessage({ type: 'graph-stats-update', stats: { ...stats, lastBuildAt: Date.now() } });
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: { ...stats, lastBuildAt: Date.now(), workspaceOpen: true },
+        });
         // Signal completion so the UI clears the "Building..." state.
         void webview.postMessage({ type: 'graph-build-progress', done: true });
       })();
@@ -756,7 +789,12 @@ function wireUniverseWebview(
         const page = typeof msg.page === 'number' ? msg.page : 0;
         const pageSize = typeof msg.pageSize === 'number' ? msg.pageSize : 50;
         if (!store) {
+          const workspaceOpen = !!getProjectGraphLifecycle()?.getActiveWorkspace();
           void webview.postMessage({ type: 'graph-browse-result', requestId, nodes: [], edges: [], total: 0, page, pageSize });
+          void webview.postMessage({
+            type: 'graph-stats-update',
+            stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
+          });
           return;
         }
         const filter = (msg.filter as { type?: string; tag?: string; search?: string }) ?? {};
@@ -791,7 +829,14 @@ function wireUniverseWebview(
         // Also push current stats so the UI shows them without requiring a Build click —
         // covers the case where the graph was already populated by a skill / MCP call.
         const liveStats = store.getStats();
-        void webview.postMessage({ type: 'graph-stats-update', stats: { ...liveStats, lastBuildAt: liveStats.fileCount > 0 ? Date.now() : undefined } });
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: {
+            ...liveStats,
+            lastBuildAt: liveStats.fileCount > 0 ? Date.now() : undefined,
+            workspaceOpen: true,
+          },
+        });
       })();
     } else if (msg?.type === 'graph-node-details-request') {
       void (async () => {

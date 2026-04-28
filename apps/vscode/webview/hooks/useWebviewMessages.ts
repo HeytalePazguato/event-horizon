@@ -62,7 +62,7 @@ export interface WebviewMessageDeps {
   setPersistedSearchResults?: React.Dispatch<React.SetStateAction<import('@event-horizon/ui').PersistedSearchResult[] | null>>;
   setTaskExecutionEvents?: React.Dispatch<React.SetStateAction<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>>;
   setWormholes?: React.Dispatch<React.SetStateAction<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>>;
-  setGraphStats?: React.Dispatch<React.SetStateAction<{ nodeCount: number; edgeCount: number; fileCount: number; lastBuildAt?: number } | null>>;
+  setGraphStats?: React.Dispatch<React.SetStateAction<{ nodeCount: number; edgeCount: number; fileCount: number; lastBuildAt?: number; workspaceOpen?: boolean } | null>>;
   setGraphBrowseResult?: React.Dispatch<React.SetStateAction<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number } | null>>;
   setGraphNodeDetails?: React.Dispatch<React.SetStateAction<{ requestId: string; node: unknown | null; in: unknown[]; out: unknown[]; rationale: unknown[]; recentActivity: unknown[] } | null>>;
   setGraphBuildProgress?: React.Dispatch<React.SetStateAction<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>>;
