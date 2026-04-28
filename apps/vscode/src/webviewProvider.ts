@@ -809,6 +809,7 @@ function wireUniverseWebview(
         const pageSize = typeof msg.pageSize === 'number' ? msg.pageSize : 50;
         if (!store) {
           const workspaceOpen = !!vscode.workspace.workspaceFolders?.[0];
+          console.log(`[Event Horizon] graph-browse-request: store=null (workspaceOpen=${workspaceOpen}). Lifecycle hasn't attached or no .eh/graph.db on disk.`);
           void webview.postMessage({ type: 'graph-browse-result', requestId, nodes: [], edges: [], total: 0, page, pageSize });
           void webview.postMessage({
             type: 'graph-stats-update',
@@ -816,6 +817,7 @@ function wireUniverseWebview(
           });
           return;
         }
+        console.log(`[Event Horizon] graph-browse-request: store has ${store.getStats().nodeCount} nodes; serving page ${page}.`);
         const filter = (msg.filter as { type?: string; tag?: string; search?: string }) ?? {};
         let nodes: import('./projectGraph/index.js').GraphNode[];
         let total: number;
