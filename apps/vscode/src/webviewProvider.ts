@@ -12,7 +12,7 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphLifecycle } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphLifecycle, onProjectGraphLifecycleReady } from './eventServer.js';
 import { getDatabase, resetBroadcastHashes } from './extension.js';
 import { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import type { GraphNodeType, GraphTag } from './projectGraph/index.js';
@@ -322,8 +322,12 @@ function wireUniverseWebview(
   // the authoritative answer to "is a folder open" — not from the
   // lifecycle's tracking state, which can briefly be `null` during
   // attach races or after a corrupt-DB attach failure.
-  const lifecycle = getProjectGraphLifecycle();
-  if (lifecycle) {
+  //
+  // The webview can open before the activation IIFE finishes wiring the
+  // lifecycle. `onProjectGraphLifecycleReady` fires immediately if the
+  // lifecycle is already set, OR later when `setProjectGraphLifecycle`
+  // is called — covering both timings.
+  const subscribeLifecycle = (lifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle): void => {
     const pushCurrent = (): void => {
       const store = lifecycle.getActiveStore();
       const workspaceOpen = !!vscode.workspace.workspaceFolders?.[0];
@@ -345,10 +349,6 @@ function wireUniverseWebview(
       }
     };
 
-    // When the lifecycle attaches (e.g. activation finished AFTER the
-    // initial graph-browse-request fired), push fresh stats AND ask the
-    // webview to re-fetch — the first browse-request likely hit a null
-    // store and got an empty result.
     const lifecycleListener = lifecycle.onActiveStoreChange((store) => {
       pushCurrent();
       if (store) {
@@ -357,14 +357,24 @@ function wireUniverseWebview(
     });
     context.subscriptions.push(lifecycleListener);
 
-    // After a build completes, fire a fresh stats push AND ask the webview
-    // to re-fetch nodes/edges so the canvas redraws without a manual click.
     const dataListener = lifecycle.onDataChange(() => {
       pushCurrent();
       void webview.postMessage({ type: 'graph-data-changed' });
     });
     context.subscriptions.push(dataListener);
-  }
+
+    // Push the current state right now — this is the catch-up for the
+    // case where the webview opened before activation finished. If the
+    // lifecycle already has a graph, this triggers the canvas to fetch
+    // it; if not, it just sets workspaceOpen so the UI shows the right
+    // empty state.
+    pushCurrent();
+    if (lifecycle.getActiveStore()) {
+      void webview.postMessage({ type: 'graph-data-changed' });
+    }
+  };
+  const lifecycleReadySubscription = onProjectGraphLifecycleReady(subscribeLifecycle);
+  context.subscriptions.push(lifecycleReadySubscription);
 
   function hydrateWebview() {
     void getConnectedAgentTypes().then((agentTypes) => {

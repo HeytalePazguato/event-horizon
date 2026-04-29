@@ -44,6 +44,30 @@ let activeGraphLifecycle: import('./projectGraph/index.js').ProjectGraphLifecycl
 let activeGraphScanner: import('./projectGraph/scanner.js').ProjectGraphScanner | null = null;
 let activeGraphQueryEngine: import('./projectGraph/queryEngine.js').GraphQueryEngine | null = null;
 
+/**
+ * Fires when `setProjectGraphLifecycle` is called for the first time during
+ * activation. The webview provider subscribes so it can push graph state to
+ * any panel that opened BEFORE the lifecycle finished attaching (the IIFE
+ * that initializes EventHorizonDB + lifecycle is async and slower than the
+ * webview-open path, so 'ready' often arrives first).
+ */
+type LifecycleReadyHandler = (lifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle) => void;
+const lifecycleReadyHandlers: LifecycleReadyHandler[] = [];
+
+export function onProjectGraphLifecycleReady(handler: LifecycleReadyHandler): { dispose: () => void } {
+  // If already set up, fire immediately so callers don't need to branch.
+  if (activeGraphLifecycle) {
+    try { handler(activeGraphLifecycle); } catch { /* ignore */ }
+  }
+  lifecycleReadyHandlers.push(handler);
+  return {
+    dispose: () => {
+      const idx = lifecycleReadyHandlers.indexOf(handler);
+      if (idx !== -1) lifecycleReadyHandlers.splice(idx, 1);
+    },
+  };
+}
+
 // ── WebSocket state ──
 let wss: WebSocketServer | null = null;
 const wsClients = new Set<WebSocket>();
@@ -202,8 +226,16 @@ export function setEventSearchEngine(eventSearch: { search: (query: string, opts
 export function setProjectGraphLifecycle(
   lifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle,
 ): void {
+  const wasNull = activeGraphLifecycle === null;
   activeGraphLifecycle = lifecycle;
   if (mcpServer) mcpServer.setProjectGraphLifecycle(lifecycle);
+  // Notify any webview that opened before the lifecycle finished
+  // attaching — they need to be told so they can push fresh state.
+  if (wasNull) {
+    for (const handler of [...lifecycleReadyHandlers]) {
+      try { handler(lifecycle); } catch { /* ignore */ }
+    }
+  }
 }
 
 /** Wire the project graph scanner into the MCP server so agents can trigger workspace scans. */
