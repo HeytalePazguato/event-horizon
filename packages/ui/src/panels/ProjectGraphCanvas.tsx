@@ -51,11 +51,14 @@ const NODE_W = 80;
 const NODE_H = 48;
 const NODE_RADIUS = 6;
 const GRID_SPACING = 16;
-// Minimum centre-to-centre distance to prevent visual overlap. The
-// repulsion below pushes nodes that come within this radius apart by
-// the deficit each iteration. Tuned slightly larger than `NODE_W` so
-// labels and halos don't bleed into each other.
-const MIN_NODE_DISTANCE = NODE_W + 32;
+// Per-axis minimum centre-to-centre distance so two axis-aligned
+// rectangles never overlap. The radial circle check used previously
+// allowed pairs to satisfy `dist >= R` while still overlapping in
+// practice (e.g. dx=85, dy=80 → dist=117 > radial threshold, but
+// horizontally |dx|=85 still overlapped 80×48 boxes when dy was small
+// enough). Adding a margin on each axis for the halo + label.
+const MIN_DX = NODE_W + 24;
+const MIN_DY = NODE_H + 24;
 
 // Green-leaning palette to match the Event Horizon Universe view. Functions
 // (the most common node type) anchor the theme; other types use closely
@@ -332,35 +335,21 @@ function layoutNodes(
       p.vy *= DAMPING;
     }
 
-    // Hard collision constraint: push apart any pair of nodes whose
-    // centres are closer than MIN_NODE_DISTANCE. Force-directed alone
-    // doesn't guarantee non-overlap, especially for densely connected
-    // hubs. Applying this each iteration converges to a non-overlapping
-    // layout in practice.
-    for (let i = 0; i < nodes.length; i++) {
-      const pa = pos.get(nodes[i].id);
-      if (!pa) continue;
-      for (let j = i + 1; j < nodes.length; j++) {
-        const pb = pos.get(nodes[j].id);
-        if (!pb) continue;
-        const dx = pb.x - pa.x;
-        const dy = pb.y - pa.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < MIN_NODE_DISTANCE && dist > 0.001) {
-          const push = (MIN_NODE_DISTANCE - dist) / 2;
-          const nx = dx / dist;
-          const ny = dy / dist;
-          pa.x -= nx * push;
-          pa.y -= ny * push;
-          pb.x += nx * push;
-          pb.y += ny * push;
-        } else if (dist <= 0.001) {
-          // Coincident nodes — nudge one along a deterministic axis so
-          // the next iteration's repulsion has a direction to act on.
-          pb.x += MIN_NODE_DISTANCE / 2;
-        }
-      }
+    // AABB collision constraint: any two boxes whose centres are
+    // within MIN_DX horizontally AND MIN_DY vertically overlap. Push
+    // them apart along the axis of smaller penetration so the layout
+    // settles into a non-overlapping arrangement. Multiple passes per
+    // iteration so cascading collisions resolve in dense hubs.
+    for (let pass = 0; pass < 4; pass++) {
+      resolveCollisions(nodes, pos);
     }
+  }
+
+  // Final settle pass — pure collision, no springs — so any remaining
+  // overlap from the last spring tug gets pushed out before render.
+  // 30 iterations is more than enough on a 200-node page.
+  for (let p = 0; p < 30; p++) {
+    if (!resolveCollisions(nodes, pos)) break;
   }
 
   const result = new Map<string, NodePosition>();
@@ -371,4 +360,52 @@ function layoutNodes(
     });
   }
   return result;
+}
+
+/**
+ * One AABB collision-resolution pass. Pushes apart any pair of boxes
+ * that overlap on both axes (centres within MIN_DX horizontally AND
+ * MIN_DY vertically). Returns true if any pair was pushed.
+ */
+function resolveCollisions(
+  nodes: GraphNodeData[],
+  pos: Map<string, { x: number; y: number; vx: number; vy: number }>,
+): boolean {
+  let pushed = false;
+  for (let i = 0; i < nodes.length; i++) {
+    const pa = pos.get(nodes[i].id);
+    if (!pa) continue;
+    for (let j = i + 1; j < nodes.length; j++) {
+      const pb = pos.get(nodes[j].id);
+      if (!pb) continue;
+      const dx = pb.x - pa.x;
+      const dy = pb.y - pa.y;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      if (absDx >= MIN_DX || absDy >= MIN_DY) continue; // not overlapping
+      // Coincident — nudge deterministically.
+      if (absDx < 0.001 && absDy < 0.001) {
+        pb.x += MIN_DX / 2;
+        pushed = true;
+        continue;
+      }
+      // Penetration on each axis. Push along the axis with smaller
+      // penetration — that's the cheapest way out of the collision.
+      const penX = MIN_DX - absDx;
+      const penY = MIN_DY - absDy;
+      if (penX < penY) {
+        const sign = dx >= 0 ? 1 : -1;
+        const half = penX / 2;
+        pa.x -= sign * half;
+        pb.x += sign * half;
+      } else {
+        const sign = dy >= 0 ? 1 : -1;
+        const half = penY / 2;
+        pa.y -= sign * half;
+        pb.y += sign * half;
+      }
+      pushed = true;
+    }
+  }
+  return pushed;
 }
