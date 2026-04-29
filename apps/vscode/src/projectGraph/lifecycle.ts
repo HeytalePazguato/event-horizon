@@ -100,14 +100,12 @@ export class ProjectGraphLifecycle {
     this.activeWorkspace = normalized;
 
     const dbPath = path.join(normalized, '.eh', 'graph.db');
-    console.log(`[Event Horizon] attachIfExists: workspace=${normalized}, dbPath=${dbPath}`);
     let buffer: Uint8Array | undefined;
     try {
       buffer = await fs.promises.readFile(dbPath);
     } catch {
       // No existing graph file — that's the normal pre-skill state. We
       // intentionally do NOT create the directory or an empty DB here.
-      console.log(`[Event Horizon] No graph DB on disk at ${dbPath} — run /eh:optimize-context to build one.`);
       this.emitter.fire(null);
       return;
     }
@@ -132,9 +130,6 @@ export class ProjectGraphLifecycle {
     this.activeDb = db;
     this.activeDbPath = dbPath;
     this.saveInterval = setInterval(() => this.tickSave(), SAVE_INTERVAL_MS);
-
-    const stats = db.getStore().getStats();
-    console.log(`[Event Horizon] Graph DB loaded from ${dbPath}: ${stats.nodeCount} nodes, ${stats.edgeCount} edges, ${stats.fileCount} files (buffer ${buffer.byteLength} bytes).`);
 
     this.emitter.fire(db.getStore());
   }
@@ -251,7 +246,6 @@ export class ProjectGraphLifecycle {
       // The build path is user-triggered and infrequent, so the brief
       // blocking is fine. Saves loose-end races on dev-host reload.
       fs.writeFileSync(this.activeDbPath, data);
-      console.log(`[Event Horizon] Graph DB flushed to ${this.activeDbPath} (${data.byteLength} bytes).`);
     } catch (err) {
       console.error(`[Event Horizon] Graph DB flush failed:`, err);
     }
@@ -269,7 +263,6 @@ export class ProjectGraphLifecycle {
     try {
       const data = this.activeDb.save();
       void fs.promises.writeFile(this.activeDbPath, data);
-      console.log(`[Event Horizon] Graph DB tick-save: ${data.byteLength} bytes → ${this.activeDbPath}`);
     } catch {
       // Intermittent disk errors will retry on the next tick. If the
       // workspace is read-only, every tick fails silently — the graph
