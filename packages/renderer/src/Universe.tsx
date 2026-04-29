@@ -1865,7 +1865,9 @@ const UniverseImpl: FC<UniverseProps> = ({
 
     app.ticker.add(tick);
     return () => {
-      app.ticker.remove(tick);
+      try {
+        if (app && app.ticker) app.ticker.remove(tick);
+      } catch { /* ticker already destroyed during cleanup cascade */ }
       if (ufoTimerRef.current) {
         clearTimeout(ufoTimerRef.current);
         ufoTimerRef.current = null;

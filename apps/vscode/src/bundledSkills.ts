@@ -331,19 +331,21 @@ You are a researcher agent. Your job is to explore the codebase, gather context,
 
 1. Read the task description from your argument or from the plan (call \`eh_get_plan\` to see current tasks)
 
-2. **Stand on prior agents' shoulders FIRST** — call \`eh_search_events\` for the task's key terms (file paths, function names, error messages) before re-exploring. Event Horizon persists every event verbatim, so prior agent activity on related files is searchable. Examples:
+2. **Query the project graph FIRST** — call \`eh_curate_context({ task_description })\` to get a token-budgeted slice of the project knowledge graph (code anchors, doc anchors, recent agent activity, relevant knowledge). If the response says "No project graph yet — invoke /eh:optimize-context to build one", continue to step 3 without it. With a graph present, treat the curated subgraph as your primary anchor: read the suggestedReads first, before broader exploration.
+
+3. **Stand on prior agents' shoulders** — call \`eh_search_events\` for the task's key terms (file paths, function names, error messages). Event Horizon persists every event verbatim, so prior agent activity on related files is searchable. Examples:
    - \`eh_search_events({ query: "auth.ts" })\` → see who touched it, what tools ran
    - \`eh_search_events({ query: "TypeError", type: "agent.error" })\` → find prior failures
    - \`eh_search_events({ query: "<feature name>", type: "task.complete" })\` → see if anyone already shipped this
    Also call \`eh_read_shared\` to check if shared knowledge already covers your topic — don't re-discover what's documented.
 
-3. Explore relevant files using Read, Grep, and Glob (only after step 2 — let prior work narrow your search)
+4. Explore relevant files using Read, Grep, and Glob (only after steps 2 + 3 — let the graph and prior work narrow your search)
 
-4. Search for related patterns, dependencies, and potential risks
+5. Search for related patterns, dependencies, and potential risks
 
-5. Produce a structured findings summary
+6. Produce a structured findings summary
 
-6. **Save key findings as shared knowledge** — use \`eh_write_shared\` for non-trivial discoveries that future agents would benefit from. If the finding is time-bound (e.g. "build is broken on this branch as of today"), set \`valid_until\` so it auto-expires.
+7. **Save key findings as shared knowledge** — use \`eh_write_shared\` for non-trivial discoveries that future agents would benefit from. If the finding is time-bound (e.g. "build is broken on this branch as of today"), set \`valid_until\` so it auto-expires.
 
 ## Output format
 
@@ -487,22 +489,29 @@ You are a debugger agent. Your job is to diagnose bugs, trace root causes, and a
 
 1. Understand the bug (read task description, check plan via \`eh_get_plan\`)
 
-2. **Search prior agent activity FIRST** — Event Horizon persists every event from every agent. Use \`eh_search_events\` to find context the bug report alone won't give you:
+2. **Map the suspected code with the project graph FIRST** — call \`eh_query_graph\` to see structural context before diving into files:
+   - \`eh_query_graph({ op: 'search', query: '<function or file name>' })\` → find the node ID
+   - \`eh_query_graph({ op: 'callers', node_id: '<id>' })\` → who calls into the suspect code
+   - \`eh_query_graph({ op: 'recent_activity', file_path: '<path>' })\` → which agents touched this file recently
+   - \`eh_query_graph({ op: 'explain', node_id: '<id>' })\` → full neighborhood + rationale
+   If the response says "No project graph yet — invoke /eh:optimize-context to build one", continue to step 3 without it.
+
+3. **Search prior agent activity** — Event Horizon persists every event from every agent. Use \`eh_search_events\` to find context the bug report alone won't give you:
    - \`eh_search_events({ query: "<error message excerpt>" })\` → has this error appeared before? in what context?
    - \`eh_search_events({ query: "<file or function name>", type: "tool.call" })\` → what tools touched the suspect code recently?
    - \`eh_search_events({ query: "<feature name>", type: "task.fail" })\` → prior failures on similar work?
    - \`eh_search_events({ query: "<file>", type: "file.write" })\` → who last wrote to this file, when?
    This often surfaces the introducing change in seconds vs hours of git blame archaeology.
 
-3. Reproduce the issue if possible (run relevant commands)
+4. Reproduce the issue if possible (run relevant commands)
 
-4. Trace the root cause through the code using Read and Grep
+5. Trace the root cause through the code using Read and Grep
 
-5. Apply a minimal, targeted fix — change as little as possible
+6. Apply a minimal, targeted fix — change as little as possible
 
-6. Verify the fix doesn't break existing tests: \`pnpm test\`
+7. Verify the fix doesn't break existing tests: \`pnpm test\`
 
-7. Document your findings
+8. Document your findings
 
 ## Guidelines
 
@@ -521,18 +530,27 @@ Call \`eh_update_task\` with your task ID, status \`done\`, and your findings as
     dirName: 'eh-optimize-context',
     content: `---
 name: eh:optimize-context
-description: "Analyze and optimize instruction files to reduce per-session token costs"
+description: "Build the project knowledge graph, tier instruction files, and (with a task) hand the agent the relevant slice."
 user-invocable: true
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+argument-hint: "[optional task description for curation]"
 metadata:
   category: optimization
-  tags: tokens, cost, context, optimization
+  tags: tokens, cost, context, optimization, graph
 ---
 
-You are a context optimizer. Your job is to manage instruction files — create them if missing, optimize them if too large.
+You are a context optimizer. This skill does THREE things in this exact order:
 
-## Target files
+## Step 1 — Build or refresh the project knowledge graph
+
+Call \`eh_build_graph\` to scan the workspace. The scanner extracts code structure (TS/JS/TSX functions, classes, imports, calls) via tree-sitter, plus markdown headings and code-comment rationale (\`// WHY:\`, TODO, FIXME, JSDoc). Files unchanged since the last build (matched by SHA256 hash) are skipped.
+
+The build is **user-triggered only** — invoking this skill is the user's signal that they want a (re)build. Do NOT call \`eh_build_graph\` from any other skill.
+
+Show the result counts: \`Indexed N files, M nodes, K edges in <time>s\`. If \`eh_build_graph\` returns an error indicating no scanner is available, note it and continue to step 2.
+
+## Step 2 — Tier instruction files (CLAUDE.md, .cursorrules, etc.)
 
 Scan the workspace for these instruction files:
 - \`CLAUDE.md\` — Claude Code instructions
@@ -540,9 +558,9 @@ Scan the workspace for these instruction files:
 - \`copilot-instructions.md\` or \`.github/copilot-instructions.md\` — GitHub Copilot instructions
 - \`AGENTS.md\` — General agent instructions
 
-## If NO instruction files exist
+### If NO instruction files exist
 
-If the workspace has no instruction files at all, offer to create them:
+Offer to create them:
 
 1. **Explore the project** — Read package.json, look at the directory structure, check for existing configs (tsconfig, eslint, etc.), identify the tech stack.
 2. **Generate CLAUDE.md** — Create a concise CLAUDE.md with:
@@ -553,7 +571,7 @@ If the workspace has no instruction files at all, offer to create them:
    Keep it under 150 lines / ~2000 tokens. Concise > comprehensive.
 3. **Generate other files if relevant** — If the project uses Cursor or Copilot, offer to create \`.cursorrules\` or \`.github/copilot-instructions.md\` with equivalent content adapted to that agent's format.
 
-## Analysis (when files exist)
+### Analysis (when files exist)
 
 For each file found:
 
@@ -569,7 +587,7 @@ For each file found:
 
 4. **Identify skill candidates** — Detailed step-by-step procedures (e.g. "how to add a new API endpoint") could be extracted into on-demand skills that agents invoke only when needed, instead of paying the token cost on every session.
 
-## Optimization Strategy — MemPalace-Inspired Tiered Loading
+### Optimization Strategy — MemPalace-Inspired Tiered Loading
 
 The goal is NOT to shrink CLAUDE.md to the smallest possible size. The goal is to **tier the content** so the always-loaded part is small while the full detail remains available on demand. MemPalace's published benchmark proved that aggressive summarization regresses retrieval by 12+ percentage points — losing the *why* costs more than it saves in tokens.
 
@@ -582,7 +600,7 @@ Apply this 4-tier model (analogous to MemPalace's L0-L3 stack):
 
 A well-tiered project pays ~600-1000 tokens per agent wake-up instead of 4000+, freeing 95%+ of the context window for actual work.
 
-## Actions
+### Tiering Actions
 
 Present your analysis first, then offer these optimizations (with user approval):
 
@@ -603,18 +621,61 @@ Present your analysis first, then offer these optimizations (with user approval)
 
 5. **Move dated content to shared knowledge with expiration** — content like "as of Q1 2025" or "until the new auth lands in March" should NOT live in always-loaded instruction files. Move it to shared knowledge via \`eh_write_shared\` with a \`valid_until\` timestamp so it auto-expires and stops costing tokens once stale.
 
-## What NOT to do
+### What NOT to do
 
 - **DO NOT summarize for the sake of brevity.** MemPalace's benchmarks (96.6% R@5 raw vs 84.2% with their AAAK lossy compression) prove summarization loses critical context. Trim filler words, but never remove the *why*.
 - **DO NOT collapse examples that show different patterns.** If three examples illustrate three distinct cases, keep all three. Only collapse examples that are redundant.
 - **DO NOT delete dated content — expire it.** Move time-bound notes to shared knowledge with \`valid_until\`. Future agents can still find expired entries with \`include_expired: true\` if needed.
 
-## Safety
+### Safety
 
 - **ALWAYS create backups** — Before modifying any file, copy it to \`<filename>.backup\` in the same directory.
 - **Never delete content** — Only move content to other files (or to shared knowledge). Every line removed from one file must appear in another location, with the same fidelity.
 - **Report before/after with tier breakdown** — "CLAUDE.md: 4,200 → 800 tokens (L0+L1 only). Moved 2,400 tokens to .claude/rules/ (L2). Moved 800 tokens to .claude/skills/ (L3). Per-session wake-up cost: 4,200 → 800 tokens."
 - **Ask before modifying** — Present the tiered plan and get user confirmation before making changes.
+
+## Step 3 — Curate per-task slice (only when called WITH a task description)
+
+If the user invoked this skill with a task description as the argument (e.g. \`/eh:optimize-context "fix the auth bug"\`), call \`eh_curate_context({ task_description: <arg>, token_budget: 4000 })\` and present the returned slice as a structured summary:
+
+\`\`\`
+Curated context for: "<task description>"
+Token budget: 4000 (estimated <X> used)
+
+CODE ANCHORS (<N> nodes)
+  <label>     <sourceFile>:<location>
+  ...
+
+DOC ANCHORS (<N> nodes)
+  <heading>   <sourceFile>
+  ...
+
+RECENT AGENT ACTIVITY (last 7 days)
+  <timestamp>  <agent> <task title>
+                 touched/authored <file>
+                 note: <text>
+  ...
+
+RELEVANT KNOWLEDGE
+  <tier> <key> — <value>
+  ...
+
+SUGGESTED READS
+  1. <file>
+  2. <file>
+  ...
+\`\`\`
+
+Tell the agent (or remind the user): operate on the suggestedReads first; the curated subgraph is the high-signal slice for this task.
+
+If invoked without a task argument, skip this step.
+
+## Summary
+
+- **No-arg invocation**: build/refresh graph + tier instruction files.
+- **With-arg invocation**: build/refresh graph + tier instruction files + curate per-task slice.
+
+The graph build is the only path that scans the workspace; nothing runs in the background.
 `,
   },
   {

@@ -37,7 +37,36 @@ export interface EventServerCallbacks {
 
 let server: http.Server | null = null;
 let callbacks: EventServerCallbacks | null = null;
+let activeBridge: EventBridge | null = null;
 const activeSockets = new Set<import('net').Socket>();
+
+let activeGraphLifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle | null = null;
+let activeGraphScanner: import('./projectGraph/scanner.js').ProjectGraphScanner | null = null;
+let activeGraphQueryEngine: import('./projectGraph/queryEngine.js').GraphQueryEngine | null = null;
+
+/**
+ * Fires when `setProjectGraphLifecycle` is called for the first time during
+ * activation. The webview provider subscribes so it can push graph state to
+ * any panel that opened BEFORE the lifecycle finished attaching (the IIFE
+ * that initializes EventHorizonDB + lifecycle is async and slower than the
+ * webview-open path, so 'ready' often arrives first).
+ */
+type LifecycleReadyHandler = (lifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle) => void;
+const lifecycleReadyHandlers: LifecycleReadyHandler[] = [];
+
+export function onProjectGraphLifecycleReady(handler: LifecycleReadyHandler): { dispose: () => void } {
+  // If already set up, fire immediately so callers don't need to branch.
+  if (activeGraphLifecycle) {
+    try { handler(activeGraphLifecycle); } catch { /* ignore */ }
+  }
+  lifecycleReadyHandlers.push(handler);
+  return {
+    dispose: () => {
+      const idx = lifecycleReadyHandlers.indexOf(handler);
+      if (idx !== -1) lifecycleReadyHandlers.splice(idx, 1);
+    },
+  };
+}
 
 // ── WebSocket state ──
 let wss: WebSocketServer | null = null;
@@ -92,6 +121,7 @@ export function setExtensionRoot(p: string): void {
 }
 
 // ── File lock manager (extracted to lockManager.ts) ─────────────────────────
+import type { EventBridge } from './projectGraph/eventBridge.js';
 import { LockManager } from './lockManager.js';
 import { McpServer, FileActivityTracker } from './mcpServer.js';
 import { PlanBoardManager } from './planBoard.js';
@@ -172,6 +202,8 @@ export function initMcpServer(deps: {
     workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     modelTierManager,
     tokenAnalyzer,
+    isAgentExtractionEnabled: () =>
+      vscode.workspace.getConfiguration('eventHorizon').get<boolean>('projectGraph.allowAgentLLMExtraction', true),
   });
 }
 
@@ -183,6 +215,65 @@ export function _setMcpServer(s: McpServer | null): void { mcpServer = s; }
 /** Wire the event search engine into the MCP server after the persistence DB is ready. */
 export function setEventSearchEngine(eventSearch: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] }): void {
   if (mcpServer) mcpServer.setEventSearch(eventSearch);
+}
+
+/**
+ * Wire the project-graph lifecycle into the MCP server. The lifecycle
+ * resolves the active per-workspace store at call time — when no folder is
+ * open, `getProjectGraphStore()` returns `null` and consumers surface a
+ * clear "no workspace open" error.
+ */
+export function setProjectGraphLifecycle(
+  lifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle,
+): void {
+  const wasNull = activeGraphLifecycle === null;
+  activeGraphLifecycle = lifecycle;
+  if (mcpServer) mcpServer.setProjectGraphLifecycle(lifecycle);
+  // Notify any webview that opened before the lifecycle finished
+  // attaching — they need to be told so they can push fresh state.
+  if (wasNull) {
+    for (const handler of [...lifecycleReadyHandlers]) {
+      try { handler(lifecycle); } catch { /* ignore */ }
+    }
+  }
+}
+
+/** Wire the project graph scanner into the MCP server so agents can trigger workspace scans. */
+export function setProjectGraphScanner(scanner: import('./projectGraph/scanner.js').ProjectGraphScanner): void {
+  activeGraphScanner = scanner;
+  if (mcpServer) mcpServer.setProjectGraphScanner(scanner);
+}
+
+/** Wire the project graph query engine into the MCP server for eh_query_graph and eh_curate_context. */
+export function setProjectGraphQueryEngine(engine: import('./projectGraph/queryEngine.js').GraphQueryEngine): void {
+  activeGraphQueryEngine = engine;
+  if (mcpServer) mcpServer.setProjectGraphQueryEngine(engine);
+}
+
+export function getProjectGraphQueryEngine(): import('./projectGraph/queryEngine.js').GraphQueryEngine | null {
+  return activeGraphQueryEngine;
+}
+
+export function getProjectGraphStore(): import('./projectGraph/index.js').ProjectGraphStore | null {
+  return activeGraphLifecycle?.getActiveStore() ?? null;
+}
+
+export function getProjectGraphLifecycle(): import('./projectGraph/index.js').ProjectGraphLifecycle | null {
+  return activeGraphLifecycle;
+}
+
+export function getProjectGraphScanner(): import('./projectGraph/scanner.js').ProjectGraphScanner | null {
+  return activeGraphScanner;
+}
+
+/** Wire the event bridge into the shared knowledge store for knowledge→graph node ingestion. */
+export function setEventBridgeOnSharedKnowledge(bridge: EventBridge | undefined): void {
+  sharedKnowledge.setEventBridge(bridge);
+}
+
+/** Set the active event bridge for event ingestion into the project graph. */
+export function setActiveBridge(bridge: EventBridge | undefined): void {
+  activeBridge = bridge ?? null;
 }
 
 export function setMcpOnEvent(onEvent: (event: import('@event-horizon/core').AgentEvent) => void): void {
@@ -538,6 +629,7 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
 
       if (event) {
         cb.onEvent(event);
+        activeBridge?.ingestEvent(event);
         if (route === '/claude') {
           send(200, '');
         } else {
@@ -579,8 +671,9 @@ export function setAuthToken(token: string): void {
   authToken = token;
 }
 
-export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT): Promise<number> {
+export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT_PORT, eventBridge?: EventBridge): Promise<number> {
   callbacks = cbs;
+  activeBridge = eventBridge ?? null;
   if (server) return port;
 
   // Use existing token if set (restored from globalState), otherwise generate new one
@@ -633,6 +726,7 @@ export async function startEventServer(cbs: EventServerCallbacks, port = DEFAULT
           if (data && typeof data === 'object' && data.type && data.agentId) {
             // Treat as raw AgentEvent
             if (callbacks) callbacks.onEvent(data as AgentEvent);
+            activeBridge?.ingestEvent(data as AgentEvent);
             ws.send(JSON.stringify({ ok: true, id: data.id }));
           }
         } catch { /* malformed message — ignore */ }
@@ -714,6 +808,7 @@ export function stopEventServer(): void {
     server = null;
   }
   callbacks = null;
+  activeBridge = null;
   authToken = null;
   rateCounts.clear();
 }

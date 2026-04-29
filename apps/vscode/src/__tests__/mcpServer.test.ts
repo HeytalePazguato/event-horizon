@@ -2,7 +2,7 @@
  * MCP Server tests — exercises JSON-RPC protocol, all 6 tools, and error handling.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { McpServer, FileActivityTracker } from '../mcpServer.js';
 import { LockManager } from '../lockManager.js';
 import { AgentStateManager } from '@event-horizon/core';
@@ -11,6 +11,8 @@ import { MessageQueue } from '../messageQueue.js';
 import { RoleManager } from '../roleManager.js';
 import { AgentProfiler } from '../agentProfiler.js';
 import { SharedKnowledgeStore } from '../sharedKnowledge.js';
+import { ProjectGraphDB } from '../projectGraph/projectGraphDb.js';
+import { GraphQueryEngine } from '../projectGraph/queryEngine.js';
 
 let lockManager: LockManager;
 let agentStateManager: AgentStateManager;
@@ -68,16 +70,17 @@ describe('initialize', () => {
 // ── tools/list ──────────────────────────────────────────────────────────────
 
 describe('tools/list', () => {
-  it('returns all 19 tools', async () => {
+  it('returns all tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(44);
+    expect(result.tools).toHaveLength(48);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');
     expect(names).toContain('eh_release_lock');
     expect(names).toContain('eh_list_agents');
     expect(names).toContain('eh_file_activity');
+    expect(names).toContain('eh_query_graph');
     expect(names).toContain('eh_wait_for_unlock');
     expect(names).toContain('eh_load_plan');
     expect(names).toContain('eh_get_plan');
@@ -271,5 +274,128 @@ describe('FileActivityTracker', () => {
       fileActivityTracker.record({ filePath: `f${i}.ts`, agentId: 'a1', agentName: 'A', action: 'read', timestamp: i });
     }
     expect(fileActivityTracker.query(undefined, 5)).toHaveLength(5);
+  });
+});
+
+// ── eh_query_graph ──────────────────────────────────────────────────────────
+
+describe('eh_query_graph', () => {
+  let db: ProjectGraphDB;
+  let mcpWithGraph: McpServer;
+
+  beforeEach(async () => {
+    db = await ProjectGraphDB.create();
+    const store = db.getStore();
+    const engine = new GraphQueryEngine(store);
+    mcpWithGraph = new McpServer({
+      lockManager,
+      agentStateManager,
+      fileActivityTracker,
+      planBoardManager: new PlanBoardManager(),
+      messageQueue: new MessageQueue(),
+      roleManager: new RoleManager(),
+      agentProfiler: new AgentProfiler(),
+      sharedKnowledge: new SharedKnowledgeStore(),
+      projectGraphQueryEngine: engine,
+    });
+
+    store.upsertNode({
+      id: 'fn:parseToken',
+      label: 'parseToken',
+      type: 'function',
+      sourceFile: '/src/auth.ts',
+      tag: 'EXTRACTED',
+      confidence: 1.0,
+      properties: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function graphCall(args: Record<string, unknown>) {
+    return mcpWithGraph.handleRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'eh_query_graph', arguments: args }, id: 1 });
+  }
+
+  it('returns informative message when engine is not wired', async () => {
+    const bare = new McpServer({ lockManager, agentStateManager, fileActivityTracker, planBoardManager: new PlanBoardManager(), messageQueue: new MessageQueue(), roleManager: new RoleManager(), agentProfiler: new AgentProfiler(), sharedKnowledge: new SharedKnowledgeStore() });
+    const res = await bare.handleRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'eh_query_graph', arguments: { op: 'search', query: 'foo' } }, id: 1 });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const parsed = JSON.parse(content.text);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.message).toContain('No project graph');
+  });
+
+  it('search op returns matching nodes', async () => {
+    const res = await graphCall({ op: 'search', query: 'parseToken' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const nodes = JSON.parse(content.text);
+    expect(Array.isArray(nodes)).toBe(true);
+    expect(nodes.length).toBeGreaterThan(0);
+    expect(nodes[0].label).toBe('parseToken');
+  });
+
+  it('search op returns error when query missing', async () => {
+    const res = await graphCall({ op: 'search' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const parsed = JSON.parse(content.text);
+    expect(parsed.error).toContain('query is required');
+  });
+
+  it('callers op returns error when node_id missing', async () => {
+    const res = await graphCall({ op: 'callers' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const parsed = JSON.parse(content.text);
+    expect(parsed.error).toContain('node_id is required');
+  });
+
+  it('callers op returns empty array for leaf node', async () => {
+    const res = await graphCall({ op: 'callers', node_id: 'fn:parseToken' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const nodes = JSON.parse(content.text);
+    expect(Array.isArray(nodes)).toBe(true);
+    expect(nodes).toHaveLength(0);
+  });
+
+  it('explain op returns full node detail', async () => {
+    const res = await graphCall({ op: 'explain', node_id: 'fn:parseToken' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const result = JSON.parse(content.text);
+    expect(result.node).not.toBeNull();
+    expect(result.node.label).toBe('parseToken');
+    expect(Array.isArray(result.in)).toBe(true);
+    expect(Array.isArray(result.out)).toBe(true);
+  });
+
+  it('explain op returns null for unknown node', async () => {
+    const res = await graphCall({ op: 'explain', node_id: 'fn:nonexistent' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const result = JSON.parse(content.text);
+    expect(result).toBeNull();
+  });
+
+  it('path op returns error when source_id missing', async () => {
+    const res = await graphCall({ op: 'path', target_id: 'fn:parseToken' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const parsed = JSON.parse(content.text);
+    expect(parsed.error).toContain('source_id is required');
+  });
+
+  it('recent_activity op returns error when file_path missing', async () => {
+    const res = await graphCall({ op: 'recent_activity' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const parsed = JSON.parse(content.text);
+    expect(parsed.error).toContain('file_path is required');
+  });
+
+  it('recent_activity op returns empty result for unknown file', async () => {
+    const res = await graphCall({ op: 'recent_activity', file_path: '/src/auth.ts' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    const result = JSON.parse(content.text);
+    expect(Array.isArray(result.agents)).toBe(true);
+    expect(Array.isArray(result.activities)).toBe(true);
   });
 });

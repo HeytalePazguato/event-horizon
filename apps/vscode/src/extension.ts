@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -26,6 +26,12 @@ import { ensureBundledSkills } from './bundledSkills';
 import { EventHorizonDB } from './persistence';
 import { deriveEventCategory } from '@event-horizon/core';
 import { CrossAgentCorrelator } from './crossAgentCorrelator';
+import { EventBridge } from './projectGraph/eventBridge';
+import { ProjectGraphScanner } from './projectGraph/scanner';
+import { treeSitterExtractor } from './projectGraph/treeSitterExtractor';
+import { extractMarkdown } from './projectGraph/markdownExtractor';
+import { GraphQueryEngine } from './projectGraph/queryEngine';
+import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -238,10 +244,79 @@ export function activate(context: vscode.ExtensionContext): void {
         }, 60_000);
         context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
 
-        // Wire event search engine into MCP server now that DB is ready
+        // Wire event search engine and project graph lifecycle into MCP server now that DB is ready
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
         setEventSearchEngine(eventSearchEngine);
+
+        // Per-project graph DB lifecycle. Activation does NOT create any
+        // files — it only attaches to a pre-existing `<folder>/.eh/graph.db`
+        // if one is already on disk (built by a prior `/eh:optimize-context`
+        // run). The skill is the sole code path that creates the directory
+        // and the DB file.
+        const projectGraphLifecycle = new ProjectGraphLifecycle();
+        const initialFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (initialFolder) {
+          try {
+            await projectGraphLifecycle.attachIfExists(initialFolder);
+          } catch (err) {
+            console.error('[Event Horizon] Failed to attach project graph DB:', err);
+          }
+        }
+        setProjectGraphLifecycle(projectGraphLifecycle);
+        context.subscriptions.push({
+          dispose: () => {
+            // Sync flush first so the dev host can be killed without losing
+            // unsaved mutations. closeActive's async writeFile may not get a
+            // chance to complete during shutdown.
+            projectGraphLifecycle.flush();
+            void projectGraphLifecycle.closeActive().then(() => projectGraphLifecycle.dispose());
+          },
+        });
+        context.subscriptions.push(
+          vscode.workspace.onDidChangeWorkspaceFolders(async () => {
+            const newFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (!newFolder) {
+              await projectGraphLifecycle.closeActive();
+              return;
+            }
+            if (projectGraphLifecycle.getActiveWorkspace() === path.resolve(newFolder)) return;
+            try {
+              await projectGraphLifecycle.attachIfExists(newFolder);
+            } catch (err) {
+              console.error('[Event Horizon] Failed to attach project graph DB:', err);
+            }
+          }),
+        );
+
+        const getActiveStore = (): import('./projectGraph/index.js').ProjectGraphStore | null =>
+          projectGraphLifecycle.getActiveStore();
+
         setMcpOnEvent(onAgentEvent);
+
+        // Create event bridge and wire into shared knowledge + event server for graph ingestion
+        const workspaceFolder = initialFolder ?? process.cwd();
+        const eventBridge = new EventBridge(getActiveStore, { workspaceFolder });
+        setEventBridgeOnSharedKnowledge(eventBridge);
+        setActiveBridge(eventBridge);
+
+        // Create and wire project graph scanner for agents to trigger workspace scans
+        const projectGraphScanner = new ProjectGraphScanner(
+          getActiveStore,
+          { treeSitter: treeSitterExtractor, markdown: extractMarkdown },
+          { workspaceFolder, maxFiles: 5000, includeMarkdown: true },
+        );
+        setProjectGraphScanner(projectGraphScanner);
+
+        // Create and wire project graph query engine for eh_query_graph / eh_curate_context
+        const graphQueryEngine = new GraphQueryEngine(getActiveStore);
+        setProjectGraphQueryEngine(graphQueryEngine);
+
+        // No Command Palette commands and no UI button for graph builds.
+        // The skill `eh:optimize-context` is the only trigger — it calls the
+        // `eh_build_graph` MCP tool, which in turn calls
+        // `lifecycle.openForBuild()` and runs the scanner. Keeping the trigger
+        // surface to a single skill prevents accidental builds from button
+        // clicks or palette typos.
 
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {

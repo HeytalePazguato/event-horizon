@@ -21,7 +21,11 @@ import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
 import type { TokenAnalyzer } from './tokenAnalyzer.js';
+import type { ProjectGraphStore, ProjectGraphLifecycle, GraphNodeType, RelationType } from './projectGraph/index.js';
+import type { ProjectGraphScanner } from './projectGraph/scanner.js';
+import type { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import { exec } from 'child_process';
+import { createHash } from 'crypto';
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
 
@@ -640,6 +644,99 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['agent_id', 'query'],
     },
   },
+  {
+    name: 'eh_extract_concepts',
+    description: 'Add INFERRED nodes/edges to the project graph from agent analysis. The agent runs the extraction (e.g. parses a doc and identifies concepts) and supplies the structured result; EH never makes outbound model calls. Gated by eventHorizon.projectGraph.allowAgentLLMExtraction setting. Call only when the user has asked you to enrich the project graph.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source_file: { type: 'string', description: 'Required. The file the concepts were extracted from.' },
+        nodes: {
+          type: 'array',
+          description: 'Concept nodes to add. Each requires: label (string), type (string — typically "concept"), confidence (number 0-1), and optional properties (object).',
+          items: {
+            type: 'object',
+            required: ['label', 'type', 'confidence'],
+            properties: {
+              label: { type: 'string' },
+              type: { type: 'string' },
+              confidence: { type: 'number' },
+              properties: { type: 'object' },
+              sourceLocation: { type: 'string' },
+            },
+          },
+        },
+        edges: {
+          type: 'array',
+          description: 'Edges between submitted nodes (referenced by label). Each requires: sourceLabel, targetLabel, relationType, confidence.',
+          items: {
+            type: 'object',
+            required: ['sourceLabel', 'targetLabel', 'relationType', 'confidence'],
+            properties: {
+              sourceLabel: { type: 'string' },
+              targetLabel: { type: 'string' },
+              relationType: { type: 'string' },
+              confidence: { type: 'number' },
+            },
+          },
+        },
+        confidence_floor: { type: 'number', description: 'Drop entries below this confidence. Default 0.5.' },
+      },
+      required: ['source_file', 'nodes'],
+    },
+  },
+  {
+    name: 'eh_build_graph',
+    description: 'Trigger a workspace scan to build or refresh the project knowledge graph. Call this only when the user has explicitly invoked /eh:optimize-context or otherwise asked you to (re)build the graph. Returns scan stats (filesProcessed, filesSkipped, nodesCreated, edgesCreated, durationMs).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        force: {
+          type: 'boolean',
+          description: 'When true, ignore the per-file SHA256 hash and rescan every file. Default false.'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'eh_query_graph',
+    description: 'Query the project knowledge graph. Pick an op: search (FTS by query), callers (incoming calls edges), callees (outgoing calls edges), neighbors (1-hop), path (shortest path between two nodes), explain (full detail of a node), recent_activity (agents who touched a file recently). Returns structured graph data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['search', 'callers', 'callees', 'neighbors', 'path', 'explain', 'recent_activity'] },
+        query: { type: 'string' },
+        node_id: { type: 'string' },
+        source_id: { type: 'string' },
+        target_id: { type: 'string' },
+        file_path: { type: 'string' },
+        since_ms: { type: 'number' },
+        depth: { type: 'number' },
+        type: { type: 'string' },
+        tag: { type: 'string', enum: ['EXTRACTED', 'INFERRED', 'AMBIGUOUS'] },
+        limit: { type: 'number' },
+        relation_types: { type: 'array', items: { type: 'string' } },
+        direction: { type: 'string', enum: ['in', 'out', 'both'] },
+      },
+      required: ['op'],
+    },
+  },
+  {
+    name: 'eh_curate_context',
+    description: 'Given a task description, return a token-budgeted slice of the project knowledge graph (code, docs, recent agent activity, knowledge entries) that is most relevant to that task. Use this BEFORE reading raw files. Requires a built project graph; if absent, returns a hint to invoke /eh:optimize-context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_description: { type: 'string' },
+        token_budget: { type: 'number', description: 'Approximate token cap for the returned subgraph. Default 4000.' },
+        seed_files: { type: 'array', items: { type: 'string' }, description: 'Optional explicit anchor files to seed expansion.' },
+        include_activity: { type: 'boolean', description: 'Include recent agent activity nodes (last 7 days). Default true.' },
+        include_knowledge: { type: 'boolean', description: 'Include shared-knowledge nodes referencing seeds. Default true.' },
+      },
+      required: ['task_description'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -701,6 +798,11 @@ export interface McpServerDeps {
   modelTierManager?: ModelTierManager;
   tokenAnalyzer?: TokenAnalyzer;
   eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
+  projectGraphStore?: ProjectGraphStore;
+  projectGraphLifecycle?: ProjectGraphLifecycle;
+  projectGraphScanner?: ProjectGraphScanner;
+  projectGraphQueryEngine?: GraphQueryEngine;
+  isAgentExtractionEnabled?: () => boolean;
   /** Callback to inject events into the main event pipeline (for synthetic terminate, etc.). */
   onEvent?: (event: AgentEvent) => void;
 }
@@ -715,6 +817,41 @@ export class McpServer {
   /** Wire the event search engine after the DB is initialized (called from extension.ts). */
   setEventSearch(eventSearch: McpServerDeps['eventSearch']): void {
     this.deps.eventSearch = eventSearch;
+  }
+
+  setProjectGraphStore(store: ProjectGraphStore): void {
+    this.deps.projectGraphStore = store;
+  }
+
+  /**
+   * Wire the per-project graph lifecycle. Once set, all graph MCP handlers
+   * resolve the active store via `lifecycle.getActiveStore()` at call time
+   * instead of using a fixed reference, so workspace-folder swaps land
+   * automatically.
+   */
+  setProjectGraphLifecycle(lifecycle: ProjectGraphLifecycle): void {
+    this.deps.projectGraphLifecycle = lifecycle;
+  }
+
+  /**
+   * Resolve the currently-active project graph store. Prefers the lifecycle
+   * (per-workspace `<folder>/.eh/graph.db`) when wired; falls back to a
+   * direct store reference for legacy callers and tests. Returns `null`
+   * when no workspace folder is open.
+   */
+  private getActiveGraphStore(): ProjectGraphStore | null {
+    if (this.deps.projectGraphLifecycle) {
+      return this.deps.projectGraphLifecycle.getActiveStore();
+    }
+    return this.deps.projectGraphStore ?? null;
+  }
+
+  setProjectGraphScanner(scanner: ProjectGraphScanner): void {
+    this.deps.projectGraphScanner = scanner;
+  }
+
+  setProjectGraphQueryEngine(engine: GraphQueryEngine): void {
+    this.deps.projectGraphQueryEngine = engine;
   }
 
   setOnEvent(onEvent: (event: AgentEvent) => void): void {
@@ -1957,6 +2094,211 @@ export class McpServer {
         if (typeof args.since === 'number') opts.since = args.since;
         const results = eventSearch.search(query, opts);
         return { query, count: results.length, events: results };
+      }
+
+      case 'eh_extract_concepts': {
+        const projectGraphStore = this.getActiveGraphStore();
+        const { isAgentExtractionEnabled } = this.deps;
+        if (!projectGraphStore) {
+          return { error: 'No workspace folder open. Open a folder in VS Code before using project-graph tools.' };
+        }
+        if (isAgentExtractionEnabled && !isAgentExtractionEnabled()) {
+          return { error: 'eh_extract_concepts disabled — enable eventHorizon.projectGraph.allowAgentLLMExtraction to use this tool.' };
+        }
+
+        const sourceFile = args.source_file as string;
+        const rawNodes = (args.nodes as Array<Record<string, unknown>>) ?? [];
+        const rawEdges = (args.edges as Array<Record<string, unknown>>) ?? [];
+        const confidenceFloor = typeof args.confidence_floor === 'number' ? args.confidence_floor : 0.5;
+        const workspace = this.deps.workspaceRoot;
+        const now = Date.now();
+
+        const fileHash = createHash('sha256').update(sourceFile).digest('hex').slice(0, 12);
+        const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+
+        let nodesInserted = 0;
+        let nodesDropped = 0;
+        const labelToId = new Map<string, string>();
+
+        for (const raw of rawNodes) {
+          const label = String(raw.label ?? '');
+          const confidence = Number(raw.confidence ?? 0);
+
+          if (confidence < confidenceFloor) {
+            nodesDropped++;
+            continue;
+          }
+
+          const tag = confidence < 0.5 ? 'AMBIGUOUS' : 'INFERRED';
+          const id = `concept:${fileHash}:${toSlug(label)}`;
+          labelToId.set(label, id);
+
+          const node = {
+            id,
+            label,
+            type: (raw.type as string) || 'concept',
+            tag,
+            confidence,
+            sourceFile,
+            sourceLocation: raw.sourceLocation as string | undefined,
+            properties: (raw.properties as Record<string, unknown>) ?? {},
+            workspace,
+            createdAt: now,
+            updatedAt: now,
+          };
+          projectGraphStore.upsertNode(node as Parameters<typeof projectGraphStore.upsertNode>[0]);
+          nodesInserted++;
+        }
+
+        let edgesInserted = 0;
+        let edgesDropped = 0;
+
+        for (const raw of rawEdges) {
+          const sourceLabel = String(raw.sourceLabel ?? '');
+          const targetLabel = String(raw.targetLabel ?? '');
+          const relationType = String(raw.relationType ?? 'references');
+          const confidence = Number(raw.confidence ?? 0);
+
+          let sourceId = labelToId.get(sourceLabel);
+          if (!sourceId) {
+            const found = projectGraphStore.searchNodes(sourceLabel, { limit: 1 });
+            sourceId = found.find((n) => n.label === sourceLabel)?.id;
+          }
+          let targetId = labelToId.get(targetLabel);
+          if (!targetId) {
+            const found = projectGraphStore.searchNodes(targetLabel, { limit: 1 });
+            targetId = found.find((n) => n.label === targetLabel)?.id;
+          }
+
+          if (!sourceId || !targetId) {
+            edgesDropped++;
+            continue;
+          }
+
+          const edgeId = `edge:${sourceId}:${toSlug(relationType)}:${targetId}`;
+          const edge = {
+            id: edgeId,
+            sourceId,
+            targetId,
+            relationType,
+            tag: 'INFERRED' as const,
+            confidence,
+            sourceFile,
+            createdAt: now,
+          };
+          projectGraphStore.upsertEdge(edge as Parameters<typeof projectGraphStore.upsertEdge>[0]);
+          edgesInserted++;
+        }
+
+        return {
+          inserted: { nodes: nodesInserted, edges: edgesInserted },
+          dropped: { nodes: nodesDropped, edges: edgesDropped },
+        };
+      }
+
+      case 'eh_build_graph': {
+        const { projectGraphScanner, projectGraphLifecycle } = this.deps;
+        if (!projectGraphScanner) {
+          return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
+        }
+        // The skill is the only path that creates `<folder>/.eh/graph.db`.
+        // openForBuild always starts with a fresh empty DB so a re-run of
+        // /eh:optimize-context produces a clean rebuild (no stale rows for
+        // files that were deleted or renamed since the prior run).
+        if (projectGraphLifecycle) {
+          const folder = projectGraphLifecycle.getActiveWorkspace();
+          if (!folder) {
+            return { error: 'No workspace folder open. Open a folder in VS Code before running /eh:optimize-context.' };
+          }
+          await projectGraphLifecycle.openForBuild(folder);
+        }
+        const result = await projectGraphScanner.scanWorkspace(undefined, { force: true });
+        // Tell listeners (notably the webview) that the graph contents
+        // changed in bulk so the Knowledge → Graph tab refreshes without
+        // requiring a manual click-off-click-on.
+        if (projectGraphLifecycle) {
+          // Flush to disk synchronously so a fast dev-host reload after
+          // /eh:optimize-context doesn't lose the just-built graph (the
+          // 60s tick-save would otherwise be the only persistence path).
+          projectGraphLifecycle.flush();
+          projectGraphLifecycle.notifyDataChange();
+        }
+        return result;
+      }
+
+      case 'eh_query_graph': {
+        const engine = this.deps.projectGraphQueryEngine;
+        if (!engine) {
+          return { ok: false, message: 'No project graph yet — invoke /eh:optimize-context to build one.' };
+        }
+        if (!engine.hasActiveStore()) {
+          return { ok: false, message: 'No workspace folder open. Open a folder in VS Code before using project-graph tools.' };
+        }
+
+        const op = args.op as string;
+        const nodeId = args.node_id as string | undefined;
+        const sourceId = args.source_id as string | undefined;
+        const targetId = args.target_id as string | undefined;
+        const filePath = args.file_path as string | undefined;
+        const queryStr = args.query as string | undefined;
+        const depth = typeof args.depth === 'number' ? args.depth : undefined;
+        const limit = typeof args.limit === 'number' ? args.limit : undefined;
+        const sinceMs = typeof args.since_ms === 'number' ? args.since_ms : undefined;
+        const nodeType = args.type as GraphNodeType | undefined;
+        const tag = args.tag as 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS' | undefined;
+        const relationTypes = Array.isArray(args.relation_types)
+          ? (args.relation_types as RelationType[])
+          : undefined;
+        const direction = args.direction as 'in' | 'out' | 'both' | undefined;
+
+        switch (op) {
+          case 'search':
+            if (!queryStr) return { error: 'query is required for op=search' };
+            return engine.search(queryStr, { type: nodeType, tag, limit: limit ?? 25 });
+          case 'callers':
+            if (!nodeId) return { error: 'node_id is required for op=callers' };
+            return engine.callers(nodeId, depth ?? 2);
+          case 'callees':
+            if (!nodeId) return { error: 'node_id is required for op=callees' };
+            return engine.callees(nodeId, depth ?? 2);
+          case 'neighbors':
+            if (!nodeId) return { error: 'node_id is required for op=neighbors' };
+            return engine.neighbors(nodeId, { relationTypes, direction: direction ?? 'both', limit: limit ?? 50 });
+          case 'path':
+            if (!sourceId) return { error: 'source_id is required for op=path' };
+            if (!targetId) return { error: 'target_id is required for op=path' };
+            return engine.shortestPath(sourceId, targetId, { maxDepth: depth ?? 6, relationTypes });
+          case 'explain':
+            if (!nodeId) return { error: 'node_id is required for op=explain' };
+            return engine.explain(nodeId);
+          case 'recent_activity':
+            if (!filePath) return { error: 'file_path is required for op=recent_activity' };
+            return engine.recentActivity(filePath, sinceMs ?? Date.now() - 24 * 60 * 60 * 1000);
+          default:
+            return { error: `Unknown op: ${op}` };
+        }
+      }
+
+      case 'eh_curate_context': {
+        const engine = this.deps.projectGraphQueryEngine;
+        if (!engine) {
+          return { ok: false, message: 'No project graph yet — invoke /eh:optimize-context to build one.' };
+        }
+        if (!engine.hasActiveStore()) {
+          return { ok: false, message: 'No workspace folder open. Open a folder in VS Code before using project-graph tools.' };
+        }
+
+        const taskDescription = args.task_description as string | undefined;
+        if (!taskDescription) return { error: 'task_description is required' };
+
+        const tokenBudget = typeof args.token_budget === 'number' ? args.token_budget : 4000;
+        const seedFiles = Array.isArray(args.seed_files) ? (args.seed_files as string[]) : undefined;
+        const includeActivity = typeof args.include_activity === 'boolean' ? args.include_activity : undefined;
+        const includeKnowledge = typeof args.include_knowledge === 'boolean' ? args.include_knowledge : undefined;
+
+        const { ContextCurator } = await import('./projectGraph/contextCurator.js');
+        const curator = new ContextCurator(engine);
+        return curator.curate({ taskDescription, tokenBudget, seedFiles, includeActivity, includeKnowledge });
       }
 
       default:

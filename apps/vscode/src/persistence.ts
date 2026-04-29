@@ -34,6 +34,7 @@ function locateSqlWasm(file: string): string {
   }
 }
 import type { AgentEvent } from '@event-horizon/core';
+import { GRAPH_SCHEMA_DROP_SQL } from './projectGraph/schema.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -121,6 +122,11 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   PRIMARY KEY (agent_id, session_start)
 );
 CREATE INDEX IF NOT EXISTS sessions_agent_open ON agent_sessions(agent_id, session_end);
+
+CREATE TABLE IF NOT EXISTS eh_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 // FTS5 virtual table — created separately since it can fail on some builds
@@ -174,7 +180,23 @@ export class EventHorizonDB {
     // Create schema
     db.run(SCHEMA_SQL);
 
+    // One-time migration from v3.0.0-dev: graph tables previously lived in
+    // this DB; v3.0.0 release moves them to per-workspace `<folder>/.eh/graph.db`.
+    // The marker row makes the DROP idempotent on subsequent loads.
+    let droppedGraph = false;
+    const markerCheck = db.exec(`SELECT 1 FROM eh_meta WHERE key = 'graph_dropped'`);
+    if (markerCheck.length === 0 || markerCheck[0].values.length === 0) {
+      try {
+        db.run(GRAPH_SCHEMA_DROP_SQL);
+      } catch {
+        /* tables already absent on a fresh install — DROP IF EXISTS is a no-op */
+      }
+      db.run(`INSERT INTO eh_meta (key, value) VALUES ('graph_dropped', '1')`);
+      droppedGraph = true;
+    }
+
     const instance = new EventHorizonDB(db);
+    if (droppedGraph) instance._dirty = true;
 
     // Try to enable FTS5 — may not be available in all sql.js builds
     try {
@@ -501,6 +523,7 @@ export class EventHorizonDB {
       eventCount: row['event_count'] as number,
     };
   }
+
 
   // ── Maintenance ────────────────────────────────────────────────────────
 

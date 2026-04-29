@@ -3,9 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import initSqlJs from 'sql.js';
 import { EventHorizonDB } from '../persistence.js';
 import type { AgentEvent } from '@event-horizon/core';
 import type { PersistedKnowledgeEntry, AgentSession } from '../persistence.js';
+import { GRAPH_SCHEMA_SQL } from '../projectGraph/schema.js';
 
 function makeEvent(overrides?: Partial<AgentEvent>): AgentEvent {
   return {
@@ -322,6 +324,77 @@ describe('EventHorizonDB', () => {
       expect(knowledge[0].key).toBe('saved-key');
 
       db2.close();
+    });
+  });
+
+  // ── v3.0.0-dev → v3.0.0 graph migration ──────────────────────────────────
+
+  describe('graph table migration', () => {
+    async function buildBufferWithGraphTables(): Promise<Uint8Array> {
+      const SQL = await initSqlJs();
+      const fixture = new SQL.Database();
+      try {
+        fixture.run(GRAPH_SCHEMA_SQL);
+      } catch {
+        /* FTS may be unavailable; non-FTS graph tables still land */
+      }
+      const buf = fixture.export();
+      fixture.close();
+      return buf;
+    }
+
+    async function tableExists(buf: Uint8Array, name: string): Promise<boolean> {
+      const SQL = await initSqlJs();
+      const tmp = new SQL.Database(buf);
+      const res = tmp.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, [name]);
+      tmp.close();
+      return res.length > 0 && res[0].values.length > 0;
+    }
+
+    async function metaValue(buf: Uint8Array, key: string): Promise<string | null> {
+      const SQL = await initSqlJs();
+      const tmp = new SQL.Database(buf);
+      const res = tmp.exec(`SELECT value FROM eh_meta WHERE key = ?`, [key]);
+      tmp.close();
+      if (res.length === 0 || res[0].values.length === 0) return null;
+      return res[0].values[0][0] as string;
+    }
+
+    it('drops graph_* tables and writes the marker on first load of a v3.0.0-dev DB', async () => {
+      const fixture = await buildBufferWithGraphTables();
+      expect(await tableExists(fixture, 'graph_nodes')).toBe(true);
+
+      const migratedDb = await EventHorizonDB.create(fixture);
+      const after = migratedDb.save();
+      migratedDb.close();
+
+      expect(await tableExists(after, 'graph_nodes')).toBe(false);
+      expect(await tableExists(after, 'graph_edges')).toBe(false);
+      expect(await tableExists(after, 'graph_file_state')).toBe(false);
+      expect(await metaValue(after, 'graph_dropped')).toBe('1');
+    });
+
+    it('is idempotent: re-loading the migrated DB does not flag dirty', async () => {
+      const fixture = await buildBufferWithGraphTables();
+      const dbA = await EventHorizonDB.create(fixture);
+      const migrated = dbA.save();
+      dbA.close();
+
+      const dbB = await EventHorizonDB.create(migrated);
+      // Marker is already present — DROP is skipped, no fresh writes happen.
+      expect(dbB.isDirty()).toBe(false);
+      const reloaded = dbB.save();
+      dbB.close();
+
+      expect(await metaValue(reloaded, 'graph_dropped')).toBe('1');
+      expect(await tableExists(reloaded, 'graph_nodes')).toBe(false);
+    });
+
+    it('a fresh DB (no fixture) gets the marker without errors', async () => {
+      const dbFresh = await EventHorizonDB.create();
+      const buf = dbFresh.save();
+      dbFresh.close();
+      expect(await metaValue(buf, 'graph_dropped')).toBe('1');
     });
   });
 });

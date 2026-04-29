@@ -12,8 +12,10 @@ import { runSetupOpenCodeHooks, isOpenCodeHooksInstalled, removeOpenCodeHooks } 
 import { runSetupCopilotHooks, isCopilotHooksInstalled, removeCopilotHooks } from './setupCopilotHooks.js';
 import { setupCursorHooks, isCursorHooksInstalled, removeCursorHooks, registerCursorMcpServer } from './setupCursorHooks.js';
 import type { SkillInfo } from './skillScanner.js';
-import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId } from './eventServer.js';
+import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphLifecycle, onProjectGraphLifecycleReady } from './eventServer.js';
 import { getDatabase, resetBroadcastHashes } from './extension.js';
+import { GraphQueryEngine } from './projectGraph/queryEngine.js';
+import type { GraphNodeType, GraphTag } from './projectGraph/index.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
 
@@ -312,6 +314,68 @@ function wireUniverseWebview(
   // Clean up listener when webview is disposed (handled by caller via context.subscriptions)
   context.subscriptions.push(configListener);
 
+  // Refresh the Knowledge → Graph stats whenever the per-project graph DB
+  // swaps (workspace folder change), closes (folder removed), or is rebuilt
+  // by `/eh:optimize-context`. Without these the stats line stays stale.
+  //
+  // workspaceOpen is sourced from `vscode.workspace.workspaceFolders` —
+  // the authoritative answer to "is a folder open" — not from the
+  // lifecycle's tracking state, which can briefly be `null` during
+  // attach races or after a corrupt-DB attach failure.
+  //
+  // The webview can open before the activation IIFE finishes wiring the
+  // lifecycle. `onProjectGraphLifecycleReady` fires immediately if the
+  // lifecycle is already set, OR later when `setProjectGraphLifecycle`
+  // is called — covering both timings.
+  const subscribeLifecycle = (lifecycle: import('./projectGraph/index.js').ProjectGraphLifecycle): void => {
+    const pushCurrent = (): void => {
+      const store = lifecycle.getActiveStore();
+      const workspaceOpen = !!vscode.workspace.workspaceFolders?.[0];
+      if (store) {
+        const stats = store.getStats();
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: {
+            ...stats,
+            lastBuildAt: stats.fileCount > 0 ? Date.now() : undefined,
+            workspaceOpen: true,
+          },
+        });
+      } else {
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
+        });
+      }
+    };
+
+    const lifecycleListener = lifecycle.onActiveStoreChange((store) => {
+      pushCurrent();
+      if (store) {
+        void webview.postMessage({ type: 'graph-data-changed' });
+      }
+    });
+    context.subscriptions.push(lifecycleListener);
+
+    const dataListener = lifecycle.onDataChange(() => {
+      pushCurrent();
+      void webview.postMessage({ type: 'graph-data-changed' });
+    });
+    context.subscriptions.push(dataListener);
+
+    // Push the current state right now — this is the catch-up for the
+    // case where the webview opened before activation finished. If the
+    // lifecycle already has a graph, this triggers the canvas to fetch
+    // it; if not, it just sets workspaceOpen so the UI shows the right
+    // empty state.
+    pushCurrent();
+    if (lifecycle.getActiveStore()) {
+      void webview.postMessage({ type: 'graph-data-changed' });
+    }
+  };
+  const lifecycleReadySubscription = onProjectGraphLifecycleReady(subscribeLifecycle);
+  context.subscriptions.push(lifecycleReadySubscription);
+
   function hydrateWebview() {
     void getConnectedAgentTypes().then((agentTypes) => {
       void webview.postMessage({ type: 'connected-agents', agentTypes });
@@ -321,6 +385,44 @@ function wireUniverseWebview(
     const metrics = metricsEngine.getAllMetrics();
     if (agents.length > 0) {
       void webview.postMessage({ type: 'init-state', agents, metrics });
+    }
+
+    // Push the current graph state on connect — the lifecycle may have
+    // already attached to a pre-existing `<folder>/.eh/graph.db` before
+    // this webview was created, so the onActiveStoreChange event would
+    // have fired into the void. Hydrate explicitly here.
+    const lifecycleAtHydrate = getProjectGraphLifecycle();
+    const workspaceOpenAtHydrate = !!vscode.workspace.workspaceFolders?.[0];
+    if (lifecycleAtHydrate) {
+      const store = lifecycleAtHydrate.getActiveStore();
+      if (store) {
+        const stats = store.getStats();
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: {
+            ...stats,
+            lastBuildAt: stats.fileCount > 0 ? Date.now() : undefined,
+            workspaceOpen: true,
+          },
+        });
+        // Trigger a fresh browse-request from the webview. The initial
+        // useEffect on mount may have fired before this hydrate ran, and
+        // the lifecycle might not have been attached yet at that moment —
+        // bumping the refresh nonce guarantees the canvas re-fetches now
+        // that we know there's a real graph to show.
+        void webview.postMessage({ type: 'graph-data-changed' });
+      } else {
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen: workspaceOpenAtHydrate },
+        });
+      }
+    } else {
+      // Lifecycle not wired yet (rare: webview opened mid-activation).
+      void webview.postMessage({
+        type: 'graph-stats-update',
+        stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen: workspaceOpenAtHydrate },
+      });
     }
 
     // ── Send historical events from persistence for replay ──
@@ -715,6 +817,99 @@ function wireUniverseWebview(
           void webview.postMessage({ type: 'task-execution-events', taskId: msg.taskId as string, events: [], error: String(err) });
         }
       })();
+    } else if (msg?.type === 'graph-browse-request') {
+      void (async () => {
+        const store = getProjectGraphStore();
+        const requestId = msg.requestId as string;
+        const page = typeof msg.page === 'number' ? msg.page : 0;
+        const pageSize = typeof msg.pageSize === 'number' ? msg.pageSize : 50;
+        if (!store) {
+          const workspaceOpen = !!vscode.workspace.workspaceFolders?.[0];
+          void webview.postMessage({ type: 'graph-browse-result', requestId, nodes: [], edges: [], total: 0, page, pageSize });
+          void webview.postMessage({
+            type: 'graph-stats-update',
+            stats: { nodeCount: 0, edgeCount: 0, fileCount: 0, workspaceOpen },
+          });
+          return;
+        }
+        const filter = (msg.filter as { type?: string; tag?: string; search?: string }) ?? {};
+        let nodes: import('./projectGraph/index.js').GraphNode[];
+        let total: number;
+        if (filter.search) {
+          const allNodes = store.searchNodes(filter.search, {
+            type: filter.type as GraphNodeType | undefined,
+            tag: filter.tag as GraphTag | undefined,
+          });
+          total = allNodes.length;
+          nodes = allNodes.slice(page * pageSize, (page + 1) * pageSize);
+        } else {
+          const result = store.listNodes({
+            type: filter.type as GraphNodeType | undefined,
+            tag: filter.tag as GraphTag | undefined,
+            offset: page * pageSize,
+            limit: pageSize,
+          });
+          nodes = result.nodes;
+          total = result.total;
+        }
+        const nodeIds = new Set(nodes.map((n) => n.id));
+        const edges: import('./projectGraph/index.js').GraphEdge[] = [];
+        for (const node of nodes) {
+          const outEdges = store.getEdges({ sourceId: node.id });
+          for (const edge of outEdges) {
+            if (nodeIds.has(edge.targetId)) edges.push(edge);
+          }
+        }
+        void webview.postMessage({ type: 'graph-browse-result', requestId, nodes, edges, total, page, pageSize });
+        // Also push current stats so the UI shows them without requiring a Build click —
+        // covers the case where the graph was already populated by a skill / MCP call.
+        const liveStats = store.getStats();
+        void webview.postMessage({
+          type: 'graph-stats-update',
+          stats: {
+            ...liveStats,
+            lastBuildAt: liveStats.fileCount > 0 ? Date.now() : undefined,
+            workspaceOpen: true,
+          },
+        });
+      })();
+    } else if (msg?.type === 'graph-node-details-request') {
+      void (async () => {
+        const store = getProjectGraphStore();
+        const requestId = msg.requestId as string;
+        const nodeId = msg.nodeId as string;
+        if (!store) {
+          void webview.postMessage({ type: 'graph-node-details', requestId, node: null, in: [], out: [], rationale: [], recentActivity: [] });
+          return;
+        }
+        const engine = new GraphQueryEngine(store);
+        const explainResult = engine.explain(nodeId);
+        const node = explainResult?.node ?? null;
+        const recentActivityResult = node?.sourceFile
+          ? engine.recentActivity(node.sourceFile, Date.now() - 7 * 24 * 60 * 60 * 1000)
+          : { activities: [] };
+        void webview.postMessage({
+          type: 'graph-node-details',
+          requestId,
+          node,
+          in: explainResult?.in ?? [],
+          out: explainResult?.out ?? [],
+          rationale: explainResult?.rationale ?? [],
+          recentActivity: recentActivityResult.activities,
+        });
+      })();
+    } else if (msg?.type === 'graph-reveal-in-editor') {
+      const filePath = msg.filePath as string | undefined;
+      if (!filePath) return;
+      const line = typeof msg.line === 'number' ? msg.line : 0;
+      void vscode.workspace.openTextDocument(vscode.Uri.file(filePath)).then((doc) => {
+        void vscode.window.showTextDocument(doc).then((editor) => {
+          if (line > 0) {
+            const pos = new vscode.Position(Math.max(0, line - 1), 0);
+            editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+          }
+        });
+      });
     }
   });
 }
