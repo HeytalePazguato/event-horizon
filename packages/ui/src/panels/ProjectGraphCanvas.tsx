@@ -106,6 +106,9 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
         background: '#0a1810',
         cursor: drag ? 'grabbing' : 'grab',
         userSelect: 'none',
+        // Without this, SVG content transformed by pan/zoom can extend
+        // past the viewport and render over the controls header above.
+        overflow: 'hidden',
       }}
       onMouseDown={(e) => {
         const target = e.target as Element;
