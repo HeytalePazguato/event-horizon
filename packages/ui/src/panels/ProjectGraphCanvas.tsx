@@ -97,6 +97,40 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
     [nodes, edges, width, height],
   );
 
+  // BFS distance from the selected node, capped at 3 hops. Used to dim
+  // unrelated nodes/edges and tier the visible neighborhood so it's
+  // clear which boxes relate to the selection and how directly.
+  const levelMap = useMemo(
+    () => (selectedNodeId ? computeLevels(selectedNodeId, nodes, edges, 3) : null),
+    [selectedNodeId, nodes, edges],
+  );
+
+  // Opacity tier for a node based on its BFS distance from selection.
+  // No selection → everything full opacity (default behavior).
+  const nodeOpacity = (id: string): number => {
+    if (!levelMap) return 1;
+    const lvl = levelMap.get(id);
+    if (lvl === undefined) return 0.12; // unreachable / dimmed
+    if (lvl === 0) return 1;             // selected
+    if (lvl === 1) return 1;             // direct neighbors — full
+    if (lvl === 2) return 0.8;           // second hop
+    return 0.5;                           // third hop
+  };
+
+  // Edge tier = max(level(source), level(target)). Edge is incident on
+  // the selection (rank 1) when one endpoint IS the selected node, etc.
+  const edgeOpacity = (sourceId: string, targetId: string): number => {
+    if (!levelMap) return 0.4;
+    const a = levelMap.get(sourceId);
+    const b = levelMap.get(targetId);
+    if (a === undefined || b === undefined) return 0.06;
+    const rank = Math.max(a, b);
+    if (rank <= 1) return 0.85;
+    if (rank === 2) return 0.55;
+    if (rank === 3) return 0.3;
+    return 0.06;
+  };
+
   const transform = `translate(${pan.x}, ${pan.y}) scale(${zoom})`;
   const isEmpty = nodes.length === 0;
 
@@ -172,7 +206,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
               y2={b.y}
               stroke={EDGE_COLOR}
               strokeWidth="1.5"
-              strokeOpacity="0.4"
+              strokeOpacity={edgeOpacity(edge.sourceId, edge.targetId)}
             />
           );
         })}
@@ -183,10 +217,17 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
           const color = NODE_COLORS[node.type] ?? DEFAULT_NODE_COLOR;
           const isSelected = node.id === selectedNodeId;
           const labelText = node.label.length > 14 ? node.label.slice(0, 13) + '…' : node.label;
+          const opacity = nodeOpacity(node.id);
+          // Tier ring: highlight direct neighbors with a soft halo so the
+          // first-degree relationships pop. Levels 2/3 lean on opacity
+          // alone (no extra ring) to avoid visual clutter.
+          const lvl = levelMap?.get(node.id);
+          const tierRingColor = lvl === 1 ? '#aaffcc' : lvl === 2 ? '#88cc99' : null;
           return (
             <g
               key={node.id}
               transform={`translate(${pos.x}, ${pos.y})`}
+              opacity={opacity}
               style={{ cursor: 'pointer' }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -225,6 +266,19 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
                   stroke="#ffffff"
                   strokeWidth={2}
                   strokeOpacity={0.85}
+                />
+              )}
+              {!isSelected && tierRingColor && (
+                <rect
+                  x={-NODE_W / 2 - 3}
+                  y={-NODE_H / 2 - 3}
+                  width={NODE_W + 6}
+                  height={NODE_H + 6}
+                  rx={NODE_RADIUS + 3}
+                  fill="none"
+                  stroke={tierRingColor}
+                  strokeWidth={1.5}
+                  strokeOpacity={lvl === 1 ? 0.85 : 0.5}
                 />
               )}
               <text
@@ -360,6 +414,49 @@ function layoutNodes(
     });
   }
   return result;
+}
+
+/**
+ * BFS distance from a root node, capped at maxLevel. Used to tier the
+ * highlight when a node is selected: level 0 = selected, level 1 =
+ * direct neighbors, level 2/3 = further hops, missing = unreachable
+ * (the canvas dims those heavily). Treats edges as undirected so a
+ * caller and a callee both light up.
+ */
+function computeLevels(
+  rootId: string,
+  nodes: GraphNodeData[],
+  edges: GraphEdgeData[],
+  maxLevel: number,
+): Map<string, number> {
+  const levels = new Map<string, number>();
+  // If the root isn't in the visible page, return an empty map so
+  // everything dims (visual signal that the selected node is off-page).
+  if (!nodes.some((n) => n.id === rootId)) return levels;
+  levels.set(rootId, 0);
+  const adj = new Map<string, Set<string>>();
+  for (const e of edges) {
+    if (!adj.has(e.sourceId)) adj.set(e.sourceId, new Set());
+    if (!adj.has(e.targetId)) adj.set(e.targetId, new Set());
+    adj.get(e.sourceId)!.add(e.targetId);
+    adj.get(e.targetId)!.add(e.sourceId);
+  }
+  let frontier: string[] = [rootId];
+  for (let lvl = 1; lvl <= maxLevel; lvl++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const neighbors = adj.get(id);
+      if (!neighbors) continue;
+      for (const nb of neighbors) {
+        if (levels.has(nb)) continue;
+        levels.set(nb, lvl);
+        next.push(nb);
+      }
+    }
+    if (next.length === 0) break;
+    frontier = next;
+  }
+  return levels;
 }
 
 /**
