@@ -2216,7 +2216,13 @@ export class McpServer {
         // Tell listeners (notably the webview) that the graph contents
         // changed in bulk so the Knowledge → Graph tab refreshes without
         // requiring a manual click-off-click-on.
-        if (projectGraphLifecycle) projectGraphLifecycle.notifyDataChange();
+        if (projectGraphLifecycle) {
+          // Flush to disk synchronously so a fast dev-host reload after
+          // /eh:optimize-context doesn't lose the just-built graph (the
+          // 60s tick-save would otherwise be the only persistence path).
+          projectGraphLifecycle.flush();
+          projectGraphLifecycle.notifyDataChange();
+        }
         return result;
       }
 

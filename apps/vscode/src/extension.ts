@@ -265,6 +265,10 @@ export function activate(context: vscode.ExtensionContext): void {
         setProjectGraphLifecycle(projectGraphLifecycle);
         context.subscriptions.push({
           dispose: () => {
+            // Sync flush first so the dev host can be killed without losing
+            // unsaved mutations. closeActive's async writeFile may not get a
+            // chance to complete during shutdown.
+            projectGraphLifecycle.flush();
             void projectGraphLifecycle.closeActive().then(() => projectGraphLifecycle.dispose());
           },
         });

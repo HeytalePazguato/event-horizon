@@ -235,6 +235,28 @@ export class ProjectGraphLifecycle {
     if (wasActive) this.emitter.fire(null);
   }
 
+  /**
+   * Synchronously flush the active DB to disk if dirty. Called by
+   * `eh_build_graph` immediately after a scan so the freshly-built graph
+   * is on disk before the next reload — without this, the user can
+   * reload the dev host within the 60s save-tick window and lose the
+   * just-built graph.
+   */
+  flush(): void {
+    if (!this.activeDb || !this.activeDbPath) return;
+    if (!this.activeDb.isDirty()) return;
+    try {
+      const data = this.activeDb.save();
+      // Sync write — guarantees the bytes are on disk before this returns.
+      // The build path is user-triggered and infrequent, so the brief
+      // blocking is fine. Saves loose-end races on dev-host reload.
+      fs.writeFileSync(this.activeDbPath, data);
+      console.log(`[Event Horizon] Graph DB flushed to ${this.activeDbPath} (${data.byteLength} bytes).`);
+    } catch (err) {
+      console.error(`[Event Horizon] Graph DB flush failed:`, err);
+    }
+  }
+
   /** Dispose the underlying EventEmitters. Call once on deactivation. */
   dispose(): void {
     this.emitter.dispose();
@@ -247,6 +269,7 @@ export class ProjectGraphLifecycle {
     try {
       const data = this.activeDb.save();
       void fs.promises.writeFile(this.activeDbPath, data);
+      console.log(`[Event Horizon] Graph DB tick-save: ${data.byteLength} bytes → ${this.activeDbPath}`);
     } catch {
       // Intermittent disk errors will retry on the next tick. If the
       // workspace is read-only, every tick fails silently — the graph
