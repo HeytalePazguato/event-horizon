@@ -106,29 +106,32 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
   );
 
   // Opacity tier for a node based on its BFS distance from selection.
-  // No selection → everything full opacity (default behavior).
+  // Levels 0–3 stay near full opacity; the tier-ring COLOUR is what
+  // signals depth (green → amber → orange). Unreachable boxes drop to
+  // 10 % so they fade into the background grid without disappearing.
   const nodeOpacity = (id: string): number => {
     if (!levelMap) return 1;
     const lvl = levelMap.get(id);
-    if (lvl === undefined) return 0.12; // unreachable / dimmed
-    if (lvl === 0) return 1;             // selected
-    if (lvl === 1) return 1;             // direct neighbors — full
-    if (lvl === 2) return 0.8;           // second hop
-    return 0.5;                           // third hop
+    if (lvl === undefined) return 0.1; // unreachable
+    if (lvl === 0) return 1;
+    if (lvl === 1) return 1;
+    if (lvl === 2) return 0.98;
+    return 0.9;                         // level 3
   };
 
-  // Edge tier = max(level(source), level(target)). Edge is incident on
-  // the selection (rank 1) when one endpoint IS the selected node, etc.
-  const edgeOpacity = (sourceId: string, targetId: string): number => {
-    if (!levelMap) return 0.4;
+  // Per-tier edge style. Colour shifts (green → amber → orange) plus
+  // stroke-width step give a much sharper visual hierarchy than opacity
+  // alone. Unreachable edges get a desaturated grey at 6 %.
+  const edgeStyle = (sourceId: string, targetId: string): { stroke: string; opacity: number; width: number } => {
+    if (!levelMap) return { stroke: EDGE_COLOR, opacity: 0.4, width: 1.5 };
     const a = levelMap.get(sourceId);
     const b = levelMap.get(targetId);
-    if (a === undefined || b === undefined) return 0.06;
+    if (a === undefined || b === undefined) return { stroke: '#3a5544', opacity: 0.06, width: 1 };
     const rank = Math.max(a, b);
-    if (rank <= 1) return 0.85;
-    if (rank === 2) return 0.55;
-    if (rank === 3) return 0.3;
-    return 0.06;
+    if (rank <= 1) return { stroke: '#44ff88', opacity: 1.0, width: 2.5 };   // bright green
+    if (rank === 2) return { stroke: '#ffcc66', opacity: 0.9, width: 1.8 };  // amber
+    if (rank === 3) return { stroke: '#ff8844', opacity: 0.75, width: 1.4 }; // orange
+    return { stroke: '#3a5544', opacity: 0.06, width: 1 };
   };
 
   const transform = `translate(${pan.x}, ${pan.y}) scale(${zoom})`;
@@ -197,6 +200,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
           const a = positions.get(edge.sourceId);
           const b = positions.get(edge.targetId);
           if (!a || !b) return null;
+          const style = edgeStyle(edge.sourceId, edge.targetId);
           return (
             <line
               key={edge.id}
@@ -204,9 +208,9 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
               y1={a.y}
               x2={b.x}
               y2={b.y}
-              stroke={EDGE_COLOR}
-              strokeWidth="1.5"
-              strokeOpacity={edgeOpacity(edge.sourceId, edge.targetId)}
+              stroke={style.stroke}
+              strokeWidth={style.width}
+              strokeOpacity={style.opacity}
             />
           );
         })}
@@ -218,11 +222,18 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
           const isSelected = node.id === selectedNodeId;
           const labelText = node.label.length > 14 ? node.label.slice(0, 13) + '…' : node.label;
           const opacity = nodeOpacity(node.id);
-          // Tier ring: highlight direct neighbors with a soft halo so the
-          // first-degree relationships pop. Levels 2/3 lean on opacity
-          // alone (no extra ring) to avoid visual clutter.
+          // Tier ring colour matches the edge palette so the depth gradient
+          // reads consistently: green = direct neighbour, amber = 2 hops,
+          // orange = 3 hops. Stroke width also steps down so the eye picks
+          // up the tier even before the colour registers.
           const lvl = levelMap?.get(node.id);
-          const tierRingColor = lvl === 1 ? '#aaffcc' : lvl === 2 ? '#88cc99' : null;
+          const tierRing = lvl === 1
+            ? { color: '#44ff88', width: 2.5, opacity: 1.0 }
+            : lvl === 2
+            ? { color: '#ffcc66', width: 2.0, opacity: 0.95 }
+            : lvl === 3
+            ? { color: '#ff8844', width: 1.6, opacity: 0.85 }
+            : null;
           return (
             <g
               key={node.id}
@@ -268,7 +279,7 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
                   strokeOpacity={0.85}
                 />
               )}
-              {!isSelected && tierRingColor && (
+              {!isSelected && tierRing && (
                 <rect
                   x={-NODE_W / 2 - 3}
                   y={-NODE_H / 2 - 3}
@@ -276,9 +287,9 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
                   height={NODE_H + 6}
                   rx={NODE_RADIUS + 3}
                   fill="none"
-                  stroke={tierRingColor}
-                  strokeWidth={1.5}
-                  strokeOpacity={lvl === 1 ? 0.85 : 0.5}
+                  stroke={tierRing.color}
+                  strokeWidth={tierRing.width}
+                  strokeOpacity={tierRing.opacity}
                 />
               )}
               <text
