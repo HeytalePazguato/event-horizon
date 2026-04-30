@@ -386,7 +386,7 @@ describe('Plan MCP tools', () => {
     expect(names).toContain('eh_get_plan');
     expect(names).toContain('eh_claim_task');
     expect(names).toContain('eh_update_task');
-    expect(result.tools).toHaveLength(48); // base tools + eh_extract_concepts + eh_build_graph + eh_query_graph + eh_curate_context
+    expect(result.tools).toHaveLength(49); // base tools + eh_extract_concepts + eh_build_graph + eh_query_graph + eh_curate_context + eh_rescan_files
   });
 
   describe('eh_load_plan', () => {

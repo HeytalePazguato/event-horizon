@@ -314,6 +314,161 @@ export class ProjectGraphScanner {
     } as ScanSummary;
   }
 
+  async rescanFiles(
+    paths: string[],
+    opts?: { sinceMs?: number },
+  ): Promise<ScanSummary> {
+    const start = Date.now();
+    const emptyReasons = {
+      hashMatch: 0, noExtractor: 0, notCommitted: 0,
+      mdDisabled: 0, error: 0, minified: 0, tooLarge: 0,
+    };
+
+    // Build effective set: explicit paths + sinceMs expansions.
+    const seen = new Set<string>(paths);
+    const effective = [...paths];
+
+    if (opts?.sinceMs !== undefined) {
+      const liveFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (liveFolder) {
+        const allFiles = await walkDir(liveFolder);
+        for (const fp of allFiles) {
+          if (seen.has(fp)) continue;
+          const ext = path.extname(fp).toLowerCase();
+          if (!CODE_EXTENSIONS.has(ext) && !MD_EXTENSIONS.has(ext)) continue;
+          if (SKIP_FILE_PATTERNS.some((re) => re.test(path.basename(fp)))) continue;
+          try {
+            if (fs.statSync(fp).mtimeMs > opts.sinceMs!) {
+              seen.add(fp);
+              effective.push(fp);
+            }
+          } catch { /* deleted between walkDir and stat */ }
+        }
+      }
+    }
+
+    if (effective.length === 0) {
+      return {
+        filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0,
+        durationMs: Date.now() - start, filesMatched: 0, skipReasons: emptyReasons,
+      } as ScanSummary;
+    }
+
+    const store = this.storeResolver();
+    if (!store) {
+      return {
+        filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0,
+        durationMs: Date.now() - start, filesMatched: effective.length,
+        skipReasons: emptyReasons,
+        firstError: 'Project graph DB not open for this workspace.',
+      } as ScanSummary;
+    }
+
+    const cfgMaxKb = vscode.workspace.getConfiguration('eventHorizon')
+      .get<number>('projectGraph.maxFileSizeKb', DEFAULT_MAX_FILE_SIZE_KB);
+    const maxFileSizeBytes = (cfgMaxKb && cfgMaxKb > 0 ? cfgMaxKb : DEFAULT_MAX_FILE_SIZE_KB) * 1024;
+
+    let filesProcessed = 0;
+    let filesSkipped = 0;
+    let nodesCreated = 0;
+    let edgesCreated = 0;
+    let firstError: string | undefined;
+    const skipReasons = { ...emptyReasons };
+
+    for (const filePath of effective) {
+      const ext = path.extname(filePath).toLowerCase();
+      const base = path.basename(filePath);
+
+      // Non-existent file → cascading delete.
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        store.deleteFile(filePath);
+        filesProcessed++;
+        continue;
+      }
+
+      // Skip-rule checks.
+      if (SKIP_FILE_PATTERNS.some((re) => re.test(base))) {
+        filesSkipped++;
+        skipReasons.minified++;
+        continue;
+      }
+      if (!CODE_EXTENSIONS.has(ext) && !MD_EXTENSIONS.has(ext)) {
+        filesSkipped++;
+        skipReasons.noExtractor++;
+        continue;
+      }
+      if (MD_EXTENSIONS.has(ext) && !this.opts.includeMarkdown) {
+        filesSkipped++;
+        skipReasons.mdDisabled++;
+        continue;
+      }
+      if (stat.size > maxFileSizeBytes) {
+        filesSkipped++;
+        skipReasons.tooLarge++;
+        continue;
+      }
+
+      try {
+        const source = await fs.promises.readFile(filePath, 'utf8');
+
+        // Minified-content heuristic.
+        const firstLineEnd = source.search(/\S.*$/m);
+        if (firstLineEnd >= 0) {
+          const newlineIdx = source.indexOf('\n', firstLineEnd);
+          const lineLen = (newlineIdx === -1 ? source.length : newlineIdx) - firstLineEnd;
+          if (lineLen > MINIFIED_FIRST_LINE_THRESHOLD) {
+            filesSkipped++;
+            skipReasons.minified++;
+            continue;
+          }
+        }
+
+        const contentHash = crypto.createHash('sha256').update(source).digest('hex');
+        const extracted = await this.runExtractor(store, filePath, ext, source);
+        if (!extracted) {
+          filesSkipped++;
+          skipReasons.noExtractor++;
+          continue;
+        }
+
+        const { nodes, edges, extractorName } = extracted;
+        const result = store.replaceFileNodes(filePath, extractorName, nodes, edges, contentHash);
+        if (result.committed) {
+          filesProcessed++;
+          nodesCreated += nodes.length;
+          edgesCreated += edges.length;
+        } else {
+          filesSkipped++;
+          skipReasons.notCommitted++;
+          if (!firstError && result.reason) firstError = `${base}: ${result.reason}`;
+        }
+      } catch (err) {
+        filesSkipped++;
+        skipReasons.error++;
+        const msg = `${base}: ${(err as Error).message ?? String(err)}`;
+        if (!firstError) firstError = msg;
+        console.error(`[Event Horizon] rescanFiles error: ${msg}`);
+      }
+    }
+
+    let resolution: { merged: number; unresolved: number; totalRefs: number } | undefined;
+    try {
+      const s = this.storeResolver();
+      if (s) resolution = runResolution(s);
+    } catch (err) {
+      console.error('[Event Horizon] Resolution pass failed:', err);
+    }
+
+    return {
+      filesProcessed, filesSkipped, nodesCreated, edgesCreated,
+      durationMs: Date.now() - start, filesMatched: effective.length,
+      firstError, skipReasons, resolution,
+    } as ScanSummary;
+  }
+
   async scanFile(filePath: string): Promise<{ committed: boolean; reason?: string }> {
     const ext = path.extname(filePath).toLowerCase();
 
