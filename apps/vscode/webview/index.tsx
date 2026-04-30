@@ -191,7 +191,7 @@ function App() {
   const [wormholes, setWormholes] = useState<Array<{ id: string; sourceAgentId: string; targetAgentId: string; strength: number }>>([]);
   // Project graph state (Phase 8)
   const [graphStats, setGraphStats] = useState<{ nodeCount: number; edgeCount: number; fileCount: number; lastBuildAt?: number; workspaceOpen?: boolean } | null>(null);
-  const [graphBrowseResult, setGraphBrowseResult] = useState<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number } | null>(null);
+  const [graphBrowseResult, setGraphBrowseResult] = useState<{ requestId: string; nodes: unknown[]; edges: unknown[]; total: number; page: number; pageSize: number; matchIds?: string[] } | null>(null);
   const [graphNodeDetails, setGraphNodeDetails] = useState<{ requestId: string; node: unknown | null; in: unknown[]; out: unknown[]; rationale: unknown[]; recentActivity: unknown[] } | null>(null);
   const [graphBuildProgress, setGraphBuildProgress] = useState<{ filesProcessed: number; filesTotal: number; nodesCreated: number; edgesCreated: number; phase: string } | null>(null);
   const [graphFilter, setGraphFilter] = useState<import('@event-horizon/ui').GraphFilter>({});
@@ -300,6 +300,10 @@ function App() {
   useEffect(() => {
     if (!vscodeApi) return;
     setGraphLastBrowseRequest(Date.now());
+    // Page size 200 — top-200-by-degree gives a usable knowledge backbone
+    // view (hubs, central modules, well-connected docs). Search expands
+    // matches + their 1-hop neighbours within the same 200 budget.
+    // The previous 5000 cap was an SVG performance trap.
     vscodeApi.postMessage({ type: 'graph-browse-request', requestId: `browse-${Date.now()}`, filter: graphFilter, page: 0, pageSize: 200 });
   }, [graphFilter, graphRefreshNonce]);
   void graphLastBrowseRequest;
@@ -320,6 +324,8 @@ function App() {
         edges={browseEdges}
         filter={graphFilter}
         selectedNodeDetails={details}
+        totalMatching={graphBrowseResult?.total}
+        matchIds={graphBrowseResult?.matchIds}
         onFilterChange={setGraphFilter}
         onNodeSelect={(nodeId) => {
           if (!nodeId) {

@@ -6,11 +6,11 @@
  * Phase 8.5 of the Project Graph plan.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ProjectGraphCanvas } from './ProjectGraphCanvas.js';
 import type { GraphNodeData, GraphEdgeData } from './ProjectGraphCanvas.js';
 import { ProjectGraphControls } from './ProjectGraphControls.js';
-import type { GraphStats, GraphFilter, GraphBuildProgress } from './ProjectGraphControls.js';
+import type { GraphStats, GraphFilter, GraphBuildProgress, ClusterMode } from './ProjectGraphControls.js';
 import { ProjectGraphDetailDrawer } from './ProjectGraphDetailDrawer.js';
 import type { NodeDetails } from './ProjectGraphDetailDrawer.js';
 
@@ -24,6 +24,13 @@ export interface ProjectGraphSectionProps {
   onFilterChange: (next: GraphFilter) => void;
   onNodeSelect: (nodeId: string | null) => void;
   onRevealInEditor: (filePath: string, line?: number) => void;
+  /** Total node count in the DB matching the active filter — drives the
+   *  "Showing X of Y" caption when capped. Optional for back-compat. */
+  totalMatching?: number;
+  /** Authoritative match-id list when search is active. The server
+   *  returns matches + their 1-hop neighbours so the canvas needs to
+   *  know which of the rendered nodes are *actual* matches vs. context. */
+  matchIds?: string[];
 }
 
 export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
@@ -36,9 +43,26 @@ export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
   onFilterChange,
   onNodeSelect,
   onRevealInEditor,
+  totalMatching,
+  matchIds,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ width: number; height: number }>({ width: 800, height: 600 });
+  // Default to folder clustering when the visible graph is large — that's
+  // the same cutoff we use for label-thresholding, and it's the case where
+  // an unclustered force layout becomes an unreadable hairball.
+  const defaultClusterMode: ClusterMode = nodes.length > 1000 ? 'folder' : 'none';
+  const [clusterMode, setClusterMode] = useState<ClusterMode>(defaultClusterMode);
+  // Re-evaluate the default whenever the dataset crosses the threshold so a
+  // freshly-built large graph picks folder clustering automatically.
+  const lastDefault = useRef<ClusterMode>(defaultClusterMode);
+  useEffect(() => {
+    if (lastDefault.current !== defaultClusterMode) {
+      setClusterMode(defaultClusterMode);
+      lastDefault.current = defaultClusterMode;
+    }
+  }, [defaultClusterMode]);
+  void useMemo;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -79,6 +103,10 @@ export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
         buildProgress={buildProgress}
         filter={filter}
         onFilterChange={onFilterChange}
+        visibleCount={nodes.length}
+        totalMatching={totalMatching}
+        clusterMode={clusterMode}
+        onClusterModeChange={setClusterMode}
       />
       <div ref={containerRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <ProjectGraphCanvas
@@ -88,6 +116,9 @@ export const ProjectGraphSection: React.FC<ProjectGraphSectionProps> = ({
           onNodeSelect={onNodeSelect}
           width={size.width}
           height={size.height}
+          clusterMode={clusterMode}
+          searchQuery={filter.search ?? ''}
+          matchIds={matchIds}
         />
         {selectedNodeDetails ? (
           <ProjectGraphDetailDrawer

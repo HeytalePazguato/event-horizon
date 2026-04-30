@@ -145,6 +145,38 @@ function walkPyNode(
       for (const c of node.namedChildren) if (c) walkPyNode(c, ctx, scope, classScope, ranges);
       return;
     }
+    case 'assignment': {
+      // Phase 12 Tier 2: `x: Foo = ...` → record { x: Foo } so calls
+      // like `x.method()` later in the same file can upgrade to
+      // `Foo.method`. Untyped assignments fall through and Tier 1
+      // (bare receiver name) handles them.
+      const left = node.childForFieldName('left');
+      const typeAnno = node.childForFieldName('type');
+      if (left && left.type === 'identifier' && typeAnno) {
+        const t = pyTypeName(typeAnno);
+        if (t) ctx.localTypes.set(left.text, t);
+      }
+      break;
+    }
+    case 'typed_parameter': {
+      // `def f(p: Foo):` — same idea applied to parameters.
+      const ident = firstChildOfType(node, 'identifier');
+      const typeAnno = node.childForFieldName('type');
+      if (ident && typeAnno) {
+        const t = pyTypeName(typeAnno);
+        if (t) ctx.localTypes.set(ident.text, t);
+      }
+      break;
+    }
+    case 'typed_default_parameter': {
+      const ident = firstChildOfType(node, 'identifier');
+      const typeAnno = node.childForFieldName('type');
+      if (ident && typeAnno) {
+        const t = pyTypeName(typeAnno);
+        if (t) ctx.localTypes.set(ident.text, t);
+      }
+      break;
+    }
   }
 
   for (const c of node.namedChildren) if (c) walkPyNode(c, ctx, scope, classScope, ranges);
@@ -346,14 +378,36 @@ function emitPyImport(
 function processPyCall(node: TSNode, ctx: ExtractionContext, scope: GraphNode): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
-  const callee = pyAttributeName(fn);
+  const callee = pyQualifiedCallee(fn);
   if (!callee) return;
+  let { qualified, receiver } = callee;
+  const { bare } = callee;
+  // Phase 12 Tier 2: instance-call upgrade. Same rule as TS — if the
+  // receiver is a plain identifier with a known declared type, swap
+  // it for the type name.
+  if (
+    receiver
+    && receiver !== 'self'
+    && receiver !== 'cls'
+    && !receiver.includes('.')
+  ) {
+    const declaredType = ctx.localTypes.get(receiver);
+    if (declaredType) {
+      receiver = declaredType;
+      qualified = `${declaredType}.${bare}`;
+    }
+  }
   const startLine = node.startPosition.row + 1;
   const startCol = node.startPosition.column;
-  const refId = `py:func_ref:${callee}`;
-  ctx.ensureRef(refId, callee, 'function');
+  const refId = `py:func_ref:${qualified}`;
+  const ref = ctx.ensureRef(refId, bare, 'function');
+  if (receiver) {
+    ref.properties = { ...ref.properties, receiver };
+  } else {
+    ref.properties = { ...ref.properties, callerFile: ctx.filePath };
+  }
   ctx.pushEdge({
-    id: `call:${scope.id}:${startLine}:${startCol}:${callee}`,
+    id: `call:${scope.id}:${startLine}:${startCol}:${qualified}`,
     sourceId: scope.id,
     targetId: refId,
     relationType: 'calls',
@@ -363,6 +417,47 @@ function processPyCall(node: TSNode, ctx: ExtractionContext, scope: GraphNode): 
     sourceLocation: String(startLine),
     createdAt: ctx.now,
   });
+}
+
+interface PyQualifiedCallee {
+  qualified: string;
+  receiver?: string;
+  bare: string;
+}
+
+/**
+ * Phase 12 Tier 1: like the TS extractor's extractQualifiedCallee but for
+ * Python's `attribute` / `identifier` / `subscript` callee shapes. Handles
+ * `obj.method`, `Cls.method`, `self.method`, and bare `fn()`.
+ */
+function pyQualifiedCallee(node: TSNode | null): PyQualifiedCallee | null {
+  if (!node) return null;
+  if (node.type === 'identifier') {
+    return { qualified: node.text, bare: node.text };
+  }
+  if (node.type === 'attribute') {
+    const objField = node.childForFieldName('object');
+    const attr = node.childForFieldName('attribute');
+    if (!attr) return null;
+    const bare = attr.text;
+    const receiver = objField ? objField.text : undefined;
+    return {
+      qualified: receiver ? `${receiver}.${bare}` : bare,
+      receiver,
+      bare,
+    };
+  }
+  if (node.type === 'call') {
+    const fn = node.childForFieldName('function');
+    if (fn) return pyQualifiedCallee(fn);
+  }
+  if (node.type === 'subscript') {
+    const value = node.childForFieldName('value');
+    if (value) return pyQualifiedCallee(value);
+  }
+  const first = node.firstNamedChild;
+  if (first) return pyQualifiedCallee(first);
+  return null;
 }
 
 function extractPyParams(paramsNode: TSNode | null): string[] {
@@ -412,6 +507,28 @@ function nodeHasAsync(fn: TSNode): boolean {
     if (c && c.type === 'async') return true;
   }
   return false;
+}
+
+/**
+ * Phase 12 Tier 2: extract the type name from a Python annotation node.
+ * `x: Foo` → "Foo". Generics like `Optional[Foo]` / `List[Foo]` are not
+ * unwrapped — that's borderline type inference and stays out of scope.
+ */
+function pyTypeName(node: TSNode | null): string | null {
+  if (!node) return null;
+  if (node.type === 'identifier') return node.text;
+  // tree-sitter-python wraps the type in `type` for newer grammars,
+  // and exposes the inner identifier directly via firstNamedChild.
+  if (node.type === 'type') {
+    const first = node.firstNamedChild;
+    if (first && first.type === 'identifier') return first.text;
+  }
+  // attribute (`module.Class`) → take the rightmost segment.
+  if (node.type === 'attribute') {
+    const attr = node.childForFieldName('attribute');
+    if (attr) return attr.text;
+  }
+  return null;
 }
 
 function pyAttributeName(node: TSNode | null): string | null {

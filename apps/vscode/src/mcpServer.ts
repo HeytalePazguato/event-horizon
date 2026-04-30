@@ -737,6 +737,18 @@ export const MCP_TOOLS: McpToolDef[] = [
       required: ['task_description'],
     },
   },
+  {
+    name: 'eh_rescan_files',
+    description: 'Call after orchestration completes with the union of files touched during the run. Use `sinceMs` (orchestration-start ms) to also catch files the user edited manually outside the orchestration.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        paths: { type: 'array', items: { type: 'string' }, description: 'File paths to rescan' },
+        sinceMs: { type: 'number', description: 'Optional: also scan files modified after this timestamp (ms)' },
+      },
+      required: ['paths'],
+    },
+  },
 ];
 
 // ── File activity tracker ───────────────────────────────────────────────────
@@ -809,6 +821,7 @@ export interface McpServerDeps {
 
 export class McpServer {
   private deps: McpServerDeps;
+  private currentRescan: Promise<void> | null = null;
 
   constructor(deps: McpServerDeps) {
     this.deps = deps;
@@ -2299,6 +2312,44 @@ export class McpServer {
         const { ContextCurator } = await import('./projectGraph/contextCurator.js');
         const curator = new ContextCurator(engine);
         return curator.curate({ taskDescription, tokenBudget, seedFiles, includeActivity, includeKnowledge });
+      }
+
+      case 'eh_rescan_files': {
+        const { projectGraphScanner, projectGraphLifecycle } = this.deps;
+        if (!projectGraphScanner) {
+          return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
+        }
+
+        if (projectGraphLifecycle) {
+          const folder = projectGraphLifecycle.getActiveStore();
+          if (!folder) {
+            return { ok: false, error: 'No workspace folder open. Open a folder before rescanning.' };
+          }
+        }
+
+        const paths = Array.isArray(args.paths) ? (args.paths as string[]) : [];
+        const sinceMs = typeof args.sinceMs === 'number' ? args.sinceMs : undefined;
+
+        // Serialize concurrent calls: wait for pending rescan, then run this one.
+        // Promise chain: second call waits for first to complete.
+        const rescanPromise = (async () => {
+          if (this.currentRescan) {
+            await this.currentRescan;
+          }
+          try {
+            return await projectGraphScanner.rescanFiles(paths, { sinceMs });
+          } finally {
+            this.currentRescan = null;
+          }
+        })();
+
+        this.currentRescan = rescanPromise.then(() => undefined);
+
+        try {
+          return await rescanPromise;
+        } catch (err) {
+          return { error: `Rescan failed: ${(err as Error).message ?? String(err)}` };
+        }
       }
 
       default:

@@ -186,7 +186,15 @@ export class TreeSitterExtractor {
     if (cached) return cached;
     await this.ensureInit();
     const mod = await this.loadModule();
-    const lang = await mod.Language.load(locateWasm(wasmFileFor(key)));
+    // Load the grammar WASM as raw bytes ourselves and hand the buffer
+    // to Language.load. The string-path overload routes through
+    // Emscripten's virtual FS, which isn't initialised in VS Code's
+    // extension host — every grammar load throws
+    // "Filename arg requires Emscripten FS". Buffers work in both
+    // standalone Node and extension contexts.
+    const wasmPath = locateWasm(wasmFileFor(key));
+    const wasmBuffer = await fs.promises.readFile(wasmPath);
+    const lang = await mod.Language.load(wasmBuffer);
     this.languages.set(key, lang);
     return lang;
   }
@@ -213,6 +221,15 @@ export class ExtractionContext {
   refNodes = new Map<string, GraphNode>();
   edges: GraphEdge[] = [];
   now = Date.now();
+  /**
+   * Phase 12 Tier 2: per-file symbol table mapping local-variable names
+   * to their declared types. Populated by walking type annotations and
+   * `new T()` constructions. Used at processCall-time to upgrade
+   * instance-call placeholder IDs from `func_ref:obj.method` to
+   * `func_ref:DeclaredType.method`. Cross-file inference is Tier 3 and
+   * out of scope.
+   */
+  localTypes = new Map<string, string>();
 
   constructor(filePath: string, contentHash: string, langKey: TreeSitterLanguageKey) {
     this.filePath = filePath;
@@ -283,6 +300,26 @@ export class ExtractionContext {
       case 'variable_declarator': {
         const value = node.childForFieldName('value');
         const nameField = node.childForFieldName('name');
+        // Phase 12 Tier 2: capture declared type for instance-call upgrade.
+        // Two paths fill the symbol table:
+        //   (a) explicit annotation — `const x: Foo = ...`
+        //   (b) `new T(...)` constructor — type inferable syntactically
+        // (b) is technically partial type inference but doesn't require
+        // walking return types of arbitrary expressions, so it stays
+        // inside Tier 2.
+        if (nameField && nameField.type === 'identifier') {
+          const annotation = node.childForFieldName('type');
+          const annotationType = annotation
+            ? extractAnnotationType(annotation)
+            : null;
+          if (annotationType) {
+            this.localTypes.set(nameField.text, annotationType);
+          } else if (value && value.type === 'new_expression') {
+            const ctor = value.childForFieldName('constructor');
+            const ctorName = extractTypeName(ctor);
+            if (ctorName) this.localTypes.set(nameField.text, ctorName);
+          }
+        }
         if (
           value &&
           value.type === 'arrow_function' &&
@@ -295,6 +332,33 @@ export class ExtractionContext {
           const body = value.childForFieldName('body');
           if (body) this.walkTypescript(body, funcNode);
           return;
+        }
+        break;
+      }
+      case 'required_parameter':
+      case 'optional_parameter': {
+        // Function parameters carry type annotations the same way
+        // `const x: Foo` does. Capturing them lets `obj.method()` calls
+        // inside the function body resolve to the parameter's declared
+        // type.
+        const pName = node.childForFieldName('pattern');
+        const pType = node.childForFieldName('type');
+        if (pName && pName.type === 'identifier' && pType) {
+          const t = extractAnnotationType(pType);
+          if (t) this.localTypes.set(pName.text, t);
+        }
+        break;
+      }
+      case 'public_field_definition':
+      case 'property_signature': {
+        // Class fields with annotations — `public foo: Bar`. Useful so a
+        // method body's `this.foo.method()` upgrades via the symbol
+        // table once we resolve `this.foo` to its type.
+        const fName = node.childForFieldName('name');
+        const fType = node.childForFieldName('type');
+        if (fName && fName.type === 'property_identifier' && fType) {
+          const t = extractAnnotationType(fType);
+          if (t) this.localTypes.set(fName.text, t);
         }
         break;
       }
@@ -459,14 +523,47 @@ export class ExtractionContext {
   private processCall(node: TSNode, scope: GraphNode): void {
     const fnField = node.childForFieldName('function');
     if (!fnField) return;
-    const callee = extractCalleeName(fnField);
+    const callee = extractQualifiedCallee(fnField);
     if (!callee) return;
-    const targetId = `func_ref:${callee}`;
-    this.ensureRefNode(targetId, callee, 'function');
+
+    // Phase 12 Tier 2 hook: instance-receiver upgrade. When the receiver
+    // is a plain identifier and we have a declared type for it in the
+    // current scope's symbol table, upgrade the placeholder ID to the
+    // type-qualified form. `this.foo` is intentionally NOT upgraded
+    // here — the resolution pass handles `this` via the enclosing
+    // class's member_of edges, which is more reliable than a per-file
+    // symbol-table lookup.
+    let qualified = callee.qualified;
+    let receiver = callee.receiver;
+    if (
+      receiver
+      && receiver !== 'this'
+      && receiver !== 'super'
+      && !receiver.includes('.')
+    ) {
+      const declaredType = this.localTypes.get(receiver);
+      if (declaredType) {
+        receiver = declaredType;
+        qualified = `${declaredType}.${callee.bare}`;
+      }
+    }
+
+    const targetId = `func_ref:${qualified}`;
+    const ref = this.ensureRefNode(targetId, callee.bare, 'function');
+    // Annotate the ref so the resolution pass has enough context to
+    // decide a merge: receiver disambiguates same-named methods on
+    // different classes; callerFile scopes bare-name calls to the
+    // file's import set.
+    if (receiver) {
+      ref.properties = { ...ref.properties, receiver };
+    } else {
+      ref.properties = { ...ref.properties, callerFile: this.relPath };
+    }
+
     const startLine = node.startPosition.row + 1;
     const startCol = node.startPosition.column;
     this.edges.push({
-      id: `call:${scope.id}:${startLine}:${startCol}:${callee}`,
+      id: `call:${scope.id}:${startLine}:${startCol}:${qualified}`,
       sourceId: scope.id,
       targetId,
       relationType: 'calls',
@@ -584,25 +681,82 @@ function unquote(s: string): string {
   return s;
 }
 
-function extractCalleeName(node: TSNode): string | null {
+interface QualifiedCallee {
+  /** The full identifier as the user wrote it: `Foo.bar`, `this.foo`, or `bar`. */
+  qualified: string;
+  /** The receiver before the dot, when one exists. `Foo` for `Foo.bar`. */
+  receiver?: string;
+  /** The trailing identifier always present. `bar` for both `Foo.bar` and `bar`. */
+  bare: string;
+}
+
+/**
+ * Returns the structured callee — bare name, receiver (when present), and
+ * the full `qualified` form used as the placeholder-ID payload. Phase 12
+ * Tier 1: `Foo.bar()` and `Bar.bar()` produce distinct placeholder IDs
+ * (`func_ref:Foo.bar` vs `func_ref:Bar.bar`) instead of collapsing to
+ * `func_ref:bar`. The resolution pass then uses the receiver to find the
+ * right merge target via member_of / extends edges.
+ */
+function extractQualifiedCallee(node: TSNode): QualifiedCallee | null {
   if (!node) return null;
-  if (node.type === 'identifier' || node.type === 'property_identifier') {
-    return node.text;
+  if (node.type === 'identifier') {
+    return { qualified: node.text, bare: node.text };
   }
-  if (node.type === 'super') return 'super';
+  if (node.type === 'super') return { qualified: 'super', bare: 'super' };
   if (node.type === 'member_expression') {
+    const obj = node.childForFieldName('object');
     const prop = node.childForFieldName('property');
-    if (prop) return prop.text;
+    if (!prop) return null;
+    const bare = prop.text;
+    const receiver = obj ? obj.text : undefined;
+    return {
+      qualified: receiver ? `${receiver}.${bare}` : bare,
+      receiver,
+      bare,
+    };
   }
   if (node.type === 'subscript_expression') {
     const idx = node.childForFieldName('index');
     if (idx && (idx.type === 'string' || idx.type === 'number')) {
-      return unquote(idx.text);
+      const bare = unquote(idx.text);
+      const obj = node.childForFieldName('object');
+      const receiver = obj ? obj.text : undefined;
+      return {
+        qualified: receiver ? `${receiver}.${bare}` : bare,
+        receiver,
+        bare,
+      };
     }
   }
   // Parenthesised / unwrap: try first named child.
   const first = node.firstNamedChild;
-  if (first) return extractCalleeName(first);
+  if (first) return extractQualifiedCallee(first);
+  return null;
+}
+
+/**
+ * Phase 12 Tier 2: extract the type name from a `type_annotation` /
+ * `type_predicate_annotation` / `opting_type_annotation` node. Returns
+ * just the type identifier — generic args, union types, intersection
+ * types, etc. yield null (we'd need real type inference to handle them
+ * correctly, which is Tier 3).
+ */
+function extractAnnotationType(annotation: TSNode | null): string | null {
+  if (!annotation) return null;
+  // Annotation node wraps the type — first named child is the type.
+  for (const c of annotation.namedChildren) {
+    if (!c) continue;
+    if (c.type === 'type_identifier' || c.type === 'identifier') return c.text;
+    if (c.type === 'predefined_type') return null; // string / number / boolean — uninteresting
+    if (c.type === 'generic_type') {
+      // e.g. `Promise<Foo>` — take the outer name.
+      const name = c.firstNamedChild;
+      if (name && (name.type === 'type_identifier' || name.type === 'identifier')) {
+        return name.text;
+      }
+    }
+  }
   return null;
 }
 

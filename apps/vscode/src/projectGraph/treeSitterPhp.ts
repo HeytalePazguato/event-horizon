@@ -257,23 +257,43 @@ function processPhpUseDeclaration(node: TSNode, ctx: ExtractionContext): void {
 }
 
 function processPhpCall(node: TSNode, ctx: ExtractionContext, scope: GraphNode): void {
-  let callee: string | null = null;
+  // Phase 12 Tier 1: capture the receiver alongside the callee so two
+  // distinct PHP call targets stop collapsing into a single placeholder.
+  //   function_call_expression  → bare name (no receiver)
+  //   member_call_expression    → $obj->bar  (receiver = $obj or this)
+  //   scoped_call_expression    → Foo::bar   (receiver = Foo, static)
+  let bare: string | null = null;
+  let receiver: string | undefined;
   if (node.type === 'function_call_expression') {
     const fn = node.childForFieldName('function');
-    if (fn) callee = lastSegmentOfQualifiedName(fn.text);
+    if (fn) bare = lastSegmentOfQualifiedName(fn.text);
   } else {
-    // member / nullsafe-member / scoped — all expose the called name as `name`.
     const nameField = node.childForFieldName('name');
-    if (nameField) callee = nameField.text;
+    if (nameField) bare = nameField.text;
+    const objField = node.childForFieldName('object') ?? node.childForFieldName('scope');
+    if (objField) {
+      // `$this` shows up as a `variable_name`; normalise to the bare
+      // word `this` so the resolution pass can treat it the same way
+      // it treats TS `this.foo`.
+      const objText = objField.text;
+      if (objText === '$this') receiver = 'this';
+      else receiver = objText.replace(/^\$/, '');
+    }
   }
-  if (!callee) return;
+  if (!bare) return;
 
+  const qualified = receiver ? `${receiver}.${bare}` : bare;
   const startLine = node.startPosition.row + 1;
   const startCol = node.startPosition.column;
-  const refId = `php:func_ref:${callee}`;
-  ctx.ensureRef(refId, callee, 'function');
+  const refId = `php:func_ref:${qualified}`;
+  const ref = ctx.ensureRef(refId, bare, 'function');
+  if (receiver) {
+    ref.properties = { ...ref.properties, receiver };
+  } else {
+    ref.properties = { ...ref.properties, callerFile: ctx.filePath };
+  }
   ctx.pushEdge({
-    id: `call:${scope.id}:${startLine}:${startCol}:${callee}`,
+    id: `call:${scope.id}:${startLine}:${startCol}:${qualified}`,
     sourceId: scope.id,
     targetId: refId,
     relationType: 'calls',

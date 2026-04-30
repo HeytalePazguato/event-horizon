@@ -15,7 +15,17 @@
  * Phase 8.2 of the Project Graph plan.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  type SimulationNodeDatum,
+  type SimulationLinkDatum,
+} from 'd3-force';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +46,8 @@ export interface GraphEdgeData {
   relationType: string;
 }
 
+export type ClusterMode = 'none' | 'folder' | 'type';
+
 export interface ProjectGraphCanvasProps {
   nodes: GraphNodeData[];
   edges: GraphEdgeData[];
@@ -43,22 +55,31 @@ export interface ProjectGraphCanvasProps {
   onNodeSelect?: (nodeId: string | null) => void;
   width?: number;
   height?: number;
+  /**
+   * Cluster mode. When `folder` or `type`, the canvas draws a hull around
+   * each cluster's members and accepts click-to-collapse / click-to-expand
+   * on hulls and super-nodes. The DB is never modified.
+   */
+  clusterMode?: ClusterMode;
+  /**
+   * Active search query. Used for client-side match highlighting on top
+   * of whatever filtering the server already applied — matching nodes get
+   * an amber stroke; non-matching dim. When exactly one node matches, the
+   * canvas auto-centers + zooms to it.
+   */
+  searchQuery?: string;
+  /** Authoritative match list from the server. When present overrides
+   *  the client-side substring match — non-match neighbours appear in
+   *  the result for context but stay un-highlighted. */
+  matchIds?: string[];
 }
 
 // ── Visual constants ───────────────────────────────────────────────────────
 
-const NODE_W = 80;
+const NODE_W = 85;
 const NODE_H = 48;
 const NODE_RADIUS = 6;
 const GRID_SPACING = 16;
-// Per-axis minimum centre-to-centre distance so two axis-aligned
-// rectangles never overlap. The radial circle check used previously
-// allowed pairs to satisfy `dist >= R` while still overlapping in
-// practice (e.g. dx=85, dy=80 → dist=117 > radial threshold, but
-// horizontally |dx|=85 still overlapped 80×48 boxes when dy was small
-// enough). Adding a margin on each axis for the halo + label.
-const MIN_DX = NODE_W + 24;
-const MIN_DY = NODE_H + 24;
 
 // Green-leaning palette to match the Event Horizon Universe view. Functions
 // (the most common node type) anchor the theme; other types use closely
@@ -78,6 +99,44 @@ const NODE_COLORS: Record<string, string> = {
 const DEFAULT_NODE_COLOR = '#88cc99';
 const EDGE_COLOR = '#44ff88';
 
+// 12-colour palette cycled through cluster ids when clusterMode != 'none'.
+// Same trick Graphify uses for community colouring — distinct hues let
+// the eye see folder/community grouping without a separate hull or label
+// overlay. Greens lean dominant to keep the EH aesthetic, with amber /
+// purple / cyan accents to break up large clusters of green.
+const CLUSTER_PALETTE = [
+  '#44ff88', '#ffcc66', '#88aaff', '#cc88ff', '#ff8844', '#aaffcc',
+  '#ffff88', '#ff88aa', '#88ffaa', '#88ddff', '#ddff88', '#ffaadd',
+];
+function clusterPalette(cid: string): string {
+  // Stable hash — same cid always picks the same colour across renders.
+  let h = 0;
+  for (let i = 0; i < cid.length; i++) h = (h * 31 + cid.charCodeAt(i)) | 0;
+  return CLUSTER_PALETTE[Math.abs(h) % CLUSTER_PALETTE.length];
+}
+
+// Helper: trace a rounded-rectangle path. Browser support for
+// CanvasRenderingContext2D.roundRect varies (added late in some
+// engines), so we polyfill explicitly. Both fill() and stroke() can
+// follow this path.
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+): void {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
@@ -87,15 +146,107 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
   onNodeSelect,
   width = 800,
   height = 600,
+  clusterMode = 'none',
+  searchQuery = '',
+  matchIds,
 }) => {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [drag, setDrag] = useState<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+  // Auto-fit-to-screen on first mount: compute the world AABB of all
+  // node positions and set pan/zoom so the whole graph lands in one
+  // viewport with a small margin. Without this, a 4k-node graph mounts
+  // at zoom=1 with every node packed into the centre — unreadable. Runs
+  // once per layout-key change (i.e. when the underlying graph changes).
+  const fittedKeyRef = useRef<string | null>(null);
+  // Coalesce mousemove pan updates into one paint per animation frame.
+  // Without this, every mousemove (often 200+/s) triggered a React render
+  // that walked 5,000 nodes for visibility culling — drag became a slideshow.
+  const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
+  const panRafRef = useRef<number | null>(null);
+  const schedulePan = (next: { x: number; y: number }) => {
+    pendingPanRef.current = next;
+    if (panRafRef.current !== null) return;
+    panRafRef.current = requestAnimationFrame(() => {
+      panRafRef.current = null;
+      if (pendingPanRef.current) setPan(pendingPanRef.current);
+    });
+  };
+  useEffect(() => () => {
+    if (panRafRef.current !== null) cancelAnimationFrame(panRafRef.current);
+  }, []);
+
+  // Compute cluster id per node up-front. `folder` uses the source-file's
+  // top-3-segments path; `type` uses the node type. Nodes without a
+  // sourceFile (e.g. agent_activity) fall into a synthetic "_no-folder"
+  // bucket so they still cluster predictably.
+  const clusterByNode = useMemo<Map<string, string>>(() => {
+    const map = new Map<string, string>();
+    if (clusterMode === 'none') return map;
+    for (const n of nodes) {
+      let id: string;
+      if (clusterMode === 'type') {
+        id = n.type;
+      } else {
+        const file = n.sourceFile ?? '';
+        const segs = file.split(/[\\/]/).filter(Boolean);
+        // Take up to 3 leading segments — strikes a balance between
+        // "too coarse" (root only) and "too fine" (every leaf folder).
+        // For a path like apps/vscode/src/projectGraph/scanner.ts that's
+        // apps/vscode/src; for top-level files (CHANGELOG.md) it's the
+        // filename itself, so docs cluster by file.
+        id = segs.slice(0, 3).join('/') || '_root';
+      }
+      map.set(n.id, id);
+    }
+    return map;
+  }, [nodes, clusterMode]);
+
+  // Memo key based on node-id set + edge-id set — not array references —
+  // so unchanged data doesn't re-trigger a 300-tick simulation on every
+  // browse-result post. The webview reposts a fresh array on every
+  // filter change; without this guard the canvas re-runs the full
+  // layout for no reason and the tab freezes for a second each time.
+  const layoutKey = useMemo(() => {
+    let key = `${width}x${height}|${nodes.length}n|${edges.length}e|${clusterMode}`;
+    const sample = (arr: { id: string }[]) =>
+      arr.slice(0, 16).map((x) => x.id).sort().join(',');
+    key += '|' + sample(nodes) + '|' + sample(edges);
+    return key;
+  }, [nodes, edges, width, height, clusterMode]);
 
   const positions = useMemo(
-    () => layoutNodes(nodes, edges, width, height),
-    [nodes, edges, width, height],
+    () => layoutNodes(nodes, edges, width, height, clusterByNode),
+    [layoutKey],
   );
+
+  // Fit-to-screen pass: runs after each layout completes (positions
+  // change). Computes world AABB and sets pan/zoom so it lands in the
+  // canvas with 10% margin. Skips if user has already interacted with
+  // pan/zoom since this layout — heuristic: fittedKeyRef tracks the
+  // last layoutKey we fit, so a fresh layout always fits, but a manual
+  // pan after that doesn't get clobbered.
+  useEffect(() => {
+    if (positions.size === 0) return;
+    if (fittedKeyRef.current === layoutKey) return;
+    fittedKeyRef.current = layoutKey;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of positions.values()) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const worldW = Math.max(maxX - minX, 1) + NODE_W * 2;
+    const worldH = Math.max(maxY - minY, 1) + NODE_H * 2;
+    const scaleX = (width * 0.9) / worldW;
+    const scaleY = (height * 0.9) / worldH;
+    const fitZoom = Math.max(0.15, Math.min(1.5, Math.min(scaleX, scaleY)));
+    const cxWorld = (minX + maxX) / 2;
+    const cyWorld = (minY + maxY) / 2;
+    setZoom(fitZoom);
+    setPan({ x: width / 2 - cxWorld * fitZoom, y: height / 2 - cyWorld * fitZoom });
+  }, [layoutKey, positions, width, height]);
 
   // BFS distance from the selected node, capped at 3 hops. Used to dim
   // unrelated nodes/edges and tier the visible neighborhood so it's
@@ -109,7 +260,11 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
   // Levels 0–3 stay near full opacity; the tier-ring COLOUR is what
   // signals depth (green → amber → orange). Unreachable boxes drop to
   // 10 % so they fade into the background grid without disappearing.
+  // When a search is active, non-matching nodes drop to 0.15 regardless
+  // of selection-tier — search "wins" the opacity decision so users can
+  // visually scan for hits.
   const nodeOpacity = (id: string): number => {
+    if (matchSet && !matchSet.has(id)) return 0.15;
     if (!levelMap) return 1;
     const lvl = levelMap.get(id);
     if (lvl === undefined) return 0.1; // unreachable
@@ -134,294 +289,970 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
     return { stroke: '#3a5544', opacity: 0.06, width: 1 };
   };
 
-  const transform = `translate(${pan.x}, ${pan.y}) scale(${zoom})`;
   const isEmpty = nodes.length === 0;
 
+  // Minimap visibility — persisted per-workspace via a key derived from
+  // the location.origin (best we can do inside a webview that doesn't
+  // expose vscode workspace path). Defaults to ON for graphs > 200 nodes.
+  const MINIMAP_LS_KEY = 'eh.projectGraph.minimap';
+  const [minimapOn, setMinimapOn] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const v = window.localStorage.getItem(MINIMAP_LS_KEY);
+      if (v === '0') return false;
+      if (v === '1') return true;
+    } catch { /* localStorage may be blocked */ }
+    return nodes.length > 200;
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MINIMAP_LS_KEY, minimapOn ? '1' : '0');
+    } catch { /* ignore */ }
+  }, [minimapOn]);
+
+  // Viewport culling bounds (world space). Computing these inline as
+  // numbers — instead of materialising a Set<id> — keeps each pan/zoom
+  // re-render at O(1) for the bounds and O(n) only when actually
+  // walking nodes during JSX render. Allocates 4 numbers, not 5,000.
+  const overscan = Math.max(width, height);
+  const cullMinX = (-pan.x - overscan) / zoom;
+  const cullMinY = (-pan.y - overscan) / zoom;
+  const cullMaxX = (-pan.x + width + overscan) / zoom;
+  const cullMaxY = (-pan.y + height + overscan) / zoom;
+  const isVisible = (id: string): boolean => {
+    const p = positions.get(id);
+    if (!p) return false;
+    return p.x >= cullMinX && p.x <= cullMaxX && p.y >= cullMinY && p.y <= cullMaxY;
+  };
+  // Cheap visible-count for the label-threshold check below — counts
+  // positions inside the cull box without building a Set.
+  let visibleCount = 0;
+  for (const p of positions.values()) {
+    if (p.x >= cullMinX && p.x <= cullMaxX && p.y >= cullMinY && p.y <= cullMaxY) visibleCount++;
+  }
+
+  // Match set: prefer the authoritative server list (matches + neighbours
+  // separated; only matches highlight) when present. Fallback to local
+  // substring match for back-compat or no-search cases.
+  const matchSet = useMemo<Set<string> | null>(() => {
+    if (matchIds && matchIds.length > 0) return new Set(matchIds);
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return null;
+    const set = new Set<string>();
+    for (const n of nodes) {
+      if (
+        n.label.toLowerCase().includes(q) ||
+        n.type.toLowerCase().includes(q) ||
+        (n.sourceFile?.toLowerCase().includes(q) ?? false)
+      ) {
+        set.add(n.id);
+      }
+    }
+    return set;
+  }, [nodes, searchQuery, matchIds]);
+
+  // Auto-center on the search results. Single match → centre + zoom-in
+  // on that node. Multiple matches → centre on their centroid and
+  // zoom-fit so all matches + their immediate context land in view.
+  // Either way the user sees the result of their query without manual
+  // pan/zoom. Tracking lastFocusedKey prevents re-centering on identical
+  // re-renders (filter pill clicks etc).
+  const lastFocusedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!matchSet || matchSet.size === 0) return;
+    const ids = Array.from(matchSet).sort();
+    const key = ids.join('|');
+    if (key === lastFocusedRef.current) return;
+    lastFocusedRef.current = key;
+
+    let targetPanX: number, targetPanY: number, targetZoom: number;
+    if (matchSet.size === 1) {
+      const pos = positions.get(ids[0]);
+      if (!pos) return;
+      targetZoom = 1.4;
+      targetPanX = width / 2 - pos.x * targetZoom;
+      targetPanY = height / 2 - pos.y * targetZoom;
+    } else {
+      // Centroid + zoom-fit so the match cluster fits with margin.
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      let cx = 0, cy = 0, count = 0;
+      for (const id of ids) {
+        const p = positions.get(id);
+        if (!p) continue;
+        cx += p.x; cy += p.y; count++;
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      if (count === 0) return;
+      cx /= count; cy /= count;
+      const spanW = Math.max(maxX - minX, 1) + NODE_W * 4;
+      const spanH = Math.max(maxY - minY, 1) + NODE_H * 4;
+      targetZoom = Math.max(0.4, Math.min(1.4, Math.min((width * 0.85) / spanW, (height * 0.85) / spanH)));
+      targetPanX = width / 2 - cx * targetZoom;
+      targetPanY = height / 2 - cy * targetZoom;
+    }
+
+    const startPan = { ...pan };
+    const startZoom = zoom;
+    const start = performance.now();
+    const dur = 300;
+    let raf = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / dur);
+      const e = 1 - Math.pow(1 - t, 3);
+      setPan({
+        x: startPan.x + (targetPanX - startPan.x) * e,
+        y: startPan.y + (targetPanY - startPan.y) * e,
+      });
+      setZoom(startZoom + (targetZoom - startZoom) * e);
+      if (t < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+    // pan/zoom read for animation start only; not deps.
+  }, [matchSet, positions, width, height]);
+  useEffect(() => {
+    if (!matchSet || matchSet.size === 0) lastFocusedRef.current = null;
+  }, [matchSet]);
+
+  // With the 200-cap restored we always render full-design boxes; the
+  // adaptive-tier work was a band-aid for the SVG-at-4k era and is no
+  // longer needed.
+  const labelVisible = (id: string): boolean => {
+    void degreeMap; void labelDegreeThreshold; void visibleCount;
+    return id === selectedNodeId
+      || true; // 200-node cap means every node always has room for a label
+  };
+
+  // Per-node degree for label-thresholding (Graphify shows labels only
+  // on the top ~15% by degree — at scale, every-node labelling is just
+  // illegible noise). Walk edges once to count.
+  const degreeMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of edges) {
+      m.set(e.sourceId, (m.get(e.sourceId) ?? 0) + 1);
+      m.set(e.targetId, (m.get(e.targetId) ?? 0) + 1);
+    }
+    return m;
+  }, [edges]);
+  const labelDegreeThreshold = useMemo(() => {
+    if (degreeMap.size === 0) return 0;
+    let max = 0;
+    for (const v of degreeMap.values()) if (v > max) max = v;
+    // 15% of max degree, with a floor of 2 so very-low-degree graphs
+    // still get most labels.
+    return Math.max(2, Math.floor(max * 0.15));
+  }, [degreeMap]);
+
+  // ── Canvas paint ─────────────────────────────────────────────────────
+  // Replaces the previous SVG renderer. SVG with 200+ interactive nodes
+  // is slow because every shape becomes a live DOM element; Canvas paints
+  // pixels in one drawcall regardless of node count. Hit-testing is
+  // explicit (a `pickNode(x, y)` helper that walks the visible node
+  // list — fine at 200 nodes, would need a quadtree at 5,000).
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Track potential click vs drag — a small tolerance lets jittery
+  // mice still register a click instead of a 1-pixel pan.
+  const mouseDownRef = useRef<{ x: number; y: number; t: number } | null>(null);
+
+  // Hover state for the portal tooltip. Updates on mousemove via
+  // hit-test; only re-renders when the hovered node id actually
+  // changes (React bails on identical state writes). Cleared during
+  // drag so the tooltip doesn't flicker while panning.
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  // Convert canvas-local coordinates to world space for hit-testing.
+  const screenToWorld = (sx: number, sy: number): { x: number; y: number } => ({
+    x: (sx - pan.x) / zoom,
+    y: (sy - pan.y) / zoom,
+  });
+
+  const pickNode = (sx: number, sy: number): string | null => {
+    const w = screenToWorld(sx, sy);
+    let best: string | null = null;
+    let bestDist = Infinity;
+    const halfW = NODE_W / 2;
+    const halfH = NODE_H / 2;
+    for (const node of nodes) {
+      const p = positions.get(node.id);
+      if (!p) continue;
+      // Quick AABB test, then prefer the closest match (ties go to the
+      // node whose centre is nearest the click).
+      if (
+        w.x >= p.x - halfW && w.x <= p.x + halfW
+        && w.y >= p.y - halfH && w.y <= p.y + halfH
+      ) {
+        const d = (w.x - p.x) ** 2 + (w.y - p.y) ** 2;
+        if (d < bestDist) {
+          bestDist = d;
+          best = node.id;
+        }
+      }
+    }
+    return best;
+  };
+
+  // Single paint loop — runs on any state that affects the visible
+  // pixels. requestAnimationFrame coalesces multiple state changes per
+  // frame into one paint, which is critical during drag.
+  const paintRafRef = useRef<number | null>(null);
+  useEffect(() => {
+    const cnv = canvasRef.current;
+    if (!cnv) return;
+    if (paintRafRef.current !== null) cancelAnimationFrame(paintRafRef.current);
+    paintRafRef.current = requestAnimationFrame(() => {
+      paintRafRef.current = null;
+      const ctx = cnv.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      // Resize backing store for crisp rendering on Retina without
+      // recreating the canvas DOM node every paint.
+      const want = { w: Math.round(width * dpr), h: Math.round(height * dpr) };
+      if (cnv.width !== want.w || cnv.height !== want.h) {
+        cnv.width = want.w;
+        cnv.height = want.h;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Background.
+      ctx.fillStyle = '#0a1810';
+      ctx.fillRect(0, 0, width, height);
+
+      // Subtle blueprint grid — drawn in screen space (not transformed)
+      // so the grid stays a constant size when the user zooms.
+      ctx.strokeStyle = 'rgba(34, 102, 68, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = (pan.x % GRID_SPACING); x < width; x += GRID_SPACING) {
+        ctx.moveTo(x + 0.5, 0);
+        ctx.lineTo(x + 0.5, height);
+      }
+      for (let y = (pan.y % GRID_SPACING); y < height; y += GRID_SPACING) {
+        ctx.moveTo(0, y + 0.5);
+        ctx.lineTo(width, y + 0.5);
+      }
+      ctx.stroke();
+
+      if (isEmpty) {
+        ctx.fillStyle = '#557766';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+          'Run /eh:optimize-context in any AI agent to build the project graph.',
+          width / 2,
+          height / 2,
+        );
+        return;
+      }
+
+      // Apply pan/zoom for world-space drawing.
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.translate(pan.x, pan.y);
+      ctx.scale(zoom, zoom);
+
+      // Edges — hidden during drag so panning stays responsive.
+      if (!drag) {
+        for (const edge of edges) {
+          const a = positions.get(edge.sourceId);
+          const b = positions.get(edge.targetId);
+          if (!a || !b) continue;
+          if (!isVisible(edge.sourceId) && !isVisible(edge.targetId)) continue;
+          const style = edgeStyle(edge.sourceId, edge.targetId);
+          ctx.strokeStyle = style.stroke;
+          ctx.globalAlpha = style.opacity;
+          ctx.lineWidth = style.width;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // Nodes.
+      for (const node of nodes) {
+        const p = positions.get(node.id);
+        if (!p) continue;
+        if (!isVisible(node.id)) continue;
+        const baseColor = NODE_COLORS[node.type] ?? DEFAULT_NODE_COLOR;
+        const cid = clusterByNode.get(node.id);
+        const color = clusterMode !== 'none' && cid ? clusterPalette(cid) : baseColor;
+        const isSelected = node.id === selectedNodeId;
+        const isMatch = matchSet?.has(node.id) ?? false;
+        const opacity = nodeOpacity(node.id);
+
+        ctx.globalAlpha = opacity;
+
+        // Halo glow.
+        ctx.fillStyle = color;
+        ctx.globalAlpha = opacity * 0.15;
+        roundRect(ctx, p.x - NODE_W / 2 - 8, p.y - NODE_H / 2 - 8, NODE_W + 16, NODE_H + 16, NODE_RADIUS + 6);
+        ctx.fill();
+
+        // Main rounded rect.
+        ctx.globalAlpha = opacity;
+        ctx.fillStyle = '#142c1f';
+        roundRect(ctx, p.x - NODE_W / 2, p.y - NODE_H / 2, NODE_W, NODE_H, NODE_RADIUS);
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = opacity * 0.85;
+        ctx.stroke();
+
+        // Selection ring (white).
+        if (isSelected) {
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#ffffff';
+          ctx.globalAlpha = 0.85;
+          roundRect(ctx, p.x - NODE_W / 2 - 4, p.y - NODE_H / 2 - 4, NODE_W + 8, NODE_H + 8, NODE_RADIUS + 4);
+          ctx.stroke();
+        }
+
+        // Tier ring (BFS-distance from selection).
+        const lvl = levelMap?.get(node.id);
+        if (!isSelected && lvl !== undefined && lvl >= 1 && lvl <= 3) {
+          ctx.strokeStyle = lvl === 1 ? '#44ff88' : lvl === 2 ? '#ffcc66' : '#ff8844';
+          ctx.lineWidth = lvl === 1 ? 2.5 : lvl === 2 ? 2 : 1.6;
+          ctx.globalAlpha = lvl === 1 ? 1 : lvl === 2 ? 0.95 : 0.85;
+          roundRect(ctx, p.x - NODE_W / 2 - 3, p.y - NODE_H / 2 - 3, NODE_W + 6, NODE_H + 6, NODE_RADIUS + 3);
+          ctx.stroke();
+        }
+
+        // Search-match amber stroke.
+        if (isMatch && !isSelected) {
+          ctx.strokeStyle = '#ffaa44';
+          ctx.lineWidth = 2.5;
+          ctx.globalAlpha = 0.95;
+          roundRect(ctx, p.x - NODE_W / 2 - 5, p.y - NODE_H / 2 - 5, NODE_W + 10, NODE_H + 10, NODE_RADIUS + 5);
+          ctx.stroke();
+        }
+
+        // Labels.
+        if (labelVisible(node.id)) {
+          ctx.globalAlpha = opacity;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = color;
+          ctx.font = '9px monospace';
+          ctx.fillText(node.type, p.x, p.y - 6);
+          ctx.fillStyle = '#ddeeff';
+          ctx.font = '11px monospace';
+          // 11px monospace ≈ 6.6 px/char. NODE_W=85 minus ~8 px internal
+          // padding leaves room for ~12 chars. Anything longer collapses
+          // to 11+ellipsis so labels stay inside the box border. The
+          // hover tooltip below shows the full name.
+          const labelText = node.label.length > 12 ? node.label.slice(0, 11) + '…' : node.label;
+          ctx.fillText(labelText, p.x, p.y + 12);
+        }
+        ctx.globalAlpha = 1;
+      }
+    });
+    return () => {
+      if (paintRafRef.current !== null) cancelAnimationFrame(paintRafRef.current);
+    };
+  }, [
+    nodes, edges, positions, selectedNodeId, matchSet, levelMap, clusterByNode,
+    clusterMode, pan, zoom, drag, width, height, isEmpty,
+  ]);
+
   return (
-    <svg
-      width={width}
-      height={height}
+    <div style={{ position: 'relative', width, height }}>
+    <canvas
+      ref={canvasRef}
       style={{
         display: 'block',
+        width,
+        height,
         background: '#0a1810',
         cursor: drag ? 'grabbing' : 'grab',
         userSelect: 'none',
-        // Without this, SVG content transformed by pan/zoom can extend
-        // past the viewport and render over the controls header above.
-        overflow: 'hidden',
       }}
       onMouseDown={(e) => {
-        const target = e.target as Element;
-        // Only start panning when grabbing the background, not a node.
-        if (target.tagName === 'svg' || target.getAttribute('data-bg') === '1') {
-          setDrag({ startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y });
-        }
+        const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+        mouseDownRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top, t: Date.now() };
+        setDrag({ startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y });
       }}
       onMouseMove={(e) => {
         if (drag) {
-          setPan({ x: drag.panX + (e.clientX - drag.startX), y: drag.panY + (e.clientY - drag.startY) });
+          schedulePan({ x: drag.panX + (e.clientX - drag.startX), y: drag.panY + (e.clientY - drag.startY) });
+          if (hoveredId !== null) setHoveredId(null);
+          return;
         }
+        const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const id = pickNode(sx, sy);
+        if (id !== hoveredId) setHoveredId(id);
       }}
-      onMouseUp={() => setDrag(null)}
-      onMouseLeave={() => setDrag(null)}
+      onMouseUp={(e) => {
+        const start = mouseDownRef.current;
+        const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        if (start) {
+          const dx = sx - start.x;
+          const dy = sy - start.y;
+          // Treat as click only if movement was tiny (pixel-jitter
+          // tolerance) and not a long-hold.
+          if (dx * dx + dy * dy < 16) {
+            const id = pickNode(sx, sy);
+            if (onNodeSelect) onNodeSelect(id);
+          }
+        }
+        mouseDownRef.current = null;
+        setDrag(null);
+      }}
+      onMouseLeave={() => {
+        mouseDownRef.current = null;
+        setDrag(null);
+        setHoveredId(null);
+      }}
       onWheel={(e) => {
         const factor = e.deltaY > 0 ? 0.9 : 1.1;
         setZoom((z) => Math.max(0.25, Math.min(4, z * factor)));
       }}
-    >
-      <defs>
-        <pattern id="graph-grid" width={GRID_SPACING} height={GRID_SPACING} patternUnits="userSpaceOnUse">
-          <path
-            d={`M ${GRID_SPACING} 0 L 0 0 0 ${GRID_SPACING}`}
-            fill="none"
-            stroke="#226644"
-            strokeWidth="1"
-            strokeOpacity="0.1"
-          />
-        </pattern>
-      </defs>
-      <rect data-bg="1" x={0} y={0} width={width} height={height} fill="url(#graph-grid)" />
-
-      {isEmpty && (
-        <text
-          x={width / 2}
-          y={height / 2}
-          fontFamily="monospace"
-          fontSize={12}
-          fill="#557766"
-          textAnchor="middle"
-        >
-          Run /eh:optimize-context in any AI agent to build the project graph.
-        </text>
-      )}
-
-      <g transform={transform}>
-        {edges.map((edge) => {
-          const a = positions.get(edge.sourceId);
-          const b = positions.get(edge.targetId);
-          if (!a || !b) return null;
-          const style = edgeStyle(edge.sourceId, edge.targetId);
-          return (
-            <line
-              key={edge.id}
-              x1={a.x}
-              y1={a.y}
-              x2={b.x}
-              y2={b.y}
-              stroke={style.stroke}
-              strokeWidth={style.width}
-              strokeOpacity={style.opacity}
-            />
-          );
-        })}
-
-        {nodes.map((node) => {
-          const pos = positions.get(node.id);
-          if (!pos) return null;
-          const color = NODE_COLORS[node.type] ?? DEFAULT_NODE_COLOR;
-          const isSelected = node.id === selectedNodeId;
-          const labelText = node.label.length > 14 ? node.label.slice(0, 13) + '…' : node.label;
-          const opacity = nodeOpacity(node.id);
-          // Tier ring colour matches the edge palette so the depth gradient
-          // reads consistently: green = direct neighbour, amber = 2 hops,
-          // orange = 3 hops. Stroke width also steps down so the eye picks
-          // up the tier even before the colour registers.
-          const lvl = levelMap?.get(node.id);
-          const tierRing = lvl === 1
-            ? { color: '#44ff88', width: 2.5, opacity: 1.0 }
-            : lvl === 2
-            ? { color: '#ffcc66', width: 2.0, opacity: 0.95 }
-            : lvl === 3
-            ? { color: '#ff8844', width: 1.6, opacity: 0.85 }
-            : null;
-          return (
-            <g
-              key={node.id}
-              transform={`translate(${pos.x}, ${pos.y})`}
-              opacity={opacity}
-              style={{ cursor: 'pointer' }}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onNodeSelect) onNodeSelect(node.id);
-              }}
-            >
-              <rect
-                x={-NODE_W / 2 - 8}
-                y={-NODE_H / 2 - 8}
-                width={NODE_W + 16}
-                height={NODE_H + 16}
-                rx={NODE_RADIUS + 6}
-                fill={color}
-                opacity={0.15}
-              />
-              <rect
-                x={-NODE_W / 2}
-                y={-NODE_H / 2}
-                width={NODE_W}
-                height={NODE_H}
-                rx={NODE_RADIUS}
-                fill="#142c1f"
-                fillOpacity={0.95}
-                stroke={color}
-                strokeWidth={2}
-                strokeOpacity={0.85}
-              />
-              {isSelected && (
-                <rect
-                  x={-NODE_W / 2 - 4}
-                  y={-NODE_H / 2 - 4}
-                  width={NODE_W + 8}
-                  height={NODE_H + 8}
-                  rx={NODE_RADIUS + 4}
-                  fill="none"
-                  stroke="#ffffff"
-                  strokeWidth={2}
-                  strokeOpacity={0.85}
-                />
-              )}
-              {!isSelected && tierRing && (
-                <rect
-                  x={-NODE_W / 2 - 3}
-                  y={-NODE_H / 2 - 3}
-                  width={NODE_W + 6}
-                  height={NODE_H + 6}
-                  rx={NODE_RADIUS + 3}
-                  fill="none"
-                  stroke={tierRing.color}
-                  strokeWidth={tierRing.width}
-                  strokeOpacity={tierRing.opacity}
-                />
-              )}
-              <text
-                x={0}
-                y={-6}
-                fontFamily="monospace"
-                fontSize={9}
-                fill={color}
-                textAnchor="middle"
-                style={{ pointerEvents: 'none' }}
-              >
-                {node.type}
-              </text>
-              <text
-                x={0}
-                y={12}
-                fontFamily="monospace"
-                fontSize={11}
-                fill="#ddeeff"
-                textAnchor="middle"
-                style={{ pointerEvents: 'none' }}
-              >
-                {labelText}
-              </text>
-            </g>
-          );
-        })}
-      </g>
-    </svg>
+    />
+    <Minimap
+      width={width}
+      height={height}
+      positions={positions}
+      nodeColors={nodes.reduce<Map<string, string>>((acc, n) => {
+        acc.set(n.id, NODE_COLORS[n.type] ?? DEFAULT_NODE_COLOR);
+        return acc;
+      }, new Map())}
+      pan={pan}
+      zoom={zoom}
+      onPanChange={setPan}
+      visible={minimapOn}
+      onToggle={() => setMinimapOn((v) => !v)}
+    />
+    <HoverTooltip hoveredNode={hoveredId ? nodes.find((n) => n.id === hoveredId) ?? null : null} />
+    </div>
   );
 };
 
-// ── Force-directed layout ──────────────────────────────────────────────────
+// ── Hover tooltip ──────────────────────────────────────────────────────────
+// Portal-mounted on document.body, positioned fixed at the top-right of
+// the webview viewport. Per the project's tooltip rule (always portal,
+// fixed corner — never inline / never following the cursor) this stays
+// out of the canvas's React tree and never gets clipped or affected by
+// ancestor styles.
+
+const HoverTooltip: React.FC<{ hoveredNode: GraphNodeData | null }> = ({ hoveredNode }) => {
+  if (!hoveredNode) return null;
+  if (typeof document === 'undefined') return null; // SSR / test guard
+  const color = NODE_COLORS[hoveredNode.type] ?? DEFAULT_NODE_COLOR;
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        top: 56,
+        right: 12,
+        zIndex: 9999,
+        maxWidth: 360,
+        padding: '8px 10px',
+        background: 'rgba(10, 24, 16, 0.96)',
+        border: '1px solid rgba(68, 187, 110, 0.6)',
+        borderRadius: 4,
+        fontFamily: 'monospace',
+        fontSize: 11,
+        color: '#cceedd',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+        pointerEvents: 'none',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <span style={{
+          fontSize: 9,
+          padding: '1px 5px',
+          borderRadius: 2,
+          background: 'rgba(68, 255, 136, 0.15)',
+          color,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+        }}>
+          {hoveredNode.type}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: '#ddeeff', wordBreak: 'break-all', marginBottom: 4 }}>
+        {hoveredNode.label}
+      </div>
+      {hoveredNode.sourceFile && (
+        <div style={{ fontSize: 10, color: '#88aa99', wordBreak: 'break-all' }}>
+          {hoveredNode.sourceFile}{hoveredNode.sourceLocation ? `:${hoveredNode.sourceLocation}` : ''}
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
+};
+
+// ── Minimap ────────────────────────────────────────────────────────────────
+
+interface MinimapProps {
+  width: number;
+  height: number;
+  positions: Map<string, { x: number; y: number }>;
+  nodeColors: Map<string, string>;
+  pan: { x: number; y: number };
+  zoom: number;
+  onPanChange: (next: { x: number; y: number }) => void;
+  visible: boolean;
+  onToggle: () => void;
+}
+
+const MINIMAP_W = 200;
+const MINIMAP_H = 120;
+
+const Minimap: React.FC<MinimapProps> = ({
+  width,
+  height,
+  positions,
+  nodeColors,
+  pan,
+  zoom,
+  onPanChange,
+  visible,
+  onToggle,
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Compute the world AABB once per positions change so we can map world
+  // → minimap consistently across paint and pointer events.
+  const worldBounds = useMemo(() => {
+    if (positions.size === 0) return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of positions.values()) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    // Pad so the minimap rect doesn't clip nodes at the edge.
+    const padX = (maxX - minX) * 0.1 || 100;
+    const padY = (maxY - minY) * 0.1 || 100;
+    return { minX: minX - padX, minY: minY - padY, maxX: maxX + padX, maxY: maxY + padY };
+  }, [positions]);
+
+  const worldW = worldBounds.maxX - worldBounds.minX;
+  const worldH = worldBounds.maxY - worldBounds.minY;
+  const scale = Math.min(MINIMAP_W / worldW, MINIMAP_H / worldH);
+  const offX = (MINIMAP_W - worldW * scale) / 2;
+  const offY = (MINIMAP_H - worldH * scale) / 2;
+
+  // Repaint whenever positions or pan/zoom change. Coalesced through rAF
+  // so a flurry of pan events from a fast drag turns into one paint per
+  // frame, not one paint per mousemove. The 2-px dot renderer is cheap
+  // enough that the bottleneck would otherwise be DOM overhead.
+  const rafRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const c = canvasRef.current;
+    if (!c) return;
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      const ctx = c.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, MINIMAP_W, MINIMAP_H);
+      ctx.fillStyle = '#0a1810';
+      ctx.fillRect(0, 0, MINIMAP_W, MINIMAP_H);
+      for (const [id, p] of positions) {
+        const mx = offX + (p.x - worldBounds.minX) * scale;
+        const my = offY + (p.y - worldBounds.minY) * scale;
+        ctx.fillStyle = nodeColors.get(id) ?? '#88cc99';
+        ctx.fillRect(mx - 1, my - 1, 2, 2);
+      }
+      const vMinX = -pan.x / zoom;
+      const vMinY = -pan.y / zoom;
+      const vMaxX = (-pan.x + width) / zoom;
+      const vMaxY = (-pan.y + height) / zoom;
+      const rx = offX + (vMinX - worldBounds.minX) * scale;
+      const ry = offY + (vMinY - worldBounds.minY) * scale;
+      const rw = (vMaxX - vMinX) * scale;
+      const rh = (vMaxY - vMinY) * scale;
+      ctx.strokeStyle = '#44ff88';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(rx, ry, rw, rh);
+    });
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, [visible, positions, nodeColors, pan, zoom, width, height, worldBounds, offX, offY, scale]);
+
+  const handlePointer = (clientX: number, clientY: number, rect: DOMRect) => {
+    const mx = clientX - rect.left;
+    const my = clientY - rect.top;
+    // Convert minimap click to world coords, then to pan such that that
+    // world point lands at the centre of the main canvas.
+    const worldX = worldBounds.minX + (mx - offX) / scale;
+    const worldY = worldBounds.minY + (my - offY) / scale;
+    onPanChange({ x: width / 2 - worldX * zoom, y: height / 2 - worldY * zoom });
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onToggle}
+        title={visible ? 'Hide minimap' : 'Show minimap'}
+        style={{
+          position: 'absolute',
+          right: 8,
+          bottom: 8,
+          width: 24,
+          height: 24,
+          padding: 0,
+          background: 'rgba(20, 44, 32, 0.85)',
+          border: '1px solid rgba(68, 187, 110, 0.4)',
+          color: '#88cc99',
+          cursor: 'pointer',
+          fontFamily: 'monospace',
+          fontSize: 14,
+          lineHeight: '20px',
+          borderRadius: 3,
+          zIndex: 2,
+        }}
+      >
+        {visible ? '×' : '▦'}
+      </button>
+      {visible && (
+        <canvas
+          ref={canvasRef}
+          width={MINIMAP_W}
+          height={MINIMAP_H}
+          style={{
+            position: 'absolute',
+            right: 38,
+            bottom: 8,
+            border: '1px solid rgba(68, 187, 110, 0.4)',
+            cursor: 'crosshair',
+            zIndex: 1,
+          }}
+          onMouseDown={(e) => {
+            handlePointer(e.clientX, e.clientY, (e.target as HTMLCanvasElement).getBoundingClientRect());
+          }}
+          onMouseMove={(e) => {
+            if (e.buttons === 1) {
+              handlePointer(e.clientX, e.clientY, (e.target as HTMLCanvasElement).getBoundingClientRect());
+            }
+          }}
+        />
+      )}
+    </>
+  );
+};
+
+// ── Convex hull (Andrew's monotone chain) ──────────────────────────────────
+
+/**
+ * Returns the convex hull of `pts` as an ordered loop (counter-clockwise).
+ * Used to draw a polygon around each cluster's members. Andrew's monotone
+ * chain is O(n log n) — fine for a few hundred points per cluster.
+ */
+export function convexHull(pts: { x: number; y: number }[]): { x: number; y: number }[] {
+  if (pts.length <= 1) return [...pts];
+  const sorted = [...pts].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: { x: number; y: number }[] = [];
+  for (const p of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: { x: number; y: number }[] = [];
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const p = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  upper.pop();
+  lower.pop();
+  return lower.concat(upper);
+}
+
+// ── Cluster layout (cheap, deterministic, no full simulation) ──────────────
+
+/**
+ * Positions for the clustered view. Super-nodes (one per cluster id) live
+ * on a deterministic ring around the canvas centre; member nodes for any
+ * expanded cluster fan out around that cluster's centre on a small ring.
+ *
+ * Why not d3-force here: with all 4,000 members hidden by default, paying
+ * the cost of a 300-tick Barnes-Hut simulation just to throw the results
+ * away is wasteful — and worse, forceCollide packing tiny circles into
+ * the same area produces the brick-pattern overlap users keep seeing.
+ * A static ring is plenty for the super-node-only case, and a tiny
+ * per-cluster simulation handles expansion in a few milliseconds.
+ */
+export function layoutClusters(
+  nodes: GraphNodeData[],
+  edges: GraphEdgeData[],
+  w: number,
+  h: number,
+  clusterByNode: Map<string, string>,
+  expanded: Set<string>,
+): Map<string, NodePosition> {
+  const result = new Map<string, NodePosition>();
+  if (nodes.length === 0) return result;
+
+  // Group members per cluster. Sort cluster ids alphabetically so the
+  // layout is stable across re-renders.
+  const members = new Map<string, GraphNodeData[]>();
+  for (const n of nodes) {
+    const cid = clusterByNode.get(n.id);
+    if (!cid) continue;
+    const arr = members.get(cid) ?? [];
+    arr.push(n);
+    members.set(cid, arr);
+  }
+  const clusterIds = Array.from(members.keys()).sort();
+  const cx = w / 2;
+  const cy = h / 2;
+
+  // Outer ring radius scales with the canvas size and cluster count so
+  // even 30 clusters spread without overlap.
+  const ringRadius = Math.min(w, h) * 0.35;
+
+  // Cluster centres on a deterministic ring.
+  const clusterCenter = new Map<string, { x: number; y: number }>();
+  clusterIds.forEach((cid, i) => {
+    const angle = (i / Math.max(clusterIds.length, 1)) * Math.PI * 2;
+    clusterCenter.set(cid, {
+      x: cx + Math.cos(angle) * ringRadius,
+      y: cy + Math.sin(angle) * ringRadius,
+    });
+  });
+
+  // For collapsed clusters, every member shares the cluster centre —
+  // they're hidden in render anyway, but the centroid math elsewhere
+  // (hull, edge re-routing, fit-to-screen) still uses these positions.
+  // For expanded clusters, fan members out on a small ring; if the
+  // cluster has many members, use a spiral so they don't overlap on a
+  // single circle.
+  for (const cid of clusterIds) {
+    const centre = clusterCenter.get(cid)!;
+    const isExpanded = expanded.has(cid);
+    const list = members.get(cid)!;
+    if (!isExpanded) {
+      for (const m of list) result.set(m.id, { x: centre.x, y: centre.y });
+      continue;
+    }
+    // Expanded: spread members on concentric rings around the centre.
+    // Stable order via id sort so re-renders don't shuffle nodes.
+    list.sort((a, b) => (a.id < b.id ? -1 : 1));
+    const innerR = 70;
+    const ringStep = NODE_H + 16;
+    const perRing = Math.max(8, Math.floor((2 * Math.PI * innerR) / (NODE_W + 16)));
+    list.forEach((m, idx) => {
+      const ring = Math.floor(idx / perRing);
+      const ringR = innerR + ring * ringStep;
+      const onRing = idx % perRing;
+      const angle = (onRing / Math.max(perRing, 1)) * Math.PI * 2;
+      result.set(m.id, {
+        x: centre.x + Math.cos(angle) * ringR,
+        y: centre.y + Math.sin(angle) * ringR,
+      });
+    });
+  }
+
+  // Edges aren't simulated separately here — their endpoints already
+  // resolve through `positions.get(...)` in render.
+  void edges;
+
+  // Snap to grid for visual consistency with the rest of the canvas.
+  for (const [id, p] of result) {
+    result.set(id, {
+      x: Math.round(p.x / GRID_SPACING) * GRID_SPACING,
+      y: Math.round(p.y / GRID_SPACING) * GRID_SPACING,
+    });
+  }
+
+  return result;
+}
+
+// ── Force-directed layout (d3-force, Barnes-Hut quadtree) ─────────────────
 
 interface NodePosition {
   x: number;
   y: number;
 }
 
-function layoutNodes(
+interface SimNode extends SimulationNodeDatum {
+  id: string;
+}
+
+/**
+ * Run a d3-force simulation over the graph and return final positions.
+ *
+ * d3-force ships with a Barnes-Hut quadtree for repulsion (`forceManyBody`)
+ * — that's the O(n log n) approximation that lets thousands of nodes lay
+ * out without freezing the browser. We tick synchronously inside useMemo
+ * so the graph appears in one paint, same UX as the previous hand-rolled
+ * loop. The previous AABB resolver is gone — `forceCollide` with circular
+ * bounds owns positions now, so we don't have springs and a separate
+ * resolver fighting each other.
+ *
+ * Tick budget: 300 is a settled sweet spot — fewer leaves visible drift,
+ * more is wasted compute past the point d3-force has converged.
+ */
+export function layoutNodes(
   nodes: GraphNodeData[],
   edges: GraphEdgeData[],
   w: number,
   h: number,
+  clusterByNode?: Map<string, string>,
 ): Map<string, NodePosition> {
   if (nodes.length === 0) return new Map();
   if (nodes.length === 1) return new Map([[nodes[0].id, { x: w / 2, y: h / 2 }]]);
 
-  const pos = new Map<string, { x: number; y: number; vx: number; vy: number }>();
   const cx = w / 2;
   const cy = h / 2;
   const radius = Math.min(w, h) * 0.3;
-  for (let i = 0; i < nodes.length; i++) {
+
+  // When clustering is on, seed each cluster on its own ring around the
+  // centre. Within a cluster, members start near the cluster's seed point
+  // so the force simulation pulls them tight quickly. Without clustering,
+  // we use a single ring across all nodes (deterministic, no Math.random).
+  const clusterIds = clusterByNode && clusterByNode.size > 0
+    ? Array.from(new Set(clusterByNode.values()))
+    : null;
+  const clusterSeed = new Map<string, { x: number; y: number }>();
+  if (clusterIds) {
+    clusterIds.forEach((id, i) => {
+      const angle = (i / clusterIds.length) * Math.PI * 2;
+      const ringR = radius * 0.85;
+      clusterSeed.set(id, {
+        x: cx + Math.cos(angle) * ringR,
+        y: cy + Math.sin(angle) * ringR,
+      });
+    });
+  }
+
+  const simNodes: SimNode[] = nodes.map((n, i) => {
+    const cid = clusterByNode?.get(n.id);
+    const seed = cid ? clusterSeed.get(cid) : null;
+    if (seed) {
+      // Tiny per-member offset so cluster members don't all start on the
+      // same point (which would explode under repulsion).
+      const memberAngle = (i / nodes.length) * Math.PI * 2;
+      return {
+        id: n.id,
+        x: seed.x + Math.cos(memberAngle) * 16,
+        y: seed.y + Math.sin(memberAngle) * 16,
+        vx: 0,
+        vy: 0,
+      };
+    }
     const angle = (i / nodes.length) * Math.PI * 2;
-    pos.set(nodes[i].id, {
+    return {
+      id: n.id,
       x: cx + Math.cos(angle) * radius,
       y: cy + Math.sin(angle) * radius,
       vx: 0,
       vy: 0,
-    });
-  }
+    };
+  });
 
-  const REPULSION = 6000;
-  const SPRING = 0.04;
-  const SPRING_LENGTH = 180;
-  const DAMPING = 0.82;
-  const ITERATIONS = 200;
-  const MAX_VELOCITY = 50;
+  const validIds = new Set(simNodes.map((n) => n.id));
+  const simLinks: SimulationLinkDatum<SimNode>[] = edges
+    .filter((e) => validIds.has(e.sourceId) && validIds.has(e.targetId))
+    .map((e) => ({ source: e.sourceId, target: e.targetId }));
 
-  for (let iter = 0; iter < ITERATIONS; iter++) {
-    for (const a of nodes) {
-      const pa = pos.get(a.id);
-      if (!pa) continue;
-      for (const b of nodes) {
-        if (a.id === b.id) continue;
-        const pb = pos.get(b.id);
-        if (!pb) continue;
-        const dx = pa.x - pb.x;
-        const dy = pa.y - pb.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) + 0.1;
-        const force = REPULSION / (dist * dist);
-        pa.vx += (dx / dist) * force;
-        pa.vy += (dy / dist) * force;
+  // With the 200-cap restored, the canvas always renders full 80×48
+  // boxes. Collide radius = half-diagonal of the box + a small halo
+  // pad. Anything smaller and forceCollide allows visible overlap.
+  const collideRadius = Math.sqrt((NODE_W / 2) ** 2 + (NODE_H / 2) ** 2) + 12;
+  const N = simNodes.length;
+
+  // Custom cluster force: each tick, nudge nodes toward their cluster's
+  // running centroid. Pre-allocate the centroid map once so we don't
+  // churn the GC every tick on big graphs.
+  let clusterForce: ((alpha: number) => void) | null = null;
+  if (clusterByNode && clusterByNode.size > 0) {
+    const centroidsBuf = new Map<string, { x: number; y: number; n: number }>();
+    clusterForce = (alpha: number) => {
+      // Reset centroid accumulators (don't reallocate the Map).
+      for (const c of centroidsBuf.values()) { c.x = 0; c.y = 0; c.n = 0; }
+      for (const sn of simNodes) {
+        const cid = clusterByNode.get(sn.id);
+        if (!cid || typeof sn.x !== 'number' || typeof sn.y !== 'number') continue;
+        let c = centroidsBuf.get(cid);
+        if (!c) { c = { x: 0, y: 0, n: 0 }; centroidsBuf.set(cid, c); }
+        c.x += sn.x;
+        c.y += sn.y;
+        c.n += 1;
       }
-    }
-    for (const edge of edges) {
-      const pa = pos.get(edge.sourceId);
-      const pb = pos.get(edge.targetId);
-      if (!pa || !pb) continue;
-      const dx = pb.x - pa.x;
-      const dy = pb.y - pa.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) + 0.1;
-      const force = SPRING * (dist - SPRING_LENGTH);
-      pa.vx += (dx / dist) * force;
-      pa.vy += (dy / dist) * force;
-      pb.vx -= (dx / dist) * force;
-      pb.vy -= (dy / dist) * force;
-    }
-    for (const p of pos.values()) {
-      const v = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-      if (v > MAX_VELOCITY) {
-        p.vx = (p.vx / v) * MAX_VELOCITY;
-        p.vy = (p.vy / v) * MAX_VELOCITY;
+      for (const c of centroidsBuf.values()) {
+        if (c.n > 0) { c.x /= c.n; c.y /= c.n; }
       }
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vx *= DAMPING;
-      p.vy *= DAMPING;
-    }
-
-    // AABB collision constraint: any two boxes whose centres are
-    // within MIN_DX horizontally AND MIN_DY vertically overlap. Push
-    // them apart along the axis of smaller penetration so the layout
-    // settles into a non-overlapping arrangement. Multiple passes per
-    // iteration so cascading collisions resolve in dense hubs.
-    for (let pass = 0; pass < 4; pass++) {
-      resolveCollisions(nodes, pos);
-    }
+      // Bumped from 0.1 to 0.18 once forceCollide moved to strength(1) +
+      // iterations(3) — the stronger collide passes were overpowering
+      // the cluster pull and members were drifting between clusters.
+      const k = 0.18 * alpha;
+      for (const sn of simNodes) {
+        const cid = clusterByNode.get(sn.id);
+        if (!cid) continue;
+        const c = centroidsBuf.get(cid);
+        if (!c || typeof sn.x !== 'number' || typeof sn.y !== 'number') continue;
+        sn.vx = (sn.vx ?? 0) + (c.x - sn.x) * k;
+        sn.vy = (sn.vy ?? 0) + (c.y - sn.y) * k;
+      }
+    };
   }
 
-  // Final settle pass — pure collision, no springs — so any remaining
-  // overlap from the last spring tug gets pushed out before render.
-  // 30 iterations is more than enough on a 200-node page.
-  for (let p = 0; p < 30; p++) {
-    if (!resolveCollisions(nodes, pos)) break;
-  }
+  // Physics tuned to match Graphify's vis.js forceAtlas2Based config:
+  //   gravitationalConstant -60   → forceManyBody().strength(-60)
+  //   centralGravity        0.005 → forceCenter().strength(0.005)
+  //   springLength          120   → forceLink().distance(120)
+  //   springConstant        0.08  → forceLink().strength(0.08)
+  //   avoidOverlap          0.8   → forceCollide().strength(0.8)
+  //   stabilization 200 iterations
+  //
+  // Why this works at 4k nodes when our previous -600 charge produced
+  // a brick-pattern: weak repulsion (-60) lets springs (0.08) dominate
+  // for connected nodes, which produces natural community grouping.
+  // Connected files cluster organically; disconnected ones drift to
+  // the periphery. Same formula Graphify ships under.
+  // Charge scales with N — Graphify's -60 is right for ≤500 nodes, but
+  // at 4k the centre-pull from forceCenter wins and you get a tight
+  // ball. Bump charge linearly with N (cap at -300) so the layout
+  // sprawls instead of imploding.
+  const chargeStrength = -Math.min(300, 60 + N * 0.06);
+  // Drop centralGravity to zero at scale — we rely on link forces +
+  // forceCenter offset to keep things on screen, and the auto-fit
+  // useEffect re-centers anyway. For small graphs Graphify's 0.005
+  // gives a nicer cohesion.
+  const centerGravity = N <= 500 ? 0.005 : 0;
+
+  const sim = forceSimulation<SimNode>(simNodes)
+    .force('charge', forceManyBody<SimNode>().strength(chargeStrength).theta(0.9).distanceMax(800))
+    .force(
+      'link',
+      forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks)
+        .id((n) => n.id)
+        .distance(120)
+        .strength(0.08),
+    )
+    .force('center', forceCenter(cx, cy).strength(centerGravity))
+    // strength(1) + iterations(3): with only 200 nodes the cost is
+    // trivial, and these values guarantee non-overlapping final
+    // positions even after spring forces yank nodes together.
+    .force('collide', forceCollide<SimNode>(collideRadius).strength(1).iterations(3));
+  if (clusterForce) sim.force('cluster', clusterForce);
+  sim.stop();
+
+  sim.tick(200);
 
   const result = new Map<string, NodePosition>();
-  for (const [id, p] of pos) {
-    result.set(id, {
-      x: Math.round(p.x / GRID_SPACING) * GRID_SPACING,
-      y: Math.round(p.y / GRID_SPACING) * GRID_SPACING,
+  for (const n of simNodes) {
+    if (typeof n.x !== 'number' || typeof n.y !== 'number') continue;
+    result.set(n.id, {
+      x: Math.round(n.x / GRID_SPACING) * GRID_SPACING,
+      y: Math.round(n.y / GRID_SPACING) * GRID_SPACING,
     });
   }
   return result;
@@ -470,50 +1301,3 @@ function computeLevels(
   return levels;
 }
 
-/**
- * One AABB collision-resolution pass. Pushes apart any pair of boxes
- * that overlap on both axes (centres within MIN_DX horizontally AND
- * MIN_DY vertically). Returns true if any pair was pushed.
- */
-function resolveCollisions(
-  nodes: GraphNodeData[],
-  pos: Map<string, { x: number; y: number; vx: number; vy: number }>,
-): boolean {
-  let pushed = false;
-  for (let i = 0; i < nodes.length; i++) {
-    const pa = pos.get(nodes[i].id);
-    if (!pa) continue;
-    for (let j = i + 1; j < nodes.length; j++) {
-      const pb = pos.get(nodes[j].id);
-      if (!pb) continue;
-      const dx = pb.x - pa.x;
-      const dy = pb.y - pa.y;
-      const absDx = Math.abs(dx);
-      const absDy = Math.abs(dy);
-      if (absDx >= MIN_DX || absDy >= MIN_DY) continue; // not overlapping
-      // Coincident — nudge deterministically.
-      if (absDx < 0.001 && absDy < 0.001) {
-        pb.x += MIN_DX / 2;
-        pushed = true;
-        continue;
-      }
-      // Penetration on each axis. Push along the axis with smaller
-      // penetration — that's the cheapest way out of the collision.
-      const penX = MIN_DX - absDx;
-      const penY = MIN_DY - absDy;
-      if (penX < penY) {
-        const sign = dx >= 0 ? 1 : -1;
-        const half = penX / 2;
-        pa.x -= sign * half;
-        pb.x += sign * half;
-      } else {
-        const sign = dy >= 0 ? 1 : -1;
-        const half = penY / 2;
-        pa.y -= sign * half;
-        pb.y += sign * half;
-      }
-      pushed = true;
-    }
-  }
-  return pushed;
-}

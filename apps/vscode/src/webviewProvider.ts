@@ -822,7 +822,14 @@ function wireUniverseWebview(
         const store = getProjectGraphStore();
         const requestId = msg.requestId as string;
         const page = typeof msg.page === 'number' ? msg.page : 0;
-        const pageSize = typeof msg.pageSize === 'number' ? msg.pageSize : 50;
+        // Clamp the requested page size to the user-configured canvas ceiling.
+        // Defaults to 5000 — well above what most projects need but bounded so
+        // a 50k-node monorepo can't freeze the SVG renderer.
+        const requested = typeof msg.pageSize === 'number' ? msg.pageSize : 50;
+        const cap = vscode.workspace
+          .getConfiguration('eventHorizon')
+          .get<number>('projectGraph.canvasMaxNodes', 5000);
+        const pageSize = Math.max(1, Math.min(requested, cap));
         if (!store) {
           const workspaceOpen = !!vscode.workspace.workspaceFolders?.[0];
           void webview.postMessage({ type: 'graph-browse-result', requestId, nodes: [], edges: [], total: 0, page, pageSize });
@@ -835,13 +842,163 @@ function wireUniverseWebview(
         const filter = (msg.filter as { type?: string; tag?: string; search?: string }) ?? {};
         let nodes: import('./projectGraph/index.js').GraphNode[];
         let total: number;
+        let matchIds: string[] | undefined;
         if (filter.search) {
-          const allNodes = store.searchNodes(filter.search, {
+          // Search path: return matches PLUS their 1-hop neighbours so
+          // the user sees the full local context of a query, not just
+          // isolated dots. Total budget = pageSize (200), prioritising
+          // matches first; neighbours fill the remaining budget by
+          // edge-degree so the most-connected adjacent nodes win.
+          const allMatches = store.searchNodes(filter.search, {
             type: filter.type as GraphNodeType | undefined,
             tag: filter.tag as GraphTag | undefined,
           });
-          total = allNodes.length;
-          nodes = allNodes.slice(page * pageSize, (page + 1) * pageSize);
+          total = allMatches.length;
+          const matchSlice = allMatches.slice(0, pageSize);
+          matchIds = matchSlice.map((n) => n.id);
+          const matchSet = new Set(matchIds);
+
+          // Collect 1-hop neighbours via getEdges (both directions).
+          const neighborDegree = new Map<string, number>();
+          for (const m of matchSlice) {
+            const outE = store.getEdges({ sourceId: m.id });
+            for (const e of outE) {
+              if (matchSet.has(e.targetId)) continue;
+              neighborDegree.set(e.targetId, (neighborDegree.get(e.targetId) ?? 0) + 1);
+            }
+            const inE = store.getEdges({ targetId: m.id });
+            for (const e of inE) {
+              if (matchSet.has(e.sourceId)) continue;
+              neighborDegree.set(e.sourceId, (neighborDegree.get(e.sourceId) ?? 0) + 1);
+            }
+          }
+
+          // Rank neighbours by how many matches they connect to, then
+          // fill the remaining budget.
+          const remaining = Math.max(0, pageSize - matchSlice.length);
+          const rankedNeighborIds = Array.from(neighborDegree.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, remaining)
+            .map(([id]) => id);
+          const neighborNodes: import('./projectGraph/index.js').GraphNode[] = [];
+          for (const id of rankedNeighborIds) {
+            const n = store.getNodeById(id);
+            if (n) neighborNodes.push(n);
+          }
+          nodes = [...matchSlice, ...neighborNodes];
+        } else if (!filter.type) {
+          // No specific type filter: build a quota table from the
+          // ACTUAL type distribution in the DB so the sampling fits
+          // any project shape. A docs-only project gets mostly docs;
+          // a code-heavy project gets mostly code. Algorithm:
+          //   1. Count nodes per type (live SQL group-by)
+          //   2. raw quota = pageSize × (typeCount / totalCount)
+          //   3. Apply a min floor of 5 per type that has ≥5 nodes —
+          //      so even a tiny minority type still surfaces a few
+          //      representatives instead of being squeezed to zero
+          //      by the dominant type
+          //   4. Renormalise so quotas sum to pageSize
+          //   5. For each type, listNodes top-by-degree of that quota
+          //   6. Spill leftover budget to most-prevalent types
+          //      (some types may have fewer rows than their quota)
+          const counts = store.countByType({ tag: filter.tag as GraphTag | undefined });
+          const totalAcrossTypes = Array.from(counts.values()).reduce((a, b) => a + b, 0);
+
+          let quotas = new Map<GraphNodeType, number>();
+          if (totalAcrossTypes === 0) {
+            quotas = new Map();
+          } else {
+            const FLOOR = 5;
+            // Pass A: raw proportional quotas with floor applied.
+            for (const [type, count] of counts) {
+              if (count <= 0) continue;
+              const raw = pageSize * (count / totalAcrossTypes);
+              const floored = count >= FLOOR ? Math.max(FLOOR, raw) : Math.min(count, raw);
+              quotas.set(type, Math.min(count, Math.round(floored)));
+            }
+            // Pass B: renormalise to sum to pageSize. If quotas sum
+            // exceeds budget (because of floors stacking up), trim
+            // proportionally from the largest. If under, top up the
+            // dominant type.
+            let sum = Array.from(quotas.values()).reduce((a, b) => a + b, 0);
+            if (sum > pageSize) {
+              // Sort largest-quota first; trim from those until sum fits.
+              const ranked = Array.from(quotas.entries()).sort((a, b) => b[1] - a[1]);
+              let over = sum - pageSize;
+              for (const [type] of ranked) {
+                if (over <= 0) break;
+                const cur = quotas.get(type)!;
+                // Don't trim below the floor (5) unless we have to.
+                const minKeep = Math.min(cur, 5);
+                const trimmable = cur - minKeep;
+                const take = Math.min(trimmable, over);
+                quotas.set(type, cur - take);
+                over -= take;
+              }
+              // If still over (every type at floor), trim flat.
+              if (over > 0) {
+                for (const [type] of ranked) {
+                  if (over <= 0) break;
+                  const cur = quotas.get(type)!;
+                  if (cur > 1) {
+                    const take = Math.min(cur - 1, over);
+                    quotas.set(type, cur - take);
+                    over -= take;
+                  }
+                }
+              }
+            } else if (sum < pageSize) {
+              // Top up: give the surplus to the type with the most
+              // rows in the DB (most likely to have unallocated nodes).
+              const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+              let under = pageSize - sum;
+              for (const [type, count] of ranked) {
+                if (under <= 0) break;
+                const cur = quotas.get(type) ?? 0;
+                const room = count - cur;
+                const give = Math.min(room, under);
+                quotas.set(type, cur + give);
+                under -= give;
+              }
+            }
+            sum = Array.from(quotas.values()).reduce((a, b) => a + b, 0);
+            void sum;
+          }
+
+          const collected: import('./projectGraph/index.js').GraphNode[] = [];
+          const idsSeen = new Set<string>();
+          for (const [type, slot] of quotas) {
+            if (slot <= 0) continue;
+            const r = store.listNodes({
+              type,
+              tag: filter.tag as GraphTag | undefined,
+              offset: 0,
+              limit: slot,
+            });
+            for (const n of r.nodes) {
+              if (idsSeen.has(n.id)) continue;
+              collected.push(n);
+              idsSeen.add(n.id);
+            }
+          }
+          // Final spill: if we got fewer than pageSize (a type had less
+          // than its quota), pull the rest from the global top-by-degree
+          // list so we always fill the budget when the graph allows.
+          if (collected.length < pageSize) {
+            const fillR = store.listNodes({
+              tag: filter.tag as GraphTag | undefined,
+              offset: 0,
+              limit: pageSize,
+            });
+            for (const n of fillR.nodes) {
+              if (collected.length >= pageSize) break;
+              if (idsSeen.has(n.id)) continue;
+              collected.push(n);
+              idsSeen.add(n.id);
+            }
+          }
+          nodes = collected;
+          total = totalAcrossTypes;
         } else {
           const result = store.listNodes({
             type: filter.type as GraphNodeType | undefined,
@@ -860,7 +1017,7 @@ function wireUniverseWebview(
             if (nodeIds.has(edge.targetId)) edges.push(edge);
           }
         }
-        void webview.postMessage({ type: 'graph-browse-result', requestId, nodes, edges, total, page, pageSize });
+        void webview.postMessage({ type: 'graph-browse-result', requestId, nodes, edges, total, page, pageSize, matchIds });
         // Also push current stats so the UI shows them without requiring a Build click —
         // covers the case where the graph was already populated by a skill / MCP call.
         const liveStats = store.getStats();

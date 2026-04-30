@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
@@ -424,6 +424,14 @@
           "maximum": 8192,
           "description": "Skip files larger than this size (KB) during workspace scans. Defaults to 256 KB — comfortably fits hand-written source while excluding inline-bundled vendor scripts that explode the graph with useless nodes.",
           "order": 44
+        },
+        "eventHorizon.projectGraph.canvasMaxNodes": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 200,
+          "maximum": 50000,
+          "description": "Maximum number of nodes to render in the Project Graph canvas at once. The canvas uses Barnes-Hut layout with viewport culling, so even thousands of nodes stay responsive — but enormous monorepos (50k+ nodes) can still saturate the SVG renderer. Lower this if pan/zoom feels sluggish; raise it if you need to see the full graph.",
+          "order": 45
         }
       }
     },
@@ -484,10 +492,10 @@
     ]
   },
   "scripts": {
-    "build": "tsc && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs && pnpm run build:webview",
+    "build": "node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs && pnpm run build:webview",
     "lint": "eslint src/ webview/",
-    "build:ext": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --sourcemap && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
-    "build:ext:prod": "esbuild src/extension.ts --bundle --outfile=out/extension.js --format=cjs --platform=node --external:vscode --minify --sourcemap=linked && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
+    "build:ext": "node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
+    "build:ext:prod": "node scripts/build-extension.mjs --prod && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
     "build:webview": "node webview/esbuild.mjs",
     "build:webview:dev": "node webview/esbuild.mjs --dev",
     "build:webview:prod": "node webview/esbuild.mjs --minify",

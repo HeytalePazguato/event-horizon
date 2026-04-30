@@ -37,6 +37,8 @@ export interface GraphFilter {
   search?: string;
 }
 
+export type ClusterMode = 'none' | 'folder' | 'type';
+
 export interface ProjectGraphControlsProps {
   stats: GraphStats | null;
   /**
@@ -47,6 +49,25 @@ export interface ProjectGraphControlsProps {
   buildProgress: GraphBuildProgress | null;
   filter: GraphFilter;
   onFilterChange: (next: GraphFilter) => void;
+  /**
+   * Number of nodes currently rendered in the canvas (after the page cap).
+   * When this is less than `totalMatching`, the controls render a "Showing N
+   * of M" caption so users understand the cap exists. Optional for backward
+   * compatibility — older callers omit it and the caption is hidden.
+   */
+  visibleCount?: number;
+  /**
+   * Number of nodes that match the current filter in the DB. Note this is
+   * NOT the same as `stats.nodeCount` — the latter is the unfiltered total.
+   * When equal to `visibleCount` (small graphs), the caption hides.
+   */
+  totalMatching?: number;
+  /**
+   * Active clustering mode (folder = top-level directory, type = node.type,
+   * none = no clusters). Optional for back-compat with older callers.
+   */
+  clusterMode?: ClusterMode;
+  onClusterModeChange?: (mode: ClusterMode) => void;
 }
 
 // ── Filter options ─────────────────────────────────────────────────────────
@@ -113,11 +134,22 @@ const styles = {
   pill: {
     padding: '2px 8px',
     borderRadius: 10,
-    border: '1px solid rgba(68, 187, 110, 0.35)',
+    // Decomposed into longhands. Mixing `border` shorthand with the
+    // `borderColor` override on `pillActive` was leaving React unable
+    // to reset the colour cleanly when a pill went from active back
+    // to inactive — borderColor would stick at the active green and
+    // the browser's focus outline would render through, making the
+    // pill look like it had a black frame after click. Longhands
+    // toggle cleanly.
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: 'rgba(68, 187, 110, 0.35)',
     background: 'transparent',
     color: '#88cc99',
     cursor: 'pointer',
     fontFamily: 'monospace',
+    outline: 'none',
+    boxShadow: 'none',
   },
   pillActive: {
     background: 'rgba(68, 255, 136, 0.15)',
@@ -133,6 +165,27 @@ const styles = {
     color: '#88cc99',
     fontStyle: 'italic' as const,
   },
+  visibleCaption: {
+    fontSize: 10,
+    color: '#ffcc66',
+    fontFamily: 'monospace',
+  },
+  emptyMatchHint: {
+    fontSize: 10,
+    color: '#ff8844',
+    fontFamily: 'monospace',
+    fontStyle: 'italic' as const,
+  },
+};
+
+const TYPE_LABEL_PLURAL: Record<string, string> = {
+  function: 'functions',
+  class: 'classes',
+  module: 'modules',
+  doc_section: 'doc sections',
+  rationale: 'rationale entries',
+  agent_activity: 'activity entries',
+  knowledge: 'knowledge entries',
 };
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -142,6 +195,10 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
   buildProgress,
   filter,
   onFilterChange,
+  visibleCount,
+  totalMatching,
+  clusterMode = 'none',
+  onClusterModeChange,
 }) => {
   const [searchInput, setSearchInput] = useState(filter.search ?? '');
 
@@ -207,6 +264,10 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
         />
       </div>
 
+      {workspaceOpen && hasGraph && typeof visibleCount === 'number' && typeof totalMatching === 'number'
+        ? renderVisibilityCaption(visibleCount, totalMatching, filter.type)
+        : null}
+
       <div style={styles.pillRow}>
         <span style={{ color: '#557766', marginRight: 6 }}>type:</span>
         {TYPE_OPTIONS.map((opt) => {
@@ -223,6 +284,25 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
           );
         })}
       </div>
+
+      {onClusterModeChange ? (
+        <div style={styles.pillRow}>
+          <span style={{ color: '#557766', marginRight: 6 }}>cluster by:</span>
+          {(['none', 'folder', 'type'] as ClusterMode[]).map((mode) => {
+            const active = clusterMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                style={{ ...styles.pill, ...(active ? styles.pillActive : {}) }}
+                onClick={() => onClusterModeChange(mode)}
+              >
+                {mode === 'none' ? 'None' : mode === 'folder' ? 'Folder' : 'Type'}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div style={styles.pillRow}>
         <span style={{ color: '#557766', marginRight: 6 }}>tag:</span>
@@ -247,6 +327,31 @@ export const ProjectGraphControls: React.FC<ProjectGraphControlsProps> = ({
 function formatStats(s: GraphStats): string {
   const ago = s.lastBuildAt ? formatRelativeTime(s.lastBuildAt) : 'unknown';
   return `${s.nodeCount.toLocaleString()} nodes · ${s.edgeCount.toLocaleString()} edges · ${s.fileCount.toLocaleString()} files · last built ${ago}`;
+}
+
+function renderVisibilityCaption(
+  visibleCount: number,
+  totalMatching: number,
+  filterType: string | undefined,
+): React.ReactNode {
+  // Total === visible: small graph or uncapped browse — no caption needed.
+  if (visibleCount >= totalMatching) return null;
+
+  // Filter active but zero matches: distinct empty-state hint.
+  if (totalMatching === 0) {
+    return (
+      <span style={styles.emptyMatchHint}>
+        0 nodes match the current filter — clear filters or change the search.
+      </span>
+    );
+  }
+
+  const noun = filterType ? TYPE_LABEL_PLURAL[filterType] ?? `${filterType} nodes` : 'nodes';
+  return (
+    <span style={styles.visibleCaption}>
+      Showing {visibleCount.toLocaleString()} of {totalMatching.toLocaleString()} {noun} — search or filter to narrow.
+    </span>
+  );
 }
 
 function formatRelativeTime(ts: number): string {

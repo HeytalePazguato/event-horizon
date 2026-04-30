@@ -34,7 +34,8 @@ class OrderService {
     expect(props.kind).toBe('method_declaration');
     expect(props.parentLabel).toBe('OrderService');
 
-    const calls = edges.filter((e) => e.relationType === 'calls' && e.targetId === 'cs:func_ref:Find');
+    // Phase 12 Tier 1: receiver-qualified placeholder ID.
+    const calls = edges.filter((e) => e.relationType === 'calls' && e.targetId === 'cs:func_ref:_repo.Find');
     expect(calls).toHaveLength(1);
   });
 

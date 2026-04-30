@@ -167,22 +167,31 @@ You are an implementation agent assigned to work on a shared plan coordinated th
 
 4. **Claim your tasks** — Call \`eh_claim_task\` for each task you will work on. This prevents other agents from picking the same work. If a task is blocked by dependencies, check if those are done first.
 
-5. **Start working** — For each claimed task:
+5. **Record scope tracking state** — Note the current time as \`taskStartMs\` (Unix ms). Initialize \`touchedFilesSet = new Set()\`. Both are used at scope-end to refresh the project graph — record them NOW before any work begins so the window covers all file changes.
+
+6. **Start working** — For each claimed task:
    a. Call \`eh_update_task\` with status \`in_progress\`
    b. Implement the task
    c. **Self-verify before marking done:**
       - Read the task's acceptance criteria from the plan (\`eh_get_plan\` → task's \`acceptanceCriteria\` field)
       - If a \`verifyCommand\` exists, run it (e.g. \`pnpm test\`, \`pnpm build\`) and check the result
+      - Call \`eh_file_activity({ sinceMs: taskStartMs })\` and merge the returned file paths into \`touchedFilesSet\` — this captures files touched during implementation and verification.
       - If verification passes → proceed to step d
       - If verification fails → attempt to fix the issue (up to 2 self-fix attempts), then re-run the verify command
-      - If still failing after 2 fix attempts → call \`eh_update_task\` with status \`failed\` and a note explaining what went wrong and what you tried
+      - If still failing after 2 fix attempts → call \`eh_update_task\` with status \`failed\` and a note explaining what went wrong and what you tried, then proceed to step f
    d. **CRITICAL — Update BOTH the MCP state AND the plan file:**
       - Call \`eh_update_task\` with status \`done\` (and a note summarizing what you did)
       - Edit the plan markdown file: change \`- [ ]\` to \`- [x]\` for the completed task's checkbox
       These are SEPARATE steps — calling eh_update_task does NOT edit the file. You MUST do both.
    e. If you hit a problem, set status to \`failed\` with a note explaining why
+   f. **Rescan the project graph (always — treat this as a finally block):**
+      - Do one final \`eh_file_activity({ sinceMs: taskStartMs })\` and merge into \`touchedFilesSet\`.
+      - If \`touchedFilesSet\` is **non-empty**: call \`eh_rescan_files({ paths: [...touchedFilesSet], sinceMs: taskStartMs })\`. Add a line to your summary: \`"Refreshed N files in graph (M placeholders merged)"\` using the counts from the response.
+      - If \`touchedFilesSet\` is **empty**: skip the call silently — nothing to rescan.
+      - This step runs whether the task succeeded or failed — partial bytes that didn't pass \`verify\` still landed on disk; the graph should reflect them.
+      - Note: any \`eh_query_graph\` calls made during implementation reflect the *pre-task* graph snapshot — that is correct and intentional; workers should plan against the structure they were given.
 
-6. **After completing ALL requested tasks** — Run the full verification pipeline before committing:
+7. **After completing ALL requested tasks** — Run the full verification pipeline before committing:
    \`\`\`bash
    pnpm lint    # Must pass with zero errors
    pnpm build   # Must pass — all packages compile
@@ -208,6 +217,7 @@ You are an implementation agent assigned to work on a shared plan coordinated th
 - **Communicate breaking changes** — If you change something that other agents rely on, send a message immediately.
 - **One task at a time** — Claim a task, complete it, then move to the next. Don't claim 5 tasks upfront.
 - **If a task is already claimed** — Skip it and find another. Don't wait for it unless you have no other work.
+- **Always rescan at scope-end** — \`eh_rescan_files\` is a finally-block obligation, not a nice-to-have. Run it even when a task fails — partial changes still landed on disk and the graph should reflect them.
 `,
   },
   {
@@ -714,6 +724,8 @@ You are an orchestrator agent. Your job is to MANAGE a plan — spawn worker age
    - Dependencies satisfied: all \`blockedBy\` tasks are \`done\`
    These are the tasks you can assign NOW.
 
+6. **Record start timestamp** — Note the current time as \`orchestrationStartMs\` (Unix ms). Initialize an empty \`touchedFilesSet\`. Both are used at scope-end to drive the project-graph rescan — record them NOW before any work begins so the window covers all file changes.
+
 ## Orchestration loop
 
 For each batch of ready tasks:
@@ -737,6 +749,7 @@ For each batch of ready tasks:
 2. **Check messages FIRST, then status** — Every 30-60 seconds, pull worker failure notifications BEFORE polling the team status:
    1. Call \`eh_get_messages\` — Event Horizon pushes \`⚠️ Worker X reported an error on task Y\` and \`⚠️ Worker X failed a task Y\` messages here whenever a worker fires \`agent.error\` or \`task.fail\`. You MUST read these every cycle, or you'll silently miss worker failures.
    2. Call \`eh_get_team_status\` to check which agents are still working, which tasks changed status, any blockers.
+   3. Call \`eh_file_activity({ sinceMs: orchestrationStartMs })\` — merge the returned file paths into \`touchedFilesSet\`. Doing this every cycle keeps the set current so the final rescan is accurate even when the orchestration is interrupted mid-run.
 
 3. **Handle failures** — When you see a failure notification from step 2:
    - Read the failure note via \`eh_get_plan\` for full context
@@ -747,13 +760,19 @@ For each batch of ready tasks:
 
 ## Completion
 
-When all requested tasks are done (or failed with no more retries):
+When all requested tasks are done (or failed with no more retries) — **and also if the orchestration is interrupted (Ctrl-C, error, partial abort)**:
 
 1. Call \`eh_get_team_status\` for a final summary
 2. Run the full verification pipeline yourself: \`pnpm lint && pnpm build && pnpm test\`
 3. If verification fails, identify which task's changes caused the failure and spawn a debugger agent to fix it
 4. Report to the user: what completed, what failed, what needs attention
 5. If the user asked to commit, stage the changes, commit with a descriptive message, and push
+6. **Rescan the project graph (always — treat this as a finally block)**:
+   - Do one final \`eh_file_activity({ sinceMs: orchestrationStartMs })\` to catch any last-minute changes and merge into \`touchedFilesSet\`.
+   - If \`touchedFilesSet\` is **non-empty**: call \`eh_rescan_files({ paths: [...touchedFilesSet], sinceMs: orchestrationStartMs })\`. Add a line to your summary: \`"Refreshed N files in graph (M placeholders merged)"\` using the counts from the response.
+   - If \`touchedFilesSet\` is **empty**: skip the call silently — nothing to rescan.
+   - This step runs regardless of how the scope ended: normal completion, partial abort, or user interruption. An interrupted run still gets a partial-but-current graph instead of a fully-stale one.
+   - Multi-phase orchestration runs this **exactly once** at the very end, not after each phase.
 
 ## Rules
 
@@ -764,6 +783,7 @@ When all requested tasks are done (or failed with no more retries):
 - **Use the plan's model recommendations** — If a task says \`<!-- model: haiku -->\`, pass \`model: haiku\` to \`eh_spawn_agent\`. The ModelTierManager will override if it has better data.
 - **Communicate with workers** — Use \`eh_send_message\` to notify agents of relevant changes (e.g. "task 2.1 is done, you can start 2.2 now").
 - **Update task statuses** — Call \`eh_update_task\` to mark tasks as they progress. Workers should do this themselves, but verify via \`eh_get_team_status\`.
+- **Always rescan at scope-end** — \`eh_rescan_files\` is a finally-block obligation, not a nice-to-have. Run it even when tasks fail or the user interrupts — a partial rescan is better than a stale graph. The single rescan at the very end covers the full scope; do not call it per-phase in a multi-phase run.
 `,
   },
 ];

@@ -13,9 +13,11 @@
   },
   "dependencies": {
     "@event-horizon/core": "workspace:*",
+    "d3-force": "^3.0.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "react": "^19.2.5",

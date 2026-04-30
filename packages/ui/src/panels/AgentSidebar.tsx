@@ -208,7 +208,7 @@ export const AgentSidebar: FC<AgentSidebarProps> = ({ agents, agentStates, heart
                               {'\u2605'} ORCH
                             </span>
                           )}
-                          {role && roleStyle && (
+                          {role && roleStyle && !(isOrchestrator && role === 'orchestrator') && (
                             <span
                               title={`Role: ${role}`}
                               style={{

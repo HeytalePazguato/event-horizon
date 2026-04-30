@@ -5,6 +5,7 @@ import * as path from 'path';
 import type { GraphNode, GraphEdge, ProjectGraphStore } from './index.js';
 import type { TreeSitterExtractor } from './treeSitterExtractor.js';
 import { extractMarkdown } from './markdownExtractor.js';
+import { runResolution } from './resolution.js';
 
 type RationaleExtractFn = (
   filePath: string,
@@ -73,6 +74,8 @@ export interface ScanSummary {
   rootScanned?: string | undefined;
   /** Whether vscode.workspace.workspaceFolders was non-empty at scan time. */
   workspaceFoldersAvailable?: boolean;
+  /** Phase 12 — counts from the post-scan resolution pass. */
+  resolution?: { merged: number; unresolved: number; totalRefs: number };
 }
 
 export class ProjectGraphScanner {
@@ -263,8 +266,37 @@ export class ProjectGraphScanner {
       } catch (err) {
         filesSkipped++;
         skipReasons.error++;
-        if (!firstError) firstError = `${path.basename(filePath)}: ${(err as Error).message ?? String(err)}`;
+        const fullMsg = `${path.basename(filePath)}: ${(err as Error).message ?? String(err)}`;
+        if (!firstError) firstError = fullMsg;
+        // Log only the first 5 errors so a project-wide breakage doesn't
+        // flood the Extension Host channel. The first error is almost
+        // always representative — if every TS file blows up, the cause
+        // is the same for all of them.
+        if (skipReasons.error <= 5) {
+          console.error(`[Event Horizon] Scanner extraction error: ${fullMsg}`);
+          if (skipReasons.error === 1 && err instanceof Error && err.stack) {
+            console.error(err.stack);
+          }
+        }
       }
+    }
+
+    // Phase 12: post-scan resolution pass — merges INFERRED placeholder
+    // nodes into their EXTRACTED counterparts using qualified callee
+    // info + member_of/imports/extends edges. Runs once per workspace
+    // scan (not per-file) so it sees the full graph at the moment of
+    // resolution.
+    let resolution: { merged: number; unresolved: number; totalRefs: number } | undefined;
+    try {
+      const store = this.storeResolver();
+      if (store) {
+        resolution = runResolution(store);
+        console.log(
+          `[Event Horizon] Resolution: merged ${resolution.merged} / ${resolution.totalRefs} placeholders, ${resolution.unresolved} remain unresolved`,
+        );
+      }
+    } catch (err) {
+      console.error('[Event Horizon] Resolution pass failed:', err);
     }
 
     return {
@@ -278,6 +310,162 @@ export class ProjectGraphScanner {
       skipReasons,
       rootScanned: root,
       workspaceFoldersAvailable: !!liveFolder,
+      resolution,
+    } as ScanSummary;
+  }
+
+  async rescanFiles(
+    paths: string[],
+    opts?: { sinceMs?: number },
+  ): Promise<ScanSummary> {
+    const start = Date.now();
+    const emptyReasons = {
+      hashMatch: 0, noExtractor: 0, notCommitted: 0,
+      mdDisabled: 0, error: 0, minified: 0, tooLarge: 0,
+    };
+
+    // Build effective set: explicit paths + sinceMs expansions.
+    const seen = new Set<string>(paths);
+    const effective = [...paths];
+
+    if (opts?.sinceMs !== undefined) {
+      const liveFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (liveFolder) {
+        const allFiles = await walkDir(liveFolder);
+        for (const fp of allFiles) {
+          if (seen.has(fp)) continue;
+          const ext = path.extname(fp).toLowerCase();
+          if (!CODE_EXTENSIONS.has(ext) && !MD_EXTENSIONS.has(ext)) continue;
+          if (SKIP_FILE_PATTERNS.some((re) => re.test(path.basename(fp)))) continue;
+          try {
+            if (fs.statSync(fp).mtimeMs > opts.sinceMs!) {
+              seen.add(fp);
+              effective.push(fp);
+            }
+          } catch { /* deleted between walkDir and stat */ }
+        }
+      }
+    }
+
+    if (effective.length === 0) {
+      return {
+        filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0,
+        durationMs: Date.now() - start, filesMatched: 0, skipReasons: emptyReasons,
+      } as ScanSummary;
+    }
+
+    const store = this.storeResolver();
+    if (!store) {
+      return {
+        filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0,
+        durationMs: Date.now() - start, filesMatched: effective.length,
+        skipReasons: emptyReasons,
+        firstError: 'Project graph DB not open for this workspace.',
+      } as ScanSummary;
+    }
+
+    const cfgMaxKb = vscode.workspace.getConfiguration('eventHorizon')
+      .get<number>('projectGraph.maxFileSizeKb', DEFAULT_MAX_FILE_SIZE_KB);
+    const maxFileSizeBytes = (cfgMaxKb && cfgMaxKb > 0 ? cfgMaxKb : DEFAULT_MAX_FILE_SIZE_KB) * 1024;
+
+    let filesProcessed = 0;
+    let filesSkipped = 0;
+    let nodesCreated = 0;
+    let edgesCreated = 0;
+    let firstError: string | undefined;
+    const skipReasons = { ...emptyReasons };
+
+    for (const filePath of effective) {
+      const ext = path.extname(filePath).toLowerCase();
+      const base = path.basename(filePath);
+
+      // Non-existent file → cascading delete.
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        store.deleteFile(filePath);
+        filesProcessed++;
+        continue;
+      }
+
+      // Skip-rule checks.
+      if (SKIP_FILE_PATTERNS.some((re) => re.test(base))) {
+        filesSkipped++;
+        skipReasons.minified++;
+        continue;
+      }
+      if (!CODE_EXTENSIONS.has(ext) && !MD_EXTENSIONS.has(ext)) {
+        filesSkipped++;
+        skipReasons.noExtractor++;
+        continue;
+      }
+      if (MD_EXTENSIONS.has(ext) && !this.opts.includeMarkdown) {
+        filesSkipped++;
+        skipReasons.mdDisabled++;
+        continue;
+      }
+      if (stat.size > maxFileSizeBytes) {
+        filesSkipped++;
+        skipReasons.tooLarge++;
+        continue;
+      }
+
+      try {
+        const source = await fs.promises.readFile(filePath, 'utf8');
+
+        // Minified-content heuristic.
+        const firstLineEnd = source.search(/\S.*$/m);
+        if (firstLineEnd >= 0) {
+          const newlineIdx = source.indexOf('\n', firstLineEnd);
+          const lineLen = (newlineIdx === -1 ? source.length : newlineIdx) - firstLineEnd;
+          if (lineLen > MINIFIED_FIRST_LINE_THRESHOLD) {
+            filesSkipped++;
+            skipReasons.minified++;
+            continue;
+          }
+        }
+
+        const contentHash = crypto.createHash('sha256').update(source).digest('hex');
+        const extracted = await this.runExtractor(store, filePath, ext, source);
+        if (!extracted) {
+          filesSkipped++;
+          skipReasons.noExtractor++;
+          continue;
+        }
+
+        const { nodes, edges, extractorName } = extracted;
+        const result = store.replaceFileNodes(filePath, extractorName, nodes, edges, contentHash);
+        if (result.committed) {
+          filesProcessed++;
+          nodesCreated += nodes.length;
+          edgesCreated += edges.length;
+        } else {
+          filesSkipped++;
+          skipReasons.notCommitted++;
+          if (!firstError && result.reason) firstError = `${base}: ${result.reason}`;
+        }
+      } catch (err) {
+        filesSkipped++;
+        skipReasons.error++;
+        const msg = `${base}: ${(err as Error).message ?? String(err)}`;
+        if (!firstError) firstError = msg;
+        console.error(`[Event Horizon] rescanFiles error: ${msg}`);
+      }
+    }
+
+    let resolution: { merged: number; unresolved: number; totalRefs: number } | undefined;
+    try {
+      const s = this.storeResolver();
+      if (s) resolution = runResolution(s);
+    } catch (err) {
+      console.error('[Event Horizon] Resolution pass failed:', err);
+    }
+
+    return {
+      filesProcessed, filesSkipped, nodesCreated, edgesCreated,
+      durationMs: Date.now() - start, filesMatched: effective.length,
+      firstError, skipReasons, resolution,
     } as ScanSummary;
   }
 
@@ -357,8 +545,11 @@ const SKIP_DIRS = new Set([
   'vendor',
   // Python
   '__pycache__', '.venv', 'venv', '.tox', '.pytest_cache', '.mypy_cache',
-  // .NET / NuGet
-  'bin', 'obj', 'packages',
+  // .NET / NuGet (NB: do NOT skip `packages` — that's the standard
+  // pnpm/yarn monorepo source directory. Modern .NET uses central
+  // package management and rarely has a `packages/` dir; the
+  // false-positive cost on JS monorepos is far higher.)
+  'bin', 'obj',
   // Generic build / vendor
   'target',
 ]);

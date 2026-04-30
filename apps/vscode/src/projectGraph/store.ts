@@ -397,6 +397,23 @@ export class ProjectGraphStore {
     return { nodeCount, edgeCount, fileCount };
   }
 
+  /** Count nodes grouped by type. Used by the browse handler to compute
+   *  a balanced sampling quota that reflects the actual type distribution
+   *  of the project (docs-heavy projects shouldn't get a code-heavy mix). */
+  countByType(opts?: { tag?: GraphTag }): Map<GraphNodeType, number> {
+    const result = new Map<GraphNodeType, number>();
+    const where = opts?.tag ? `WHERE tag = ?` : '';
+    const sql = `SELECT type, COUNT(*) as c FROM graph_nodes ${where} GROUP BY type`;
+    const stmt = this.db.prepare(sql);
+    if (opts?.tag) stmt.bind([opts.tag]);
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      result.set(row['type'] as GraphNodeType, (row['c'] as number) ?? 0);
+    }
+    stmt.free();
+    return result;
+  }
+
   getTrackedFiles(): string[] {
     const stmt = this.db.prepare(`SELECT source_file FROM graph_file_state`);
     const files: string[] = [];
@@ -405,20 +422,34 @@ export class ProjectGraphStore {
     return files;
   }
 
-  listNodes(opts: { type?: GraphNodeType; tag?: GraphTag; offset: number; limit: number }): { nodes: GraphNode[]; total: number } {
+  listNodes(opts: { type?: GraphNodeType; tag?: GraphTag; offset: number; limit: number; orderBy?: 'created' | 'degree' }): { nodes: GraphNode[]; total: number } {
     const conditions: string[] = [];
     const params: SqlValue[] = [];
-    if (opts.type) { conditions.push('type = ?'); params.push(opts.type); }
-    if (opts.tag) { conditions.push('tag = ?'); params.push(opts.tag); }
+    if (opts.type) { conditions.push('n.type = ?'); params.push(opts.type); }
+    if (opts.tag) { conditions.push('n.tag = ?'); params.push(opts.tag); }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const countStmt = this.db.prepare(`SELECT COUNT(*) as c FROM graph_nodes ${where}`);
+    const countStmt = this.db.prepare(`SELECT COUNT(*) as c FROM graph_nodes n ${where}`);
     if (params.length > 0) countStmt.bind(params);
     const countFound = countStmt.step();
     const total = countFound ? ((countStmt.getAsObject()['c'] as number) ?? 0) : 0;
     countStmt.free();
 
-    const stmt = this.db.prepare(`SELECT * FROM graph_nodes ${where} ORDER BY created_at ASC LIMIT ? OFFSET ?`);
+    // Default to ordering by degree (in + out edge count) DESC. The
+    // alternative ordering ("created") returns whatever was scanned
+    // first — markdown doc_sections always win that race. Degree
+    // ordering surfaces the actual knowledge backbone of the codebase
+    // (hub functions, central modules) which is what the visualization
+    // needs to be useful at all.
+    const orderBy = opts.orderBy ?? 'degree';
+    const orderClause = orderBy === 'degree'
+      ? `ORDER BY (
+          (SELECT COUNT(*) FROM graph_edges WHERE source_id = n.id)
+          + (SELECT COUNT(*) FROM graph_edges WHERE target_id = n.id)
+        ) DESC, n.created_at ASC`
+      : `ORDER BY n.created_at ASC`;
+
+    const stmt = this.db.prepare(`SELECT n.* FROM graph_nodes n ${where} ${orderClause} LIMIT ? OFFSET ?`);
     stmt.bind([...params, opts.limit, opts.offset]);
     const nodes: GraphNode[] = [];
     while (stmt.step()) nodes.push(rowToNode(stmt.getAsObject()));
@@ -439,6 +470,58 @@ export class ProjectGraphStore {
       } catch { /* FTS rebuild on next insert */ }
     }
     this.onMutate?.();
+  }
+
+  /** Phase 12 — used by the resolution pass to walk the full graph in
+   *  one shot. Returns every node currently in the store. Called once
+   *  per scan finalization, not on the hot browse path. */
+  allNodes(): GraphNode[] {
+    const stmt = this.db.prepare(`SELECT * FROM graph_nodes`);
+    const out: GraphNode[] = [];
+    while (stmt.step()) out.push(rowToNode(stmt.getAsObject()));
+    stmt.free();
+    return out;
+  }
+
+  /** Phase 12 — same as allNodes() for edges. */
+  allEdges(): GraphEdge[] {
+    const stmt = this.db.prepare(`SELECT * FROM graph_edges`);
+    const out: GraphEdge[] = [];
+    while (stmt.step()) out.push(rowToEdge(stmt.getAsObject()));
+    stmt.free();
+    return out;
+  }
+
+  /**
+   * Phase 12 — merge a placeholder ref node into a canonical extracted
+   * node. Rewrites every edge that touched `fromId` to touch `toId`,
+   * deduplicates self-loops created by the rewrite, and deletes the
+   * `fromId` row. Idempotent: a second call with the same `fromId`
+   * is a no-op since the row is already gone.
+   */
+  mergeNodes(fromId: string, toId: string): void {
+    if (fromId === toId) return;
+    // Rewrite outgoing edges (sourceId = fromId) → sourceId = toId.
+    // Then rewrite incoming edges (targetId = fromId) → targetId = toId.
+    // Edges where rewriting would create a self-loop (toId → toId) are
+    // dropped instead — the resolution pass treats those as redundant.
+    this.db.run(
+      `DELETE FROM graph_edges WHERE source_id = ? AND target_id = ?`,
+      [fromId, toId],
+    );
+    this.db.run(
+      `DELETE FROM graph_edges WHERE source_id = ? AND target_id = ?`,
+      [toId, fromId],
+    );
+    this.db.run(
+      `UPDATE graph_edges SET source_id = ? WHERE source_id = ?`,
+      [toId, fromId],
+    );
+    this.db.run(
+      `UPDATE graph_edges SET target_id = ? WHERE target_id = ?`,
+      [toId, fromId],
+    );
+    this.deleteNode(fromId);
   }
 
   deleteNode(id: string): void {

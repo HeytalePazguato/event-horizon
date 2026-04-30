@@ -105,6 +105,43 @@ function walkCsNode(
       for (const c of node.namedChildren) if (c) walkCsNode(c, ctx, scope, classScope);
       return;
     }
+    case 'variable_declaration': {
+      // Phase 12 Tier 2: `Foo x = ...` and `var x = new Foo();` both
+      // tell us `x` has type `Foo` without flow-sensitive inference.
+      // The `var x = SomeMethod()` case (return-type inference) is
+      // Tier 3 — out of scope; falls through.
+      const typeField = node.childForFieldName('type');
+      const declaredType = typeField ? csTypeName(typeField) : null;
+      for (const c of node.namedChildren) {
+        if (!c || c.type !== 'variable_declarator') continue;
+        const nameNode = c.childForFieldName('name')
+          ?? findFirstChildOfType(c, 'identifier');
+        if (!nameNode) continue;
+        if (declaredType && declaredType !== 'var') {
+          ctx.localTypes.set(nameNode.text, declaredType);
+        } else {
+          // `var x = new Foo();` — pick up the constructor name as the
+          // declared type.
+          const initializer = c.childForFieldName('initializer') ?? c.lastNamedChild;
+          if (initializer && initializer.type === 'object_creation_expression') {
+            const ctor = initializer.childForFieldName('type');
+            const ctorName = csTypeName(ctor);
+            if (ctorName) ctx.localTypes.set(nameNode.text, ctorName);
+          }
+        }
+      }
+      break;
+    }
+    case 'parameter': {
+      const pType = node.childForFieldName('type');
+      const pName = node.childForFieldName('name')
+        ?? findFirstChildOfType(node, 'identifier');
+      if (pType && pName) {
+        const t = csTypeName(pType);
+        if (t) ctx.localTypes.set(pName.text, t);
+      }
+      break;
+    }
   }
 
   for (const c of node.namedChildren) if (c) walkCsNode(c, ctx, scope, classScope);
@@ -239,14 +276,36 @@ function processCsUsing(node: TSNode, ctx: ExtractionContext): void {
 function processCsInvocation(node: TSNode, ctx: ExtractionContext, scope: GraphNode): void {
   const fn = node.childForFieldName('function') ?? node.firstNamedChild;
   if (!fn) return;
-  const callee = csInvocationName(fn);
+  const callee = csQualifiedCallee(fn);
   if (!callee) return;
+  let { qualified, receiver } = callee;
+  const { bare } = callee;
+  // Phase 12 Tier 2: same upgrade rule as the other extractors. Skip
+  // `this` and `base` — those are resolved via member_of / extends
+  // edges in the post-scan pass, not via the symbol table.
+  if (
+    receiver
+    && receiver !== 'this'
+    && receiver !== 'base'
+    && !receiver.includes('.')
+  ) {
+    const declaredType = ctx.localTypes.get(receiver);
+    if (declaredType) {
+      receiver = declaredType;
+      qualified = `${declaredType}.${bare}`;
+    }
+  }
   const startLine = node.startPosition.row + 1;
   const startCol = node.startPosition.column;
-  const refId = `cs:func_ref:${callee}`;
-  ctx.ensureRef(refId, callee, 'function');
+  const refId = `cs:func_ref:${qualified}`;
+  const ref = ctx.ensureRef(refId, bare, 'function');
+  if (receiver) {
+    ref.properties = { ...ref.properties, receiver };
+  } else {
+    ref.properties = { ...ref.properties, callerFile: ctx.filePath };
+  }
   ctx.pushEdge({
-    id: `call:${scope.id}:${startLine}:${startCol}:${callee}`,
+    id: `call:${scope.id}:${startLine}:${startCol}:${qualified}`,
     sourceId: scope.id,
     targetId: refId,
     relationType: 'calls',
@@ -256,6 +315,50 @@ function processCsInvocation(node: TSNode, ctx: ExtractionContext, scope: GraphN
     sourceLocation: String(startLine),
     createdAt: ctx.now,
   });
+}
+
+interface CsQualifiedCallee {
+  qualified: string;
+  receiver?: string;
+  bare: string;
+}
+
+/**
+ * Phase 12 Tier 1 for C#: capture the receiver from member-access
+ * invocations so `Foo.Init()` and `Bar.Init()` produce distinct
+ * placeholder IDs. `this.X` and `base.X` are normalised receivers; the
+ * resolution pass uses member_of / extends edges to resolve them.
+ */
+function csQualifiedCallee(node: TSNode): CsQualifiedCallee | null {
+  if (node.type === 'identifier') {
+    return { qualified: node.text, bare: node.text };
+  }
+  if (node.type === 'member_access_expression') {
+    const expr = node.childForFieldName('expression');
+    const name = node.childForFieldName('name');
+    if (!name) return null;
+    const bare = name.text;
+    const receiver = expr ? expr.text : undefined;
+    return {
+      qualified: receiver ? `${receiver}.${bare}` : bare,
+      receiver,
+      bare,
+    };
+  }
+  if (node.type === 'qualified_name') {
+    // Same shape as member access — `Ns.Cls.Method`.
+    const name = node.childForFieldName('right');
+    const expr = node.childForFieldName('left');
+    if (!name) return { qualified: node.text, bare: node.text };
+    const bare = name.text;
+    const receiver = expr ? expr.text : undefined;
+    return {
+      qualified: receiver ? `${receiver}.${bare}` : bare,
+      receiver,
+      bare,
+    };
+  }
+  return { qualified: node.text, bare: node.text };
 }
 
 function extractCsParams(paramsNode: TSNode | null): string[] {
@@ -296,23 +399,6 @@ function csTypeName(node: TSNode | null): string | null {
   return node.text || null;
 }
 
-function csInvocationName(node: TSNode): string | null {
-  if (node.type === 'identifier') return node.text;
-  if (node.type === 'member_access_expression') {
-    const name = node.childForFieldName('name');
-    if (name) return name.text;
-  }
-  if (node.type === 'generic_name') {
-    const name = firstNamedChildOfTypes(node, ['identifier']);
-    if (name) return name.text;
-  }
-  if (node.type === 'qualified_name') {
-    return node.text.split('.').pop() ?? node.text;
-  }
-  const first = node.firstNamedChild;
-  if (first) return csInvocationName(first);
-  return null;
-}
 
 function findFirstChildOfType(node: TSNode, type: string): TSNode | null {
   for (const c of node.namedChildren) {

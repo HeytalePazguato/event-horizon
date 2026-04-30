@@ -73,7 +73,7 @@ describe('tools/list', () => {
   it('returns all tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(48);
+    expect(result.tools).toHaveLength(49);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');
@@ -88,6 +88,7 @@ describe('tools/list', () => {
     expect(names).toContain('eh_update_task');
     expect(names).toContain('eh_send_message');
     expect(names).toContain('eh_get_messages');
+    expect(names).toContain('eh_rescan_files');
   });
 });
 
@@ -397,5 +398,97 @@ describe('eh_query_graph', () => {
     const result = JSON.parse(content.text);
     expect(Array.isArray(result.agents)).toBe(true);
     expect(Array.isArray(result.activities)).toBe(true);
+  });
+});
+
+// ── eh_rescan_files ─────────────────────────────────────────────────────────
+
+describe('eh_rescan_files', () => {
+  type ScanResult = { filesProcessed: number; filesSkipped: number; nodesCreated: number; edgesCreated: number; durationMs: number; filesMatched: number };
+
+  const baseDeps = () => ({
+    lockManager,
+    agentStateManager,
+    fileActivityTracker,
+    planBoardManager: new PlanBoardManager(),
+    messageQueue: new MessageQueue(),
+    roleManager: new RoleManager(),
+    agentProfiler: new AgentProfiler(),
+    sharedKnowledge: new SharedKnowledgeStore(),
+  });
+
+  function parseResult(res: Awaited<ReturnType<McpServer['handleRequest']>>) {
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    return JSON.parse(content.text);
+  }
+
+  function rescanCall(server: McpServer, paths: string[], id: number | string = 1) {
+    return server.handleRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'eh_rescan_files', arguments: { paths } }, id });
+  }
+
+  it('returns error when scanner not wired', async () => {
+    const bare = new McpServer(baseDeps());
+    const res = await rescanCall(bare, []);
+    expect(parseResult(res).error).toContain('scanner not available');
+  });
+
+  it('returns no-workspace error when lifecycle has no active store', async () => {
+    const noWorkspace = new McpServer({
+      ...baseDeps(),
+      projectGraphScanner: { rescanFiles: async () => ({ filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0, durationMs: 1, filesMatched: 0 }) } as never,
+      projectGraphLifecycle: { getActiveStore: () => null } as never,
+    });
+    const res = await rescanCall(noWorkspace, []);
+    const parsed = parseResult(res);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('No workspace');
+  });
+
+  it('empty paths returns no-op summary without throwing', async () => {
+    const server = new McpServer({
+      ...baseDeps(),
+      projectGraphScanner: { rescanFiles: async (_p: string[], _o?: unknown) => ({ filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0, durationMs: 1, filesMatched: 0 } as ScanResult) } as never,
+    });
+    const res = await rescanCall(server, []);
+    const parsed = parseResult(res);
+    expect(parsed.filesProcessed).toBe(0);
+    expect(parsed.filesMatched).toBe(0);
+    expect(parsed.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('serializes concurrent calls — second awaits first', async () => {
+    const order: string[] = [];
+    let resolveFirst!: () => void;
+
+    const server = new McpServer({
+      ...baseDeps(),
+      projectGraphScanner: {
+        rescanFiles: async (paths: string[]) => {
+          if (paths[0] === 'first.ts') {
+            order.push('first:start');
+            await new Promise<void>((r) => { resolveFirst = r; });
+            order.push('first:end');
+          } else {
+            order.push('second:start');
+            order.push('second:end');
+          }
+          return { filesProcessed: 1, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0, durationMs: 1, filesMatched: 1 } as ScanResult;
+        },
+      } as never,
+    });
+
+    const p1 = server.handleRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'eh_rescan_files', arguments: { paths: ['first.ts'] } }, id: 1 });
+    const p2 = server.handleRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'eh_rescan_files', arguments: { paths: ['second.ts'] } }, id: 2 });
+
+    // First call runs synchronously to its first await; second is queued behind it.
+    expect(order).toContain('first:start');
+    expect(order).not.toContain('second:start');
+
+    resolveFirst();
+    await Promise.all([p1, p2]);
+
+    expect(order).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+    expect(parseResult(await p1).filesProcessed).toBe(1);
+    expect(parseResult(await p2).filesProcessed).toBe(1);
   });
 });

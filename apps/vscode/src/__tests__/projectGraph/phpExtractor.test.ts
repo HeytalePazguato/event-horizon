@@ -52,7 +52,8 @@ describe('PHP extractor', () => {
     expect(props.parentLabel).toBe('InsurancesQuote');
     expect(props.params).toEqual(['$x']);
 
-    const callsToBar = edges.filter((e) => e.relationType === 'calls' && e.targetId === 'php:func_ref:bar');
+    // Phase 12 Tier 1: $this->bar() → receiver-qualified placeholder.
+    const callsToBar = edges.filter((e) => e.relationType === 'calls' && e.targetId === 'php:func_ref:this.bar');
     expect(callsToBar).toHaveLength(1);
   });
 
@@ -66,7 +67,8 @@ describe('PHP extractor', () => {
     const callees = edges
       .filter((e) => e.relationType === 'calls')
       .map((e) => e.targetId);
-    expect(callees).toContain('php:func_ref:info');
+    // Static call → receiver-qualified. Bare global call → unqualified.
+    expect(callees).toContain('php:func_ref:Log.info');
     expect(callees).toContain('php:func_ref:helper');
   });
 

@@ -21,3 +21,6 @@ CLAUDE.md
 docs/AUDIT.md
 docs/secret/
 docs/articles/
+# Workspace-local graph DB created by the extension when /eh:optimize-context runs.
+# Each consumer of EH gets one of these per workspace; never commit the EH repo's own.
+.eh/
