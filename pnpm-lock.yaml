@@ -71,8 +71,8 @@ importers:
         specifier: ^0.23.0
         version: 0.23.1
       tree-sitter-php:
-        specifier: ^0.23.0
-        version: 0.23.12
+        specifier: ^0.24.2
+        version: 0.24.2
       tree-sitter-python:
         specifier: ^0.23.0
         version: 0.23.6
@@ -2405,10 +2405,10 @@ packages:
       tree-sitter:
         optional: true
 
-  tree-sitter-php@0.23.12:
-    resolution: {integrity: sha512-VwkBVOahhC2NYXK/Fuqq30NxuL/6c2hmbxEF4jrB7AyR5rLc7nT27mzF3qoi+pqx9Gy2AbXnGezF7h4MeM6YRA==}
+  tree-sitter-php@0.24.2:
+    resolution: {integrity: sha512-zwgAePc/HozNaWOOfwRAA+3p8yhuehRw8Fb7vn5qd2XjiIc93uJPryDTMYTSjBRjVIUg/KY6pM3rRzs8dSwKfw==}
     peerDependencies:
-      tree-sitter: ^0.21.1
+      tree-sitter: ^0.22.4
     peerDependenciesMeta:
       tree-sitter:
         optional: true
@@ -4905,7 +4905,7 @@ snapshots:
       node-addon-api: 8.7.0
       node-gyp-build: 4.8.4
 
-  tree-sitter-php@0.23.12:
+  tree-sitter-php@0.24.2:
     dependencies:
       node-addon-api: 8.7.0
       node-gyp-build: 4.8.4

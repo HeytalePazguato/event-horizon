@@ -513,7 +513,7 @@
     "sql.js": "^1.14.1",
     "tree-sitter-c-sharp": "^0.23.0",
     "tree-sitter-javascript": "^0.23.0",
-    "tree-sitter-php": "^0.23.0",
+    "tree-sitter-php": "^0.24.2",
     "tree-sitter-python": "^0.23.0",
     "tree-sitter-typescript": "^0.23.0",
     "web-tree-sitter": "^0.25.0",
