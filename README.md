@@ -5,6 +5,8 @@
 [![Open VSX downloads](https://img.shields.io/open-vsx/dt/HeytalePazguato/event-horizon-vscode)](https://open-vsx.org/extension/HeytalePazguato/event-horizon-vscode)
 [![GitHub stars](https://img.shields.io/github/stars/HeytalePazguato/event-horizon?style=social)](https://github.com/HeytalePazguato/event-horizon)
 
+**Community**: [Discussions](https://github.com/HeytalePazguato/event-horizon/discussions) · [Issues](https://github.com/HeytalePazguato/event-horizon/issues)
+
 **Turn any AI coding agent into a project manager.** One command creates a plan, spawns a team of AI agents, assigns roles, and manages the entire project -- while you watch it happen live in a cosmic visualization where every agent is a planet.
 
 Works with Claude Code, OpenCode, GitHub Copilot, and Cursor. Mix and match freely.
