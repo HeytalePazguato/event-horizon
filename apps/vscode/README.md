@@ -96,13 +96,41 @@ Full-screen dashboard (`Ctrl+Shift+E O`) with agents/plans sidebar, metrics over
 
 ---
 
-## 40+ MCP tools
+## Project knowledge graph
+
+A queryable map of your codebase -- functions, classes, imports, calls, doc sections, and the rationale comments tying them together. Agents query the graph for high-signal context instead of re-reading the whole project on every task, and you get the same map as a visual canvas in the Knowledge tab.
+
+![Project graph hero](https://raw.githubusercontent.com/HeytalePazguato/event-horizon/master/assets/v3-graph-hero.png)
+
+Run `/eh:optimize-context` to scan the workspace (tree-sitter for TS/JS/TSX, PHP, Python, and C#, plus markdown headings and code-comment rationale), then pass a task description for a curated, token-budgeted context slice. The scan runs locally -- no model calls, no telemetry -- and stores the graph in `<folder>/.eh/graph.db`. Click any node on the canvas to see its 1-, 2-, and 3-hop neighbours coloured by distance; the search box dims unrelated boxes so you can navigate enormous graphs at a glance.
+
+---
+
+## 50 MCP tools
 
 All agents access coordination tools via the MCP server (auto-registered on connect):
 
-`eh_load_plan` `eh_get_plan` `eh_list_plans` `eh_claim_task` `eh_update_task` `eh_retry_task` `eh_recommend_task` `eh_verify_task` `eh_archive_plan` `eh_delete_plan` `eh_send_message` `eh_get_messages` `eh_check_lock` `eh_acquire_lock` `eh_release_lock` `eh_wait_for_unlock` `eh_list_agents` `eh_file_activity` `eh_write_shared` `eh_read_shared` `eh_get_shared_summary` `eh_delete_shared` `eh_list_roles` `eh_assign_role` `eh_get_agent_profile` `eh_recommend_agent` `eh_heartbeat` `eh_get_budget` `eh_get_session` `eh_get_cost_insights` `eh_spawn_agent` `eh_stop_agent` `eh_reassign_task` `eh_get_team_status` `eh_auto_assign` `eh_create_worktree` `eh_remove_worktree` `eh_request_budget_increase` `eh_sync_skills` `eh_search_events`
+**Locking and activity** -- `eh_check_lock` `eh_acquire_lock` `eh_release_lock` `eh_wait_for_unlock` `eh_list_agents` `eh_file_activity`
 
-Nine bundled skills handle common workflows so agents don't need to memorize tool names:
+**Plans and tasks** -- `eh_load_plan` `eh_get_plan` `eh_list_plans` `eh_claim_task` `eh_update_task` `eh_verify_task` `eh_retry_task` `eh_recommend_task` `eh_archive_plan` `eh_delete_plan`
+
+**Messaging** -- `eh_send_message` `eh_get_messages`
+
+**Roles and profiling** -- `eh_list_roles` `eh_assign_role` `eh_get_agent_profile` `eh_recommend_agent`
+
+**Shared knowledge** -- `eh_write_shared` `eh_read_shared` `eh_get_shared_summary` `eh_delete_shared`
+
+**Orchestration** -- `eh_claim_orchestrator` `eh_spawn_agent` `eh_stop_agent` `eh_stop_all_workers` `eh_purge_stale_agents` `eh_reassign_task` `eh_get_team_status` `eh_auto_assign` `eh_get_session` `eh_sync_skills`
+
+**Heartbeat and worktrees** -- `eh_heartbeat` `eh_create_worktree` `eh_remove_worktree`
+
+**Budget, traces, and cost** -- `eh_get_budget` `eh_request_budget_increase` `eh_get_traces` `eh_get_cost_insights`
+
+**Search** -- `eh_search_events`
+
+**Project graph** -- `eh_build_graph` `eh_scan_status` `eh_query_graph` `eh_curate_context` `eh_extract_concepts` `eh_rescan_files`
+
+Ten bundled skills handle common workflows so agents don't need to memorize tool names:
 
 | Skill | What it does |
 |-------|-------------|
@@ -110,7 +138,7 @@ Nine bundled skills handle common workflows so agents don't need to memorize too
 | `/eh:work-on-plan` | Claim tasks, implement, self-verify against acceptance criteria, mark progress |
 | `/eh:orchestrate` | Manage a plan as orchestrator -- spawn workers, assign tasks, monitor, handle failures |
 | `/eh:verify-task` | Batch-verify completed tasks by running their verify commands |
-| `/eh:optimize-context` | Reduce token costs by analyzing and splitting instruction files |
+| `/eh:optimize-context` | Build the project knowledge graph, tier instruction files into L0/L1/L2/L3, and curate per-task context slices |
 | `/eh:plan-status` | View progress, blocked tasks, active agents, available work |
 | `/eh:research` | Explore codebase and output structured findings |
 | `/eh:review` | Code review with severity levels and verification pipeline |
@@ -140,4 +168,4 @@ Milestones that track your multi-agent journey -- from spawning your first agent
 - [Report an issue](https://github.com/HeytalePazguato/event-horizon/issues)
 - [Rate this extension](https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode&ssr=false#review-details)
 
-MIT License with Commons Clause -- see [LICENSE](https://github.com/HeytalePazguato/event-horizon/blob/master/LICENSE).
+MIT License -- see [LICENSE](https://github.com/HeytalePazguato/event-horizon/blob/master/LICENSE).

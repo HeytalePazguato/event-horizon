@@ -260,18 +260,29 @@ export const ProjectGraphCanvas: React.FC<ProjectGraphCanvasProps> = ({
   // Levels 0–3 stay near full opacity; the tier-ring COLOUR is what
   // signals depth (green → amber → orange). Unreachable boxes drop to
   // 10 % so they fade into the background grid without disappearing.
-  // When a search is active, non-matching nodes drop to 0.15 regardless
-  // of selection-tier — search "wins" the opacity decision so users can
-  // visually scan for hits.
+  //
+  // Selection wins over filter: when a node is selected, its 3-hop
+  // neighbourhood always renders at full opacity even if those nodes
+  // don't match the active search/filter — clicking a box is the user's
+  // signal that they want to inspect its connections, and dimming the
+  // neighbours back behind the filter would defeat the click. The filter
+  // still applies to nodes outside the selection's reachable set.
   const nodeOpacity = (id: string): number => {
+    if (levelMap) {
+      const lvl = levelMap.get(id);
+      if (lvl !== undefined) {
+        if (lvl === 0 || lvl === 1) return 1;
+        if (lvl === 2) return 0.98;
+        return 0.9; // level 3
+      }
+      // Unreachable from the selected node: filter still wins, otherwise
+      // fade toward the background so the neighbourhood pops.
+      if (matchSet && !matchSet.has(id)) return 0.15;
+      return 0.1;
+    }
+    // No selection: filter is the only signal.
     if (matchSet && !matchSet.has(id)) return 0.15;
-    if (!levelMap) return 1;
-    const lvl = levelMap.get(id);
-    if (lvl === undefined) return 0.1; // unreachable
-    if (lvl === 0) return 1;
-    if (lvl === 1) return 1;
-    if (lvl === 2) return 0.98;
-    return 0.9;                         // level 3
+    return 1;
   };
 
   // Per-tier edge style. Colour shifts (green → amber → orange) plus

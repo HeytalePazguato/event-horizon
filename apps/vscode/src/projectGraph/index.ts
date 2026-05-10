@@ -75,3 +75,4 @@ export { ProjectGraphStore } from './store.js';
 export { ProjectGraphDB } from './projectGraphDb.js';
 export { ProjectGraphLifecycle } from './lifecycle.js';
 export { GRAPH_SCHEMA_SQL, GRAPH_SCHEMA_DROP_SQL } from './schema.js';
+export { ScanRegistry, type ScanHandle, type ScanStatus } from './scanRegistry.js';

@@ -21,7 +21,7 @@ import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
 import type { TokenAnalyzer } from './tokenAnalyzer.js';
-import type { ProjectGraphStore, ProjectGraphLifecycle, GraphNodeType, RelationType } from './projectGraph/index.js';
+import type { ProjectGraphStore, ProjectGraphLifecycle, GraphNodeType, RelationType, ScanRegistry } from './projectGraph/index.js';
 import type { ProjectGraphScanner } from './projectGraph/scanner.js';
 import type { GraphQueryEngine } from './projectGraph/queryEngine.js';
 import { exec } from 'child_process';
@@ -687,7 +687,7 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_build_graph',
-    description: 'Trigger a workspace scan to build or refresh the project knowledge graph. Call this only when the user has explicitly invoked /eh:optimize-context or otherwise asked you to (re)build the graph. Returns scan stats (filesProcessed, filesSkipped, nodesCreated, edgesCreated, durationMs).',
+    description: 'Start a workspace scan to build or refresh the project knowledge graph. Returns IMMEDIATELY with `{ scanId, status: "started" }` — the scan runs in the background. You MUST then poll `eh_scan_status({ scan_id })` every 2-3 seconds until status flips to "done" or "failed". Only call this when the user has explicitly invoked /eh:optimize-context or otherwise asked you to (re)build the graph. If a scan is already running, the existing scanId is returned (no duplicate scans).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -698,6 +698,17 @@ export const MCP_TOOLS: McpToolDef[] = [
       },
       required: []
     }
+  },
+  {
+    name: 'eh_scan_status',
+    description: 'Poll the status of a workspace scan started by `eh_build_graph`. Returns `{ status: "running" | "done" | "failed", filesProcessed, filesMatched, durationMs?, summary?, error? }`. Call this every 2-3 seconds after `eh_build_graph` until status flips to "done" or "failed". On "done", read `summary` for the final stats (filesProcessed, nodesCreated, edgesCreated, durationMs).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scan_id: { type: 'string', description: 'The scanId returned by eh_build_graph.' },
+      },
+      required: ['scan_id'],
+    },
   },
   {
     name: 'eh_query_graph',
@@ -814,6 +825,7 @@ export interface McpServerDeps {
   projectGraphLifecycle?: ProjectGraphLifecycle;
   projectGraphScanner?: ProjectGraphScanner;
   projectGraphQueryEngine?: GraphQueryEngine;
+  scanRegistry?: ScanRegistry;
   isAgentExtractionEnabled?: () => boolean;
   /** Callback to inject events into the main event pipeline (for synthetic terminate, etc.). */
   onEvent?: (event: AgentEvent) => void;
@@ -2210,33 +2222,81 @@ export class McpServer {
       }
 
       case 'eh_build_graph': {
-        const { projectGraphScanner, projectGraphLifecycle } = this.deps;
+        const { projectGraphScanner, projectGraphLifecycle, scanRegistry } = this.deps;
         if (!projectGraphScanner) {
           return { error: 'project graph scanner not available — extension activation may have skipped wiring' };
         }
-        // The skill is the only path that creates `<folder>/.eh/graph.db`.
-        // openForBuild always starts with a fresh empty DB so a re-run of
-        // /eh:optimize-context produces a clean rebuild (no stale rows for
-        // files that were deleted or renamed since the prior run).
-        if (projectGraphLifecycle) {
-          const folder = projectGraphLifecycle.getActiveWorkspace();
-          if (!folder) {
-            return { error: 'No workspace folder open. Open a folder in VS Code before running /eh:optimize-context.' };
+        if (!scanRegistry) {
+          return { error: 'scan registry not wired — extension activation incomplete' };
+        }
+        if (projectGraphLifecycle && !projectGraphLifecycle.getActiveWorkspace()) {
+          return { error: 'No workspace folder open. Open a folder in VS Code before running /eh:optimize-context.' };
+        }
+        // Reuse an in-flight scan instead of spawning a duplicate. Idempotent
+        // for callers that retry on slow networks or accidentally double-fire.
+        const existing = scanRegistry.findRunning();
+        if (existing) {
+          return {
+            scanId: existing.scanId,
+            status: 'started',
+            note: 'A scan is already in progress; returning the existing scanId.',
+          };
+        }
+        const handle = scanRegistry.start();
+        // Background scan. We deliberately don't await — return the scanId
+        // immediately so the JSON-RPC call completes within the slow-client
+        // timeout. The skill polls eh_scan_status until done.
+        void (async (): Promise<void> => {
+          try {
+            // openForBuild starts with a fresh empty DB so a re-run produces
+            // a clean rebuild (no stale rows for renamed/deleted files).
+            if (projectGraphLifecycle) {
+              const folder = projectGraphLifecycle.getActiveWorkspace();
+              if (folder) await projectGraphLifecycle.openForBuild(folder);
+            }
+            // Wrap the scanner's vscode.Progress callback so we mirror progress
+            // into the registry handle. The scanner reports once per file.
+            const progress = {
+              report: (_value: { message?: string; increment?: number }): void => {
+                scanRegistry.incrementProcessed(handle.scanId);
+              },
+            };
+            const summary = await projectGraphScanner.scanWorkspace(progress, { force: true });
+            scanRegistry.setFilesMatched(handle.scanId, summary.filesMatched);
+            if (projectGraphLifecycle) {
+              // Flush synchronously so a fast dev-host reload after
+              // /eh:optimize-context doesn't lose the just-built graph.
+              projectGraphLifecycle.flush();
+              projectGraphLifecycle.notifyDataChange();
+            }
+            scanRegistry.finish(handle.scanId, summary);
+          } catch (err) {
+            scanRegistry.fail(handle.scanId, err instanceof Error ? err.message : String(err));
           }
-          await projectGraphLifecycle.openForBuild(folder);
+        })();
+        return { scanId: handle.scanId, status: 'started' };
+      }
+
+      case 'eh_scan_status': {
+        const { scanRegistry } = this.deps;
+        if (!scanRegistry) {
+          return { error: 'scan registry not wired — extension activation incomplete' };
         }
-        const result = await projectGraphScanner.scanWorkspace(undefined, { force: true });
-        // Tell listeners (notably the webview) that the graph contents
-        // changed in bulk so the Knowledge → Graph tab refreshes without
-        // requiring a manual click-off-click-on.
-        if (projectGraphLifecycle) {
-          // Flush to disk synchronously so a fast dev-host reload after
-          // /eh:optimize-context doesn't lose the just-built graph (the
-          // 60s tick-save would otherwise be the only persistence path).
-          projectGraphLifecycle.flush();
-          projectGraphLifecycle.notifyDataChange();
+        const scanId = args.scan_id as string | undefined;
+        if (!scanId) return { error: 'scan_id is required' };
+        const handle = scanRegistry.get(scanId);
+        if (!handle) {
+          return { error: `Unknown scanId: ${scanId} (it may have been evicted; start a new scan).` };
         }
-        return result;
+        return {
+          scanId: handle.scanId,
+          status: handle.status,
+          filesProcessed: handle.filesProcessed,
+          filesMatched: handle.filesMatched,
+          durationMs: handle.durationMs,
+          summary: handle.summary,
+          error: handle.error,
+        };
       }
 
       case 'eh_query_graph': {

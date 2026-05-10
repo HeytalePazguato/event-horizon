@@ -543,22 +543,34 @@ name: eh:optimize-context
 description: "Build the project knowledge graph, tier instruction files, and (with a task) hand the agent the relevant slice."
 user-invocable: true
 disable-model-invocation: true
-allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash, mcp__event-horizon__eh_build_graph, mcp__event-horizon__eh_scan_status, mcp__event-horizon__eh_curate_context, mcp__event-horizon__eh_write_shared
 argument-hint: "[optional task description for curation]"
 metadata:
   category: optimization
   tags: tokens, cost, context, optimization, graph
 ---
 
-You are a context optimizer. This skill does THREE things in this exact order:
+You are a context optimizer. This skill does THREE things in this exact order. **You MUST complete Step 1 before reading any further into Steps 2 or 3** — those steps depend on the graph existing.
 
-## Step 1 — Build or refresh the project knowledge graph
+## Step 1 — Build or refresh the project knowledge graph (MANDATORY FIRST ACTION)
 
-Call \`eh_build_graph\` to scan the workspace. The scanner extracts code structure (TS/JS/TSX functions, classes, imports, calls) via tree-sitter, plus markdown headings and code-comment rationale (\`// WHY:\`, TODO, FIXME, JSDoc). Files unchanged since the last build (matched by SHA256 hash) are skipped.
+**STOP. Before doing anything else — including reading the rest of this skill — kick off the workspace scan and poll it to completion.** This is non-negotiable. Skipping the build is the most common failure mode for this skill: Steps 2 and 3 silently degrade because the graph is empty.
+
+The scan uses an **async-start + poll** pattern: \`eh_build_graph\` returns immediately with a \`scanId\` while the scan runs in the background; you must then poll \`eh_scan_status\` until it finishes. Do not try to wait on \`eh_build_graph\` itself — it will not block.
+
+Checklist for Step 1 (do all five, in order):
+
+1. Call \`mcp__event-horizon__eh_build_graph\` (no arguments). Expect a response shaped \`{ scanId: "...", status: "started" }\`. Save the \`scanId\`.
+2. **Poll loop** — every 2-3 seconds, call \`mcp__event-horizon__eh_scan_status({ scan_id: <scanId> })\`. The response includes \`status\` (\`running\` | \`done\` | \`failed\`), \`filesProcessed\`, \`filesMatched\`, and (when done) \`summary\`.
+3. Continue polling while \`status === "running"\`. You may emit a brief progress line to the user every few polls (e.g. \`Scanning… 1240 / 8800 files\`) but don't spam.
+4. When \`status === "done"\`, read \`summary\` and report verbatim: \`Indexed N files, M nodes, K edges in <time>s\` (\`summary.filesProcessed\`, \`summary.nodesCreated\`, \`summary.edgesCreated\`, \`summary.durationMs / 1000\`).
+5. When \`status === "failed"\`, report \`error\` to the user and stop. Do NOT proceed to Step 2 unless the error is specifically "scanner not available" (extension activation incomplete) — in that case, note it and continue in degraded mode.
+
+If \`eh_build_graph\` itself returns an error (no \`scanId\`), report it and stop — most common cause: no workspace folder open.
+
+The scanner extracts code structure (TS/JS/TSX functions, classes, imports, calls) via tree-sitter, plus markdown headings and code-comment rationale (\`// WHY:\`, TODO, FIXME, JSDoc). Files unchanged since the last build (matched by SHA256 hash) are skipped, so re-runs are cheap.
 
 The build is **user-triggered only** — invoking this skill is the user's signal that they want a (re)build. Do NOT call \`eh_build_graph\` from any other skill.
-
-Show the result counts: \`Indexed N files, M nodes, K edges in <time>s\`. If \`eh_build_graph\` returns an error indicating no scanner is available, note it and continue to step 2.
 
 ## Step 2 — Tier instruction files (CLAUDE.md, .cursorrules, etc.)
 

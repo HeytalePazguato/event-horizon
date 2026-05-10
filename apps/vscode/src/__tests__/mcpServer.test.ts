@@ -73,7 +73,7 @@ describe('tools/list', () => {
   it('returns all tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(49);
+    expect(result.tools).toHaveLength(50);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');
@@ -490,5 +490,162 @@ describe('eh_rescan_files', () => {
     expect(order).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
     expect(parseResult(await p1).filesProcessed).toBe(1);
     expect(parseResult(await p2).filesProcessed).toBe(1);
+  });
+});
+
+// ── eh_build_graph + eh_scan_status (async-start + poll) ────────────────────
+
+describe('eh_build_graph + eh_scan_status', () => {
+  type ScanResult = { filesProcessed: number; filesSkipped: number; nodesCreated: number; edgesCreated: number; durationMs: number; filesMatched: number };
+
+  // Lazy import the registry — keeps the rest of the suite from depending on
+  // the projectGraph subdir for tests that don't use it.
+  let ScanRegistry: typeof import('../projectGraph/scanRegistry.js').ScanRegistry;
+
+  beforeEach(async () => {
+    ({ ScanRegistry } = await import('../projectGraph/scanRegistry.js'));
+  });
+
+  const baseDeps = () => ({
+    lockManager,
+    agentStateManager,
+    fileActivityTracker,
+    planBoardManager: new PlanBoardManager(),
+    messageQueue: new MessageQueue(),
+    roleManager: new RoleManager(),
+    agentProfiler: new AgentProfiler(),
+    sharedKnowledge: new SharedKnowledgeStore(),
+  });
+
+  function parseResult(res: Awaited<ReturnType<McpServer['handleRequest']>>) {
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    return JSON.parse(content.text);
+  }
+
+  function call(server: McpServer, name: string, args: Record<string, unknown> = {}) {
+    return server.handleRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name, arguments: args }, id: 1 });
+  }
+
+  it('eh_build_graph returns scanId immediately while scan runs in background', async () => {
+    let scanResolve!: (s: ScanResult) => void;
+    const scanPromise = new Promise<ScanResult>((r) => { scanResolve = r; });
+
+    const server = new McpServer({
+      ...baseDeps(),
+      scanRegistry: new ScanRegistry(),
+      projectGraphScanner: { scanWorkspace: () => scanPromise } as never,
+    });
+
+    // The scan is still running — eh_build_graph must NOT block on it.
+    const res = await Promise.race([
+      call(server, 'eh_build_graph'),
+      new Promise((_r, rej) => setTimeout(() => rej(new Error('eh_build_graph blocked')), 500)),
+    ]) as Awaited<ReturnType<McpServer['handleRequest']>>;
+    const parsed = parseResult(res);
+
+    expect(parsed.status).toBe('started');
+    expect(typeof parsed.scanId).toBe('string');
+    expect(parsed.scanId.length).toBeGreaterThan(0);
+
+    // Let the scan finish so the test doesn't leak a pending promise.
+    scanResolve({ filesProcessed: 5, filesSkipped: 1, nodesCreated: 12, edgesCreated: 8, durationMs: 42, filesMatched: 6 });
+    await scanPromise;
+  });
+
+  it('eh_scan_status reports running, then done with summary', async () => {
+    let scanResolve!: (s: ScanResult) => void;
+    const scanPromise = new Promise<ScanResult>((r) => { scanResolve = r; });
+    const registry = new ScanRegistry();
+
+    const server = new McpServer({
+      ...baseDeps(),
+      scanRegistry: registry,
+      projectGraphScanner: { scanWorkspace: () => scanPromise } as never,
+    });
+
+    const start = parseResult(await call(server, 'eh_build_graph'));
+    const scanId = start.scanId as string;
+
+    // Mid-scan: status should be running with the original scanId.
+    const mid = parseResult(await call(server, 'eh_scan_status', { scan_id: scanId }));
+    expect(mid.status).toBe('running');
+    expect(mid.scanId).toBe(scanId);
+    expect(mid.summary).toBeUndefined();
+
+    // Resolve the scan and let the registry catch up.
+    const summary: ScanResult = { filesProcessed: 5, filesSkipped: 1, nodesCreated: 12, edgesCreated: 8, durationMs: 42, filesMatched: 6 };
+    scanResolve(summary);
+    await scanPromise;
+    // Yield once so the .then() in the background scan task runs.
+    await new Promise((r) => setImmediate(r));
+
+    const done = parseResult(await call(server, 'eh_scan_status', { scan_id: scanId }));
+    expect(done.status).toBe('done');
+    expect(done.summary).toMatchObject({ filesProcessed: 5, nodesCreated: 12, edgesCreated: 8 });
+    expect(done.durationMs).toBe(42);
+  });
+
+  it('eh_scan_status reports failed when the scanner throws', async () => {
+    const registry = new ScanRegistry();
+    const server = new McpServer({
+      ...baseDeps(),
+      scanRegistry: registry,
+      projectGraphScanner: { scanWorkspace: async () => { throw new Error('disk full'); } } as never,
+    });
+
+    const start = parseResult(await call(server, 'eh_build_graph'));
+    const scanId = start.scanId as string;
+
+    // Wait for the background task's catch to fire.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const result = parseResult(await call(server, 'eh_scan_status', { scan_id: scanId }));
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('disk full');
+  });
+
+  it('eh_build_graph returns the existing scanId when a scan is already running', async () => {
+    let scanResolve!: (s: ScanResult) => void;
+    const scanPromise = new Promise<ScanResult>((r) => { scanResolve = r; });
+    const registry = new ScanRegistry();
+    const server = new McpServer({
+      ...baseDeps(),
+      scanRegistry: registry,
+      projectGraphScanner: { scanWorkspace: () => scanPromise } as never,
+    });
+
+    const first = parseResult(await call(server, 'eh_build_graph'));
+    const second = parseResult(await call(server, 'eh_build_graph'));
+    expect(second.scanId).toBe(first.scanId);
+    expect(second.note).toContain('already in progress');
+
+    scanResolve({ filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0, durationMs: 1, filesMatched: 0 });
+    await scanPromise;
+  });
+
+  it('eh_scan_status returns error for unknown scanId', async () => {
+    const server = new McpServer({
+      ...baseDeps(),
+      scanRegistry: new ScanRegistry(),
+      projectGraphScanner: { scanWorkspace: async () => ({ filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0, durationMs: 0, filesMatched: 0 } as ScanResult) } as never,
+    });
+    const res = parseResult(await call(server, 'eh_scan_status', { scan_id: 'does-not-exist' }));
+    expect(res.error).toContain('Unknown scanId');
+  });
+
+  it('eh_build_graph returns error when scanner not wired', async () => {
+    const server = new McpServer({ ...baseDeps(), scanRegistry: new ScanRegistry() });
+    const res = parseResult(await call(server, 'eh_build_graph'));
+    expect(res.error).toContain('scanner not available');
+  });
+
+  it('eh_build_graph returns error when scanRegistry not wired', async () => {
+    const server = new McpServer({
+      ...baseDeps(),
+      projectGraphScanner: { scanWorkspace: async () => ({ filesProcessed: 0, filesSkipped: 0, nodesCreated: 0, edgesCreated: 0, durationMs: 0, filesMatched: 0 } as ScanResult) } as never,
+    });
+    const res = parseResult(await call(server, 'eh_build_graph'));
+    expect(res.error).toContain('scan registry not wired');
   });
 });

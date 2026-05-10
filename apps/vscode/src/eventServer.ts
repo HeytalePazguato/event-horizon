@@ -138,6 +138,7 @@ import { BudgetManager } from './budgetManager.js';
 import { TraceStore } from './traceStore.js';
 import { ModelTierManager } from './modelTierManager.js';
 import { TokenAnalyzer } from './tokenAnalyzer.js';
+import { ScanRegistry } from './projectGraph/scanRegistry.js';
 
 export const lockManager = new LockManager(30_000);
 export const fileActivityTracker = new FileActivityTracker();
@@ -164,6 +165,7 @@ export function setWebviewSelectedPlanId(id: string | null): void {
 export const traceStore = new TraceStore();
 export const modelTierManager = new ModelTierManager();
 export const tokenAnalyzer = new TokenAnalyzer();
+export const scanRegistry = new ScanRegistry();
 
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
@@ -202,6 +204,7 @@ export function initMcpServer(deps: {
     workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     modelTierManager,
     tokenAnalyzer,
+    scanRegistry,
     isAgentExtractionEnabled: () =>
       vscode.workspace.getConfiguration('eventHorizon').get<boolean>('projectGraph.allowAgentLLMExtraction', true),
   });

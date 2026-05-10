@@ -96,7 +96,7 @@ One-click connect for all agents. MCP server auto-registered. Hooks auto-updated
 
 **Session resume** -- Agents resume prior conversations when picking up previously worked tasks. No lost context, no wasted tokens.
 
-**40+ MCP tools** -- All agents access coordination tools via the auto-registered MCP server. Nine bundled skills handle common workflows so agents don't need to memorize tool names.
+**50 MCP tools** -- All agents access coordination tools via the auto-registered MCP server. Ten bundled skills handle common workflows so agents don't need to memorize tool names.
 
 **28 achievements** -- Milestones tracking your multi-agent journey. Some are secret. Some have tiers. All persist across sessions.
 
@@ -150,7 +150,7 @@ See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for full guidelines.
 
 ```bash
 pnpm install && pnpm build    # build all packages
-pnpm test                      # run tests (370+)
+pnpm test                      # run tests (530+)
 pnpm dev                       # watch mode
 ```
 
@@ -167,6 +167,6 @@ Press **F5** to launch the Extension Development Host.
 
 ## License
 
-MIT License with Commons Clause -- see [LICENSE](LICENSE).
+MIT License -- see [LICENSE](LICENSE).
 
 If Event Horizon is useful to you, consider [starring the repo](https://github.com/HeytalePazguato/event-horizon) -- it helps others find it.
