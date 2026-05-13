@@ -8,6 +8,16 @@ updates:
     target-branch: "develop"
     labels:
       - "dependencies"
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"

@@ -2,6 +2,12 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
+## [3.0.5] — Unreleased
+
+### Changed
+- **Dependency bumps** (all patch-level, no behavior changes): `react` 19.2.5 → 19.2.6, `react-dom` 19.2.5 → 19.2.6, `typescript-eslint` 8.59.1 → 8.59.2, `ovsx` 0.10.11 → 0.10.12, `@types/node` 25.6.0 → 25.6.2.
+- **Dependabot now groups patch/minor bumps into one PR per week.** Previously each dep produced its own PR (5 PRs/week was typical), making routine maintenance feel like daily chores. `.github/dependabot.yml` now declares `dev-dependencies` and `production-dependencies` groups so weekly runs collapse to 1-2 PRs. Major bumps still come individually so they get proper scrutiny.
+
 ## [3.0.4] — 2026-05-09
 
 ### Added
