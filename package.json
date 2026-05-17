@@ -23,7 +23,7 @@
     "@eslint/js": "^10.0.1",
     "eslint": "^10.3.0",
     "globals": "^17.5.0",
-    "turbo": "^2.9.6",
+    "turbo": "^2.9.14",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.2",
     "vite": "^7.3.2",
