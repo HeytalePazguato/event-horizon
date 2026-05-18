@@ -1,0 +1,5 @@
+# Documentation site (MkDocs) — used by .github/workflows/pages.yml
+# Install locally with:  pip install -r requirements.txt
+# Then:                  mkdocs serve
+mkdocs-material==9.5.49
+mkdocs-glightbox==0.4.0

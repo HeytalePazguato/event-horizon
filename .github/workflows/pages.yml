@@ -1,10 +1,18 @@
-name: Deploy landing page
+name: Deploy site
+
+# Deploys two things to GitHub Pages from a single artifact:
+#   - the landing page  (website/index.html)            -> /
+#   - the user manual   (MkDocs, source in docs/manual/) -> /manual/
+# The manual is built into website/manual/ so both ship together.
 
 on:
   push:
     branches: [master]
     paths:
       - 'website/**'
+      - 'docs/manual/**'
+      - 'mkdocs.yml'
+      - 'requirements.txt'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -28,6 +36,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install MkDocs
+        run: pip install -r requirements.txt
+
+      - name: Build user manual
+        run: mkdocs build --strict
+        # mkdocs.yml sets site_dir: website/manual
 
       - name: Configure Pages
         uses: actions/configure-pages@v6
