@@ -4,8 +4,7 @@
 
 This manual is the complete reference for using the extension. If you just want to get going, jump to **[Getting Started](getting-started.md)**.
 
-!!! note "📷 Screenshot needed"
-    *Hero shot — the Universe view with three connected agents (a gas giant, a rocky planet, an icy planet), ships flying between them, and the central black hole.*
+![Three agents collaborating in the Event Horizon universe — lightning arcs over a shared file, with the central black hole in view](assets/manual-hero.png)
 
 ---
 

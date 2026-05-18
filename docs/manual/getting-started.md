@@ -46,8 +46,7 @@ Three ways to open the panel:
 
 The universe starts empty — a dark sky with stars and a black hole at the center. Planets appear as agents connect.
 
-!!! note "📷 Screenshot needed"
-    *The empty Universe view immediately after opening — starfield and central black hole, no planets yet.*
+![The empty Universe view immediately after opening — starfield, central black hole, and the Command Center waiting for an agent](assets/manual-getting-started-empty.png)
 
 ---
 
@@ -86,8 +85,7 @@ Start a session with your connected agent — in a terminal, the sidebar, wherev
 
 Click the planet to select it. The [Command Center](command-center.md) fills in with its name, type, state, and live metrics.
 
-!!! note "📷 Screenshot needed"
-    *One connected agent as a planet, selected, with the Command Center showing its metrics.*
+![A Claude Code agent connected as a gas-giant planet, selected, with the Command Center showing live metrics — load, tool calls, prompts, errors, uptime, tokens, and cost](assets/manual-getting-started-first-agent.png)
 
 ---
 
