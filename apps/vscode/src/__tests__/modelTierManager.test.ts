@@ -54,6 +54,79 @@ describe('ModelTierManager', () => {
     });
   });
 
+  describe('price-aware routing (task 3.4)', () => {
+    it('prefers the cheaper tier on equal success — never opus when cheaper tiers tie', () => {
+      // No recorded attempts: every tier is "untested" and competes with an
+      // optimistic success rate, so the blended score is driven purely by cost.
+      const lowPick = manager.getRecommendedModel('low', 'implementer');
+      expect(lowPick).toBe('haiku');
+      expect(lowPick).not.toBe('opus');
+
+      const mediumPick = manager.getRecommendedModel('medium', 'implementer');
+      expect(mediumPick).toBe('haiku');
+      expect(mediumPick).not.toBe('opus');
+    });
+
+    it('prefers the cheaper tier when all tiers have equal (high) success rates', () => {
+      // Drive haiku, sonnet, and opus to identical 100% first-attempt success
+      // for the same role+complexity. Cost is the only differentiator, so the
+      // cheapest viable tier (haiku) must win — sonnet/opus must not.
+      for (let i = 0; i < 6; i++) {
+        manager.recordAttempt('haiku', 'implementer', 'medium', true, 0.02);
+        manager.recordAttempt('sonnet', 'implementer', 'medium', true, 0.06);
+        manager.recordAttempt('opus', 'implementer', 'medium', true, 0.33);
+      }
+      const pick = manager.getRecommendedModel('medium', 'implementer');
+      expect(pick).toBe('haiku');
+      expect(pick).not.toBe('opus');
+    });
+
+    it('routes to sonnet over opus when both cheaper-than-opus tiers tie on success', () => {
+      // haiku and sonnet both fully succeed; sonnet is cheaper than opus, so
+      // between the two viable non-haiku options the router still favors cost.
+      // haiku remains the overall cheapest and wins, proving opus never wins a tie.
+      for (let i = 0; i < 6; i++) {
+        manager.recordAttempt('sonnet', 'reviewer', 'medium', true, 0.06);
+        manager.recordAttempt('opus', 'reviewer', 'medium', true, 0.33);
+      }
+      // haiku is untested (optimistic) and cheapest → wins.
+      expect(manager.getRecommendedModel('medium', 'reviewer')).toBe('haiku');
+    });
+
+    it('forces opus when only opus clears the success threshold', () => {
+      // Stats are keyed by model:role:complexity. Drive haiku and sonnet below
+      // the 0.3 threshold with enough attempts (>= MIN_ATTEMPTS_FOR_STATS = 5)
+      // for this exact role+complexity, so both are excluded as candidates.
+      // 1/6 = 16.7% < 30% for each cheaper tier.
+      for (let i = 0; i < 5; i++) {
+        manager.recordAttempt('haiku', 'implementer', 'high', false, 0.02);
+        manager.recordAttempt('sonnet', 'implementer', 'high', false, 0.06);
+      }
+      manager.recordAttempt('haiku', 'implementer', 'high', true, 0.02);
+      manager.recordAttempt('sonnet', 'implementer', 'high', true, 0.06);
+
+      // Opus stays viable — give it a clean 6/6 success record.
+      for (let i = 0; i < 6; i++) {
+        manager.recordAttempt('opus', 'implementer', 'high', true, 0.33);
+      }
+
+      expect(manager.getRecommendedModel('high', 'implementer')).toBe('opus');
+    });
+
+    it('estimateTaskCost is monotonic across tiers (haiku < sonnet < opus)', () => {
+      const haiku = manager.estimateTaskCost('haiku', 10000);
+      const sonnet = manager.estimateTaskCost('sonnet', 10000);
+      const opus = manager.estimateTaskCost('opus', 10000);
+
+      expect(haiku).toBeLessThan(sonnet);
+      expect(sonnet).toBeLessThan(opus);
+      // Sanity-check the absolute values (70% input / 30% output split).
+      expect(haiku).toBeCloseTo(0.022, 6);
+      expect(sonnet).toBeCloseTo(0.066, 6);
+      expect(opus).toBeCloseTo(0.33, 6);
+    });
+  });
+
   describe('getNextTier', () => {
     it('returns next tier up', () => {
       expect(manager.getNextTier('haiku')).toBe('sonnet');

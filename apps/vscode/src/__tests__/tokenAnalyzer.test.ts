@@ -121,6 +121,20 @@ describe('TokenAnalyzer', () => {
       expect(insights.duplicateReads.length).toBe(1);
     });
 
+    it('detects duplicate reads from the real Claude Code payload shape (toolName/filePath)', () => {
+      // Regression test for the Claude-Code read-detection trigger (task 2.8).
+      // Claude Code hooks report `toolName`/`filePath` (not `tool`/`file_path`).
+      // Before the fix, these payloads never registered a read, so cross-agent
+      // duplicate reads on the real payload shape went undetected.
+      analyzer.onEvent(makeEvent({ agentId: 'a1', type: 'tool.call', payload: { toolName: 'Read', filePath: 'src/x.ts' } }));
+      analyzer.onEvent(makeEvent({ agentId: 'a2', type: 'tool.call', payload: { toolName: 'Read', filePath: 'src/x.ts' } }));
+
+      const insights = analyzer.getInsights();
+      const dup = insights.duplicateReads.find(d => d.file.includes('src/x.ts'));
+      expect(dup).toBeDefined();
+      expect(dup!.agents).toHaveLength(2);
+    });
+
     it('tracks file.read events', () => {
       analyzer.onEvent(makeEvent({ agentId: 'a1', type: 'file.read', payload: { file: 'src/config.ts' } }));
       analyzer.onEvent(makeEvent({ agentId: 'a2', type: 'file.read', payload: { file: 'src/config.ts' } }));
