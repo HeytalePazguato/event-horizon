@@ -16,6 +16,7 @@
 
 import type { GraphEdge, GraphNode, RelationType } from './index.js';
 import type { GraphQueryEngine } from './queryEngine.js';
+import type { FileReadCache } from '../fileReadCache.js';
 
 const EXPANSION_RELATIONS: RelationType[] = [
   'calls',
@@ -46,18 +47,36 @@ export interface CurateCoverage {
   knowledgeNodes: number;
 }
 
+/** A suggested-read file whose content was served from the shared read cache. */
+export interface CachedRead {
+  path: string;
+  content: string;
+  tokenEstimate: number;
+}
+
 export interface CurateResult {
   subgraph: { nodes: GraphNode[]; edges: GraphEdge[] };
   estimatedTokens: number;
   coverage: CurateCoverage;
   suggestedReads: string[];
+  /** suggestedReads paths served from the shared read cache (omitted when no cache is set). */
+  reusedReads?: string[];
+  /** Cached content for reused suggestedReads, so downstream planners can skip re-reading (omitted when no cache is set). */
+  cachedReads?: CachedRead[];
 }
 
 export class ContextCurator {
   private engine: GraphQueryEngine;
+  private fileReadCache?: FileReadCache;
 
-  constructor(engine: GraphQueryEngine) {
+  constructor(engine: GraphQueryEngine, fileReadCache?: FileReadCache) {
     this.engine = engine;
+    this.fileReadCache = fileReadCache;
+  }
+
+  /** Provide (or replace) the shared read cache used to reuse already-read file content. */
+  setFileReadCache(cache: FileReadCache): void {
+    this.fileReadCache = cache;
   }
 
   curate(input: CurateInput): CurateResult {
@@ -200,6 +219,28 @@ export class ContextCurator {
       .sort((a, b) => b[1] - a[1])
       .slice(0, SUGGESTED_READS_LIMIT)
       .map(([file]) => file);
+
+    // If a shared read cache is set, reuse already-read content for any
+    // suggested-read file present in the cache instead of re-reading from disk.
+    // Behavior is identical when no cache is set (fields are omitted).
+    if (this.fileReadCache) {
+      const reusedReads: string[] = [];
+      const cachedReads: CachedRead[] = [];
+      for (const file of suggestedReads) {
+        const entry = this.fileReadCache.get(file);
+        if (!entry) continue;
+        reusedReads.push(file);
+        cachedReads.push({ path: file, content: entry.content, tokenEstimate: entry.tokenEstimate });
+      }
+      return {
+        subgraph: { nodes: includedNodes, edges: includedEdges },
+        estimatedTokens,
+        coverage,
+        suggestedReads,
+        reusedReads,
+        cachedReads,
+      };
+    }
 
     return {
       subgraph: { nodes: includedNodes, edges: includedEdges },

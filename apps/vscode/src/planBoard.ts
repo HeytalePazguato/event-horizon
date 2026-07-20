@@ -5,6 +5,8 @@
  * globalState externally by extension.ts).
  */
 
+import type { ModelTierManager } from './modelTierManager.js';
+
 // ── Data model ──────────────────────────────────────────────────────────────
 
 export interface TaskNote {
@@ -279,6 +281,16 @@ export class PlanBoardManager {
   private changeListeners: Array<(boards: Map<string, PlanBoard>, changedPlanId: string | null) => void> = [];
   private taskCompleteListeners: Array<(task: PlanTask, planId: string) => void> = [];
   private taskClaimListeners: Array<(task: PlanTask, planId: string) => void> = [];
+  private modelTierManager: ModelTierManager | null;
+
+  constructor(modelTierManager?: ModelTierManager) {
+    this.modelTierManager = modelTierManager ?? null;
+  }
+
+  /** Provide (or replace) the ModelTierManager used to derive model tiers from task complexity. */
+  setModelTierManager(m: ModelTierManager | null): void {
+    this.modelTierManager = m;
+  }
 
   onChange(listener: (boards: Map<string, PlanBoard>, changedPlanId: string | null) => void): void {
     this.changeListeners.push(listener);
@@ -299,6 +311,16 @@ export class PlanBoardManager {
   /** Load a plan from parsed markdown. Replaces existing plan with same ID. */
   loadPlan(markdown: string, sourceFile: string, agentId?: string): PlanBoard {
     const board = parsePlanMarkdown(markdown, sourceFile);
+
+    // Derive a model tier from complexity when no explicit <!-- model --> comment
+    // was given. An explicit model comment always wins (task.modelTier is already set).
+    if (this.modelTierManager) {
+      for (const task of board.tasks) {
+        if (task.modelTier === null && task.complexity !== null) {
+          task.modelTier = this.modelTierManager.getRecommendedModel(task.complexity, task.role ?? '');
+        }
+      }
+    }
 
     // Handle ID collisions from different files
     if (this.boards.has(board.id) && this.boards.get(board.id)!.sourceFile !== sourceFile) {

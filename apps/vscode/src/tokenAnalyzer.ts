@@ -4,6 +4,7 @@
  */
 
 import type { AgentEvent } from '@event-horizon/core';
+import type { FileReadCache } from './fileReadCache.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,12 @@ export class TokenAnalyzer {
   private taskCosts: TaskCostRecord[] = [];
   private contextTracking = new Map<string, ContextLayerTracking>();
   private contextWindowSize = DEFAULT_CONTEXT_WINDOW;
+  private fileReadCache?: FileReadCache;
+
+  /** Attach a shared file-read cache so duplicate-read waste reflects real token sizes. */
+  setFileReadCache(cache: FileReadCache): void {
+    this.fileReadCache = cache;
+  }
 
   /** Process an incoming agent event. */
   onEvent(event: AgentEvent): void {
@@ -137,11 +144,13 @@ export class TokenAnalyzer {
       ctx.toolResultTokens += payload.outputTokens as number;
     }
 
-    // Track file reads from tool.call events
-    if (type === 'tool.call' && payload?.tool) {
-      const tool = String(payload.tool).toLowerCase();
+    // Track file reads from tool.call / tool.result events.
+    // Claude Code reports the tool name as `toolName` (not `tool`) and the path as
+    // `filePath`, and emits reads as `tool.result` too — support both shapes.
+    if ((type === 'tool.call' || type === 'tool.result') && payload && (payload.toolName ?? payload.tool)) {
+      const tool = String(payload.toolName ?? payload.tool).toLowerCase();
       if (tool === 'read' || tool === 'grep' || tool === 'glob') {
-        const file = String(payload.file_path ?? payload.filePath ?? payload.path ?? '');
+        const file = String(payload.filePath ?? payload.file_path ?? payload.path ?? '');
         if (file) {
           this.recordFileRead(file, agentId);
         }
@@ -198,7 +207,10 @@ export class TokenAnalyzer {
     // Duplicate read recommendations
     for (const dup of insights.duplicateReads) {
       if (dup.agents.length >= 3) {
-        recs.push(`${dup.agents.length} agents read ${dup.file} — consider adding key patterns to shared knowledge`);
+        const suffix = this.fileReadCache
+          ? ' — the shared-read cache serves repeat reads, so add key patterns to shared knowledge too'
+          : ' — consider adding key patterns to shared knowledge';
+        recs.push(`${dup.agents.length} agents read ${dup.file}${suffix}`);
       }
     }
 
@@ -370,12 +382,18 @@ export class TokenAnalyzer {
     for (const [file, record] of this.fileReads) {
       if (record.readers.size > 1) {
         const agents = Array.from(record.readers);
-        // Waste = (total reads - 1) * tokens per read (first read is not waste)
+        // Waste = (total reads - 1) * tokens per read (first read is not waste).
+        // Prefer the cache's real token estimate for the file when available;
+        // fall back to the flat per-read estimate for uncached files.
         const wasteReads = record.count - 1;
+        const cached = this.fileReadCache?.get(file);
+        const estimatedWasteTokens = cached
+          ? cached.tokenEstimate * wasteReads
+          : wasteReads * TOKENS_PER_FILE_READ;
         duplicates.push({
           file,
           agents,
-          estimatedWasteTokens: wasteReads * TOKENS_PER_FILE_READ,
+          estimatedWasteTokens,
         });
       }
     }
