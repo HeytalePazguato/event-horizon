@@ -32,6 +32,7 @@ import { treeSitterExtractor } from './projectGraph/treeSitterExtractor';
 import { extractMarkdown } from './projectGraph/markdownExtractor';
 import { GraphQueryEngine } from './projectGraph/queryEngine';
 import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
+import { FileReadCache } from './fileReadCache';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -159,6 +160,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Expose extension root so /logo.png can locate assets/icon.png.
   setExtensionRoot(context.extensionPath);
+
+  // Shared file-read cache (dedup layer consumed by McpServer + ContextCurator).
+  // Created before the MCP server so its deps can reference this single instance.
+  const fileReadCache = new FileReadCache();
+  // Let the analyzer report actual cache-backed savings for duplicate reads.
+  tokenAnalyzer.setFileReadCache(fileReadCache);
 
   // Initialize MCP server with runtime dependencies
   initMcpServer({ agentStateManager, metricsEngine });
@@ -689,7 +696,13 @@ export function activate(context: vscode.ExtensionContext): void {
   import('./eventServer.js').then((es) => {
     const mcp = es._getMcpServer();
     if (mcp) {
-      (mcp as unknown as { deps: Record<string, unknown> }).deps.showBudgetRequest = async (planId: string, currentLimit: number, requestedAmount: number, reason: string) => {
+      const mcpDeps = (mcp as unknown as { deps: Record<string, unknown> }).deps;
+      // Share the file-read cache with the MCP server. McpServer declares it
+      // optional and reads it lazily (ContextCurator is built at tool-call time),
+      // so setting it on deps post-construction is sufficient — the same pattern
+      // used for showBudgetRequest below.
+      mcpDeps.fileReadCache = fileReadCache;
+      mcpDeps.showBudgetRequest = async (planId: string, currentLimit: number, requestedAmount: number, reason: string) => {
         const answer = await vscode.window.showInformationMessage(
           `Budget increase requested for plan "${planId}": $${currentLimit.toFixed(2)} -> $${requestedAmount.toFixed(2)}. Reason: ${reason}`,
           'Yes', 'No',
@@ -1129,6 +1142,56 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     }
 
+    // Populate the shared file-read cache from disk on file-tool events.
+    // Read touches load small files into the cache (deduped across agents);
+    // write touches invalidate the entry. Everything here is best-effort and
+    // must never block event forwarding.
+    {
+      const toolName = (event.payload?.toolName ?? event.payload?.tool) as string | undefined;
+      const isFileTool = event.type === 'tool.call' || event.type === 'tool.result';
+      const isReadTouch =
+        event.type === 'file.read' ||
+        (isFileTool && toolName !== undefined && (toolName === 'Read' || toolName === 'ReadFile'));
+      const isWriteTouch =
+        event.type === 'file.write' ||
+        (isFileTool && toolName !== undefined &&
+          (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'WriteFile'));
+      if (isReadTouch || isWriteTouch) {
+        const rawPath = (event.payload?.filePath ?? event.payload?.file_path ??
+          event.payload?.path ?? event.payload?.file) as string | undefined;
+        if (rawPath) {
+          const baseDir = (event.payload?.cwd as string | undefined) ??
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          const abs = path.isAbsolute(rawPath)
+            ? rawPath
+            : baseDir ? path.resolve(baseDir, rawPath) : path.resolve(rawPath);
+          if (isWriteTouch) {
+            fileReadCache.invalidate(abs);
+          } else {
+            const agentId = event.agentId;
+            const ts = event.timestamp;
+            // Fire-and-forget disk read; try/catch so missing/oversized files never throw.
+            void (async () => {
+              try {
+                const stat = await fsp.stat(abs);
+                if (!stat.isFile()) return;
+                const existing = fileReadCache.get(abs);
+                if (stat.size <= 262144 && (!existing || existing.mtimeMs !== stat.mtimeMs)) {
+                  const content = await fsp.readFile(abs, 'utf8');
+                  fileReadCache.record(abs, content, stat.mtimeMs, agentId, ts);
+                  fileReadCache.prune();
+                } else if (existing) {
+                  // Already cached (unchanged, or oversized-but-present) — just add this reader.
+                  fileReadCache.record(abs, existing.content, existing.mtimeMs, agentId, ts);
+                  fileReadCache.prune();
+                }
+              } catch { /* missing / unreadable / oversized — skip silently */ }
+            })();
+          }
+        }
+      }
+    }
+
     // Feed file events to cross-agent correlator for wormhole detection
     if (event.type === 'file.read' || event.type === 'file.write') {
       crossAgentCorrelator.onEvent(event);
@@ -1147,12 +1210,31 @@ export function activate(context: vscode.ExtensionContext): void {
           budgetManager.recordCost(plan.id, event.agentId, event.payload.costUsd as number, tokens);
           void context.globalState.update('budgetState', budgetManager.serialize());
 
-          // Check budget and warn/pause
-          if (budgetManager.isExceeded(plan.id)) {
+          // Check budget and halt (hard mode) or warn.
+          if (budgetManager.shouldHalt(plan.id)) {
+            // Hard enforcement + over budget — actually stop the offending agent,
+            // using the same mechanism as eh_stop_agent (spawnRegistry.stop).
+            void spawnRegistry.stop(event.agentId).catch(() => { /* already gone */ });
+            // Notify the webview that this agent was paused for budget reasons.
+            webviewRef.current?.postMessage({
+              type: 'agent-paused',
+              agentId: event.agentId,
+              reason: 'budget',
+            });
+            // Keep the existing budget-exceeded signal for any listeners relying on it.
+            webviewRef.current?.postMessage({
+              type: 'budget-exceeded',
+              planId: plan.id,
+              agentId: event.agentId,
+            });
             void vscode.window.showWarningMessage(
-              `Budget exceeded for plan "${plan.name}". Agent ${event.agentName} auto-paused.`,
+              `Agent ${event.agentName} stopped — plan budget exceeded.`,
             );
-            // Forward budget-exceeded to webview
+          } else if (budgetManager.isExceeded(plan.id)) {
+            // Warn mode (or off): budget is over but we do not force-stop agents.
+            void vscode.window.showWarningMessage(
+              `Budget exceeded for plan "${plan.name}" — consider pausing agents.`,
+            );
             webviewRef.current?.postMessage({
               type: 'budget-exceeded',
               planId: plan.id,

@@ -167,6 +167,9 @@ export const modelTierManager = new ModelTierManager();
 export const tokenAnalyzer = new TokenAnalyzer();
 export const scanRegistry = new ScanRegistry();
 
+// Let plan-model fallback use complexity+cost routing when a task has no explicit model comment.
+planBoardManager.setModelTierManager(modelTierManager);
+
 // MCP server — initialized lazily when agentStateManager is provided
 let mcpServer: McpServer | null = null;
 

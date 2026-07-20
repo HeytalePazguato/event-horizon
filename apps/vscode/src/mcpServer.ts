@@ -21,6 +21,7 @@ import type { BudgetManager } from './budgetManager.js';
 import type { TraceStore, SpanType } from './traceStore.js';
 import type { ModelTierManager } from './modelTierManager.js';
 import type { TokenAnalyzer } from './tokenAnalyzer.js';
+import type { FileReadCache } from './fileReadCache.js';
 import type { ProjectGraphStore, ProjectGraphLifecycle, GraphNodeType, RelationType, ScanRegistry } from './projectGraph/index.js';
 import type { ProjectGraphScanner } from './projectGraph/scanner.js';
 import type { GraphQueryEngine } from './projectGraph/queryEngine.js';
@@ -749,6 +750,17 @@ export const MCP_TOOLS: McpToolDef[] = [
     },
   },
   {
+    name: 'eh_get_cached_read',
+    description: 'Look up a file already read by another agent in the shared read cache. Returns the cached content, token estimate, mtime, and the agents that have read it — or { found: false } when the path is not cached. Use to dedup file reads across cooperating agents before reading from disk.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute file path to look up in the shared read cache.' },
+      },
+      required: ['path'],
+    },
+  },
+  {
     name: 'eh_rescan_files',
     description: 'Call after orchestration completes with the union of files touched during the run. Use `sinceMs` (orchestration-start ms) to also catch files the user edited manually outside the orchestration.',
     inputSchema: {
@@ -797,6 +809,47 @@ export class FileActivityTracker {
   }
 }
 
+// ── Cost-fit scoring helpers ────────────────────────────────────────────────
+
+// Additional weight for the model cost-fit factor in task/agent scoring. Kept
+// small relative to the primary factors (role 40 / success 30 / load 20 / deps 10).
+const COST_FIT_WEIGHT = 10;
+const TIER_RANK: Record<string, number> = { haiku: 0, sonnet: 1, opus: 2 };
+
+/** Derive a tier rank (0 = cheapest) from a model name/tier string, or null if unknown. */
+function tierRankOf(model: string | null | undefined): number | null {
+  if (!model) return null;
+  const m = model.toLowerCase();
+  if (m.includes('haiku')) return TIER_RANK.haiku;
+  if (m.includes('sonnet')) return TIER_RANK.sonnet;
+  if (m.includes('opus')) return TIER_RANK.opus;
+  return null;
+}
+
+/**
+ * Normalized cost-fit term in [-COST_FIT_WEIGHT, +COST_FIT_WEIGHT]. Rewards an
+ * agent whose model tier matches the recommended tier; lightly penalizes a
+ * costlier-than-recommended tier, more heavily on low-complexity tasks. Returns
+ * 0 (neutral) when either model tier is unknown or the agent is cheaper than
+ * recommended (possibly underpowered, but not a cost concern).
+ */
+function costFitScore(
+  agentModel: string | null | undefined,
+  recommendedModel: string | null | undefined,
+  complexity: string | null | undefined,
+): number {
+  const agentRank = tierRankOf(agentModel);
+  const recRank = tierRankOf(recommendedModel);
+  if (agentRank === null || recRank === null) return 0;
+  if (agentRank === recRank) return COST_FIT_WEIGHT; // exact tier match — full bonus
+  if (agentRank > recRank) {
+    const steps = agentRank - recRank;
+    const perStep = complexity === 'low' ? COST_FIT_WEIGHT : COST_FIT_WEIGHT * 0.4;
+    return -Math.min(COST_FIT_WEIGHT, steps * perStep);
+  }
+  return 0; // cheaper than recommended — neutral
+}
+
 // ── MCP Server ──────────────────────────────────────────────────────────────
 
 export interface McpServerDeps {
@@ -820,6 +873,7 @@ export interface McpServerDeps {
   workspaceRoot?: string;
   modelTierManager?: ModelTierManager;
   tokenAnalyzer?: TokenAnalyzer;
+  fileReadCache?: FileReadCache;
   eventSearch?: { search: (query: string, opts?: { agentId?: string; type?: string; since?: number; limit?: number }) => unknown[] };
   projectGraphStore?: ProjectGraphStore;
   projectGraphLifecycle?: ProjectGraphLifecycle;
@@ -1477,6 +1531,8 @@ export class McpServer {
 
         const { roleManager: rm, agentProfiler: ap } = this.deps;
         const getMetrics = this.deps.getMetrics;
+        const mtm = this.deps.modelTierManager;
+        const agentModel = this.deps.agentStateManager.getAgent(agentId)?.modelName ?? null;
 
         // Find available tasks (pending or blocked-but-unblocked)
         const available = plan.tasks.filter((t) =>
@@ -1536,7 +1592,18 @@ export class McpServer {
           score += depScore;
           if (depScore > 0) reasons.push(`Blocks ${dependentCount} tasks`);
 
-          return { task, score, reasons };
+          // 5. Cost fit (additional factor — agent model tier vs the model
+          //    recommended for this task's complexity)
+          let recommendedModel: string | null = null;
+          if (mtm && task.complexity) {
+            recommendedModel = mtm.getRecommendedModel(task.complexity, task.role ?? '');
+            const cf = costFitScore(agentModel, recommendedModel, task.complexity);
+            score += cf;
+            if (cf > 0) reasons.push(`Cost fit: model matches ${recommendedModel}`);
+            else if (cf < 0) reasons.push(`Cost penalty: ${agentModel} costlier than ${recommendedModel}`);
+          }
+
+          return { task, score, reasons, recommendedModel };
         });
 
         scored.sort((a, b) => b.score - a.score);
@@ -1547,6 +1614,7 @@ export class McpServer {
             task_id: best.task.id,
             title: best.task.title,
             role: best.task.role,
+            recommendedModel: best.recommendedModel,
             score: Math.round(best.score),
             reasons: best.reasons,
           },
@@ -1683,6 +1751,14 @@ export class McpServer {
         const planId = args.plan_id as string | undefined;
         const taskId = args.task_id as string | undefined;
         const interactive = args.interactive === true;
+
+        // Budget precheck: under hard enforcement, refuse to spawn when the
+        // target plan is already over budget — before spending on a new agent.
+        const budgetPlanId = planBoardManager.getPlan(planId)?.id ?? planId;
+        if (budgetPlanId && this.deps.budgetManager?.shouldHalt(budgetPlanId)) {
+          const remaining = this.deps.budgetManager.getRemaining(budgetPlanId).remaining;
+          return { error: 'budget_exceeded', planId: budgetPlanId, remaining };
+        }
 
         // Sync skills before spawning
         if (this.deps.syncSkills) {
@@ -1857,7 +1933,8 @@ export class McpServer {
 
         const { roleManager: rm, agentProfiler: ap } = this.deps;
         const getMetrics = this.deps.getMetrics;
-        const assignments: Array<{ taskId: string; assignedTo: string; assignedToName: string; reason: string }> = [];
+        const mtm = this.deps.modelTierManager;
+        const assignments: Array<{ taskId: string; assignedTo: string; assignedToName: string; reason: string; recommendedModel?: string | null }> = [];
         let agentIndex = 0;
 
         // dependency-first: BFS to count transitive blocked dependents per task, sort by criticality
@@ -1889,6 +1966,12 @@ export class McpServer {
           let bestAgent = agents[0];
           let bestScore = -1;
           let bestReason = 'default';
+
+          // Model recommended for this task's complexity — used for cost-fit
+          // scoring in capability-match and surfaced in the assignment record.
+          const recommendedModel = mtm && task.complexity
+            ? mtm.getRecommendedModel(task.complexity, task.role ?? '')
+            : null;
 
           if (strategy === 'round-robin' || strategy === 'dependency-first') {
             bestAgent = agents[agentIndex % agents.length];
@@ -1936,6 +2019,10 @@ export class McpServer {
               const depCount = board.tasks.filter((t) => t.blockedBy.includes(task.id)).length;
               score += Math.min(depCount * 5, 10);
 
+              // Cost fit — reward tier match, lightly penalize an oversized tier
+              // (heavier on low-complexity tasks). Neutral when unknown.
+              score += costFitScore(a.modelName, recommendedModel, task.complexity);
+
               if (score > bestScore) {
                 bestScore = score;
                 bestAgent = a;
@@ -1946,7 +2033,7 @@ export class McpServer {
 
           const result = planBoardManager.claimTask(task.id, bestAgent.id, bestAgent.name, board.id);
           if (result.success) {
-            assignments.push({ taskId: task.id, assignedTo: bestAgent.id, assignedToName: bestAgent.name, reason: bestReason });
+            assignments.push({ taskId: task.id, assignedTo: bestAgent.id, assignedToName: bestAgent.name, reason: bestReason, recommendedModel });
           }
         }
 
@@ -2371,7 +2458,24 @@ export class McpServer {
 
         const { ContextCurator } = await import('./projectGraph/contextCurator.js');
         const curator = new ContextCurator(engine);
+        if (this.deps.fileReadCache) curator.setFileReadCache(this.deps.fileReadCache);
         return curator.curate({ taskDescription, tokenBudget, seedFiles, includeActivity, includeKnowledge });
+      }
+
+      case 'eh_get_cached_read': {
+        const path = args.path as string;
+        const entry = this.deps.fileReadCache?.get(path);
+        if (!entry) {
+          return { found: false };
+        }
+        return {
+          found: true,
+          path: entry.path,
+          content: entry.content,
+          tokenEstimate: entry.tokenEstimate,
+          mtimeMs: entry.mtimeMs,
+          readers: [...entry.readers],
+        };
       }
 
       case 'eh_rescan_files': {

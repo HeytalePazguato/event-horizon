@@ -4,6 +4,7 @@
  */
 
 import type { AgentEvent } from '@event-horizon/core';
+import type { FileReadCache } from './fileReadCache.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,9 @@ interface TaskCostRecord {
 }
 
 const TOKENS_PER_FILE_READ = 500;
+// Read-tool names across every supported CLI (lowercased): Claude Code `Read`,
+// OpenCode `read`, Copilot `read_file`, plus search tools that surface a path.
+const READ_TOOL_NAMES = new Set(['read', 'read_file', 'readfile', 'grep', 'glob']);
 const HIGH_PRESSURE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const ANOMALY_RATIO_THRESHOLD = 3; // 3x average = anomaly
 const DEFAULT_CONTEXT_WINDOW = 200_000; // 200k tokens for Claude
@@ -92,6 +96,12 @@ export class TokenAnalyzer {
   private taskCosts: TaskCostRecord[] = [];
   private contextTracking = new Map<string, ContextLayerTracking>();
   private contextWindowSize = DEFAULT_CONTEXT_WINDOW;
+  private fileReadCache?: FileReadCache;
+
+  /** Attach a shared file-read cache so duplicate-read waste reflects real token sizes. */
+  setFileReadCache(cache: FileReadCache): void {
+    this.fileReadCache = cache;
+  }
 
   /** Process an incoming agent event. */
   onEvent(event: AgentEvent): void {
@@ -137,20 +147,28 @@ export class TokenAnalyzer {
       ctx.toolResultTokens += payload.outputTokens as number;
     }
 
-    // Track file reads from tool.call events
-    if (type === 'tool.call' && payload?.tool) {
-      const tool = String(payload.tool).toLowerCase();
-      if (tool === 'read' || tool === 'grep' || tool === 'glob') {
-        const file = String(payload.file_path ?? payload.filePath ?? payload.path ?? '');
+    // Track file reads from tool.call / tool.result events across every agent.
+    // Tool names differ by CLI: Claude Code `Read`, OpenCode `read`, Copilot
+    // `read_file`. Path field is `toolName`/`filePath` for Claude & OpenCode,
+    // and reads may arrive as `tool.result` too — support all shapes.
+    if ((type === 'tool.call' || type === 'tool.result') && payload && (payload.toolName ?? payload.tool)) {
+      const tool = String(payload.toolName ?? payload.tool).toLowerCase();
+      if (READ_TOOL_NAMES.has(tool)) {
+        const file = String(payload.filePath ?? payload.file_path ?? payload.path ?? '');
         if (file) {
           this.recordFileRead(file, agentId);
         }
       }
     }
 
-    // Track file reads from file.read events
-    if (type === 'file.read' && payload?.file) {
-      this.recordFileRead(String(payload.file), agentId);
+    // Track file reads from file.read events (Cursor `beforeReadFile`,
+    // OpenCode `file.watcher.updated`). These connectors set `filePath`, not
+    // `file` — accept every path field so Cursor/OpenCode reads register too.
+    if (type === 'file.read') {
+      const file = String(payload?.filePath ?? payload?.file_path ?? payload?.path ?? payload?.file ?? '');
+      if (file) {
+        this.recordFileRead(file, agentId);
+      }
     }
 
     // Track compaction events
@@ -198,7 +216,10 @@ export class TokenAnalyzer {
     // Duplicate read recommendations
     for (const dup of insights.duplicateReads) {
       if (dup.agents.length >= 3) {
-        recs.push(`${dup.agents.length} agents read ${dup.file} — consider adding key patterns to shared knowledge`);
+        const suffix = this.fileReadCache
+          ? ' — the shared-read cache serves repeat reads, so add key patterns to shared knowledge too'
+          : ' — consider adding key patterns to shared knowledge';
+        recs.push(`${dup.agents.length} agents read ${dup.file}${suffix}`);
       }
     }
 
@@ -370,12 +391,18 @@ export class TokenAnalyzer {
     for (const [file, record] of this.fileReads) {
       if (record.readers.size > 1) {
         const agents = Array.from(record.readers);
-        // Waste = (total reads - 1) * tokens per read (first read is not waste)
+        // Waste = (total reads - 1) * tokens per read (first read is not waste).
+        // Prefer the cache's real token estimate for the file when available;
+        // fall back to the flat per-read estimate for uncached files.
         const wasteReads = record.count - 1;
+        const cached = this.fileReadCache?.get(file);
+        const estimatedWasteTokens = cached
+          ? cached.tokenEstimate * wasteReads
+          : wasteReads * TOKENS_PER_FILE_READ;
         duplicates.push({
           file,
           agents,
-          estimatedWasteTokens: wasteReads * TOKENS_PER_FILE_READ,
+          estimatedWasteTokens,
         });
       }
     }

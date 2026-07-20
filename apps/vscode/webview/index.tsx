@@ -14,6 +14,7 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, type ReactNode } from 'react';
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn, SpawnBeam, KnowledgeLink } from '@event-horizon/renderer';
@@ -156,6 +157,11 @@ function App() {
   });
   const [agentMap, setAgentMap] = useState<Record<string, AgentState>>({});
   const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
+  // Webview-local pause tracking (does NOT touch shared core AgentState). Maps
+  // agentId → pause reason for agents the extension host has paused. Currently
+  // only 'budget' is emitted, but the reason is stored so the badge can label
+  // future causes without a schema change.
+  const [budgetPausedAgents, setBudgetPausedAgents] = useState<Record<string, 'budget'>>({});
   const [ships, setShips] = useState<ShipSpawn[]>([]);
   const [sparks, setSparks] = useState<SparkSpawn[]>([]);
   const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
@@ -352,6 +358,45 @@ function App() {
 
   // ── Clean up ship timers on unmount ──
   useEffect(() => () => { for (const id of shipTimerIdsRef.current) clearTimeout(id); }, []);
+
+  // ── Budget-pause tracking ──
+  // The extension host emits `{ type: 'agent-paused', agentId, reason: 'budget' }`
+  // when an agent is halted for exceeding its budget. This is a webview-local
+  // concern (the paused badge), so it's handled with a dedicated listener rather
+  // than threaded through useWebviewMessages / shared core types. The flag is
+  // cleared when a fresh agent.spawn arrives for the same agent (it re-spawned).
+  useEffect(() => {
+    const clearOnSpawn = (payload: unknown) => {
+      const p = payload as { type?: string; agentId?: string } | undefined;
+      if (p?.type === 'agent.spawn' && typeof p.agentId === 'string') {
+        const spawnedId = p.agentId;
+        setBudgetPausedAgents((prev) => {
+          if (!(spawnedId in prev)) return prev;
+          const next = { ...prev };
+          delete next[spawnedId];
+          return next;
+        });
+      }
+    };
+    const handler = (ev: MessageEvent) => {
+      const msg = ev.data as { type?: string; agentId?: string; reason?: string; payload?: unknown; events?: unknown[] } | undefined;
+      if (!msg) return;
+      if (msg.type === 'agent-paused' && typeof msg.agentId === 'string' && msg.reason === 'budget') {
+        const pausedId = msg.agentId;
+        setBudgetPausedAgents((prev) => (prev[pausedId] === 'budget' ? prev : { ...prev, [pausedId]: 'budget' }));
+        return;
+      }
+      // Clear the paused flag when the agent re-spawns (mirrors the batched +
+      // single event shapes handled by useWebviewMessages).
+      if (msg.type === 'events-batch' && Array.isArray(msg.events)) {
+        for (const e of msg.events) clearOnSpawn(e);
+      } else if (msg.type === 'event') {
+        clearOnSpawn(msg.payload);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   // ── Skill actions ──
   const handleOpenSkill = useCallback((filePath: string) => { vscodeApi?.postMessage({ type: 'open-skill-file', filePath }); }, []);
@@ -834,6 +879,53 @@ function App() {
         <div style={{ position: 'fixed', left: Math.min(mousePos.x + 14, window.innerWidth - 180), top: Math.min(Math.max(mousePos.y - 60, 8), window.innerHeight - 250), zIndex: 1000, pointerEvents: 'none' }}>
           <Tooltip agentName={hoveredAgent.name} loadPercent={Math.round((hoveredMetrics?.load ?? 0.5) * 100)} activeTask={hoveredAgent.currentTaskId} cwd={hoveredAgent.cwd} />
         </div>
+      )}
+      {/* Budget-pause badge — fixed top-right, portaled to document.body per the
+          EH portal-tooltip convention (never a native title / inline tooltip).
+          Reuses the Command Center SC2 aesthetic (green gradient, chamfered
+          clip, Consolas). One row per budget-paused agent. */}
+      {Object.keys(budgetPausedAgents).length > 0 && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 12,
+            right: 12,
+            zIndex: 9999,
+            pointerEvents: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            fontFamily: 'Consolas, monospace',
+          }}
+        >
+          {Object.entries(budgetPausedAgents).map(([agentId, reason]) => (
+            <div
+              key={agentId}
+              style={{
+                background: 'linear-gradient(180deg, #241206 0%, #150a04 100%)',
+                border: '1px solid #a4611f',
+                boxShadow: '0 2px 12px rgba(0,0,0,0.7)',
+                padding: '5px 9px',
+                clipPath: 'polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+              }}
+            >
+              <div
+                aria-hidden
+                style={{ width: 6, height: 6, borderRadius: 1, background: '#f0a020', boxShadow: '0 0 6px #f0a020', flexShrink: 0 }}
+              />
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#f0b050', letterSpacing: '0.06em' }}>
+                PAUSED — {reason}
+              </span>
+              <span style={{ fontSize: 9, color: '#b0824a', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {agentMap[agentId]?.name ?? agentId}
+              </span>
+            </div>
+          ))}
+        </div>,
+        document.body
       )}
     </div>
   );
