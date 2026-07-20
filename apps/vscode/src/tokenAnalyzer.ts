@@ -73,6 +73,9 @@ interface TaskCostRecord {
 }
 
 const TOKENS_PER_FILE_READ = 500;
+// Read-tool names across every supported CLI (lowercased): Claude Code `Read`,
+// OpenCode `read`, Copilot `read_file`, plus search tools that surface a path.
+const READ_TOOL_NAMES = new Set(['read', 'read_file', 'readfile', 'grep', 'glob']);
 const HIGH_PRESSURE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const ANOMALY_RATIO_THRESHOLD = 3; // 3x average = anomaly
 const DEFAULT_CONTEXT_WINDOW = 200_000; // 200k tokens for Claude
@@ -144,12 +147,13 @@ export class TokenAnalyzer {
       ctx.toolResultTokens += payload.outputTokens as number;
     }
 
-    // Track file reads from tool.call / tool.result events.
-    // Claude Code reports the tool name as `toolName` (not `tool`) and the path as
-    // `filePath`, and emits reads as `tool.result` too — support both shapes.
+    // Track file reads from tool.call / tool.result events across every agent.
+    // Tool names differ by CLI: Claude Code `Read`, OpenCode `read`, Copilot
+    // `read_file`. Path field is `toolName`/`filePath` for Claude & OpenCode,
+    // and reads may arrive as `tool.result` too — support all shapes.
     if ((type === 'tool.call' || type === 'tool.result') && payload && (payload.toolName ?? payload.tool)) {
       const tool = String(payload.toolName ?? payload.tool).toLowerCase();
-      if (tool === 'read' || tool === 'grep' || tool === 'glob') {
+      if (READ_TOOL_NAMES.has(tool)) {
         const file = String(payload.filePath ?? payload.file_path ?? payload.path ?? '');
         if (file) {
           this.recordFileRead(file, agentId);
@@ -157,9 +161,14 @@ export class TokenAnalyzer {
       }
     }
 
-    // Track file reads from file.read events
-    if (type === 'file.read' && payload?.file) {
-      this.recordFileRead(String(payload.file), agentId);
+    // Track file reads from file.read events (Cursor `beforeReadFile`,
+    // OpenCode `file.watcher.updated`). These connectors set `filePath`, not
+    // `file` — accept every path field so Cursor/OpenCode reads register too.
+    if (type === 'file.read') {
+      const file = String(payload?.filePath ?? payload?.file_path ?? payload?.path ?? payload?.file ?? '');
+      if (file) {
+        this.recordFileRead(file, agentId);
+      }
     }
 
     // Track compaction events
