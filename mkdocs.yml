@@ -1,0 +1,107 @@
+site_name: Event Horizon User Manual
+site_description: Complete user manual for the Event Horizon VS Code extension — multi-agent orchestration for AI coding agents.
+site_author: HeytalePazguato
+site_url: https://heytalepazguato.github.io/event-horizon/manual/
+
+repo_name: HeytalePazguato/event-horizon
+repo_url: https://github.com/HeytalePazguato/event-horizon
+edit_uri: edit/develop/docs/manual/
+
+# Source lives in docs/manual/. CI (.github/workflows/pages.yml) builds into
+# website/manual/ so the manual is served alongside the landing page at /manual/.
+docs_dir: docs/manual
+site_dir: website/manual
+
+copyright: MIT licensed &middot; Built by HeytalePazguato
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - glightbox
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HeytalePazguato/event-horizon
+    - icon: material/microsoft-visual-studio-code
+      link: https://marketplace.visualstudio.com/items?itemName=HeytalePazguato.event-horizon-vscode
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Concepts:
+      - The Universe: the-universe.md
+      - Command Center: command-center.md
+      - Operations Dashboard: operations-dashboard.md
+      - Achievements: achievements.md
+  - Working with Agents:
+      - Multi-Agent Orchestration: orchestration.md
+      - File Locking & Isolation: file-locking.md
+      - Shared Knowledge & Project Graph: knowledge-graph.md
+      - Agent Skills: skills.md
+      - Budget & Cost Management: budget.md
+  - Agent Setup:
+      - Claude Code: setup/claude-code.md
+      - OpenCode: setup/opencode.md
+      - GitHub Copilot: setup/copilot.md
+      - Cursor: setup/cursor.md
+  - Reference:
+      - Configuration: configuration.md
+      - MCP Tools: mcp-tools.md
+      - Troubleshooting & FAQ: troubleshooting.md
+      - Privacy & Data: privacy.md
+      - Release Notes: release-notes.md

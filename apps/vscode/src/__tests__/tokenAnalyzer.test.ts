@@ -121,12 +121,49 @@ describe('TokenAnalyzer', () => {
       expect(insights.duplicateReads.length).toBe(1);
     });
 
-    it('tracks file.read events', () => {
+    it('detects duplicate reads from the real Claude Code payload shape (toolName/filePath)', () => {
+      // Regression test for the Claude-Code read-detection trigger (task 2.8).
+      // Claude Code hooks report `toolName`/`filePath` (not `tool`/`file_path`).
+      // Before the fix, these payloads never registered a read, so cross-agent
+      // duplicate reads on the real payload shape went undetected.
+      analyzer.onEvent(makeEvent({ agentId: 'a1', type: 'tool.call', payload: { toolName: 'Read', filePath: 'src/x.ts' } }));
+      analyzer.onEvent(makeEvent({ agentId: 'a2', type: 'tool.call', payload: { toolName: 'Read', filePath: 'src/x.ts' } }));
+
+      const insights = analyzer.getInsights();
+      const dup = insights.duplicateReads.find(d => d.file.includes('src/x.ts'));
+      expect(dup).toBeDefined();
+      expect(dup!.agents).toHaveLength(2);
+    });
+
+    it('detects duplicate reads from the real Copilot payload shape (read_file/filePath)', () => {
+      // Copilot names its read tool `read_file` (not `read`), so the plain
+      // {read,grep,glob} check missed it. Cross-agent duplicate detection must
+      // normalize read_file too.
+      analyzer.onEvent(makeEvent({ agentType: 'copilot', agentId: 'a1', type: 'tool.call', payload: { toolName: 'read_file', filePath: 'src/y.ts' } }));
+      analyzer.onEvent(makeEvent({ agentType: 'copilot', agentId: 'a2', type: 'tool.call', payload: { toolName: 'read_file', filePath: 'src/y.ts' } }));
+
+      const dup = analyzer.getInsights().duplicateReads.find(d => d.file.includes('src/y.ts'));
+      expect(dup).toBeDefined();
+      expect(dup!.agents).toHaveLength(2);
+    });
+
+    it('tracks file.read events (payload.file — legacy/synthetic shape)', () => {
       analyzer.onEvent(makeEvent({ agentId: 'a1', type: 'file.read', payload: { file: 'src/config.ts' } }));
       analyzer.onEvent(makeEvent({ agentId: 'a2', type: 'file.read', payload: { file: 'src/config.ts' } }));
 
       const insights = analyzer.getInsights();
       expect(insights.duplicateReads.length).toBe(1);
+    });
+
+    it('detects duplicate reads from the real Cursor file.read shape (filePath)', () => {
+      // Cursor emits file.read with `filePath` (not `file`); the file.read branch
+      // previously only read `payload.file`, so Cursor reads went undetected.
+      analyzer.onEvent(makeEvent({ agentType: 'cursor', agentId: 'a1', type: 'file.read', payload: { filePath: 'src/z.ts' } }));
+      analyzer.onEvent(makeEvent({ agentType: 'cursor', agentId: 'a2', type: 'file.read', payload: { filePath: 'src/z.ts' } }));
+
+      const dup = analyzer.getInsights().duplicateReads.find(d => d.file.includes('src/z.ts'));
+      expect(dup).toBeDefined();
+      expect(dup!.agents).toHaveLength(2);
     });
 
     it('estimates waste tokens', () => {

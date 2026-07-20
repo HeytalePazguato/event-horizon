@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "3.0.4",
+  "version": "3.1.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
@@ -514,13 +514,13 @@
     "tree-sitter-c-sharp": "^0.23.0",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-php": "^0.24.2",
-    "tree-sitter-python": "^0.23.0",
+    "tree-sitter-python": "^0.25.0",
     "tree-sitter-typescript": "^0.23.0",
     "web-tree-sitter": "^0.25.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "^25.8.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/sql.js": "^1.4.11",
@@ -528,9 +528,9 @@
     "@types/ws": "^8.18.1",
     "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.28.0",
-    "ovsx": "^0.10.11",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "ovsx": "^0.10.12",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "typescript": "^5.9.3"
   }
 }

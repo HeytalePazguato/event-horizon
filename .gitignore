@@ -24,3 +24,8 @@ docs/articles/
 # Workspace-local graph DB created by the extension when /eh:optimize-context runs.
 # Each consumer of EH gets one of these per workspace; never commit the EH repo's own.
 .eh/
+
+# MkDocs build output. Source lives in docs/manual/; CI builds the static site
+# into website/manual/ so it deploys alongside the landing page.
+website/manual/
+.cache/

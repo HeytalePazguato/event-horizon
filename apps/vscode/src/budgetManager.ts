@@ -34,6 +34,7 @@ export class BudgetManager {
   private limits = new Map<string, number>();     // planId → maxUsd
   private entries: BudgetEntry[] = [];
   private warningThreshold = 0.8;
+  private enforcementMode: 'off' | 'warn' | 'hard' = 'warn';
 
   /** Set a budget limit for a plan. */
   setLimit(planId: string, maxUsd: number): void {
@@ -87,6 +88,21 @@ export class BudgetManager {
   isWarning(planId: string): boolean {
     const summary = this.getRemaining(planId);
     return summary.limit > 0 && summary.percentUsed >= this.warningThreshold && !this.isExceeded(planId);
+  }
+
+  /** Set the enforcement mode. */
+  setEnforcementMode(mode: 'off' | 'warn' | 'hard'): void {
+    this.enforcementMode = mode;
+  }
+
+  /** Get the enforcement mode. */
+  getEnforcementMode(): 'off' | 'warn' | 'hard' {
+    return this.enforcementMode;
+  }
+
+  /** Whether execution should halt for a plan (hard enforcement + exceeded budget). */
+  shouldHalt(planId: string): boolean {
+    return this.enforcementMode === 'hard' && this.isExceeded(planId);
   }
 
   /** Get per-agent cost breakdown for a plan. */
