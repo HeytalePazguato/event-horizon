@@ -14,14 +14,14 @@
   "dependencies": {
     "@event-horizon/core": "workspace:*",
     "d3-force": "^3.0.0",
-    "zustand": "^5.0.12"
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@types/d3-force": "^3.0.10",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
