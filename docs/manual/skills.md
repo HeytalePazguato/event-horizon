@@ -6,13 +6,23 @@ A skill is a `SKILL.md` file: a name, a description, an allowed-tools list, and 
 
 ---
 
-## The ten bundled skills
+## The eleven bundled skills
 
 These are pre-installed to `~/.claude/skills/` when you connect an agent. Invoke them with a slash command in your agent.
 
+### `/eh:architect`
+
+Interview you before any plan exists. The agent runs a focused discovery conversation — language and runtime, framework and libraries, versions (verified against current releases, not guessed), architecture, and security — flags incompatibilities and design risks, then produces an **Architecture Brief** of the confirmed decisions.
+
+```
+/eh:architect A real-time collaborative markdown editor
+```
+
+Once you confirm the brief, the skill **chains directly into `/eh:create-plan`**, passing the brief so the plan builds on the confirmed decisions instead of re-litigating them. You can also stop at the brief and run `/eh:create-plan` yourself later.
+
 ### `/eh:create-plan`
 
-Create a multi-agent coordination plan and register it with Event Horizon. Produces parallel tracks, dependencies, acceptance criteria, and verify steps. The agent that runs this **becomes the orchestrator**.
+Create a multi-agent coordination plan and register it with Event Horizon. Produces parallel tracks, dependencies, acceptance criteria, and verify steps. The agent that runs this **becomes the orchestrator**. Accepts an Architecture Brief (from `/eh:architect`) or a plain description as input.
 
 ```
 /eh:create-plan Build a REST API with auth, a database layer, and tests

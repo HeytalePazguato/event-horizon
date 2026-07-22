@@ -38,6 +38,12 @@ You open three terminals. Claude Code builds the API. OpenCode writes tests. Cop
 ### After: your agent manages the team for you
 
 ```
+/eh:architect A REST API with auth, database layer, and tests
+```
+
+Optionally start with `/eh:architect` — it interviews you about language, stack, versions, architecture, and security, produces an Architecture Brief, then chains into planning. Or jump straight to the plan:
+
+```
 /eh:create-plan Build a REST API with auth, database layer, and tests
 ```
 
@@ -96,7 +102,7 @@ One-click connect for all agents. MCP server auto-registered. Hooks auto-updated
 
 **Session resume** -- Agents resume prior conversations when picking up previously worked tasks. No lost context, no wasted tokens.
 
-**50 MCP tools** -- All agents access coordination tools via the auto-registered MCP server. Ten bundled skills handle common workflows so agents don't need to memorize tool names.
+**51 MCP tools** -- All agents access coordination tools via the auto-registered MCP server. Eleven bundled skills handle common workflows so agents don't need to memorize tool names.
 
 **28 achievements** -- Milestones tracking your multi-agent journey. Some are secret. Some have tiers. All persist across sessions.
 

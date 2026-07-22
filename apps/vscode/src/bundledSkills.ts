@@ -27,7 +27,7 @@ const skills: BundledSkill[] = [
 name: eh:create-plan
 description: "Create a multi-agent coordination plan and register it with Event Horizon"
 user-invocable: true
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools: Read, Grep, Glob, Write, Edit
 argument-hint: "[feature or goal description] [optional: output folder path]"
 metadata:
@@ -232,7 +232,11 @@ Offer to save the brief to a file — default \`docs/ARCHITECTURE_BRIEF.md\` —
 
 ## Hand off to /eh:create-plan
 
-Finally, tell the user their next step: run \`/eh:create-plan\` and pass this Architecture Brief (or its file path) as the input, so the plan is built on confirmed technology and version decisions. Note that \`/eh:create-plan\` is **user-invoked** (\`disable-model-invocation: true\`), so this skill CANNOT call it automatically — the user must invoke it themselves.
+Once the user has confirmed the Architecture Brief (and it is saved, if they chose to), chain directly into planning: invoke the \`eh:create-plan\` skill via the Skill tool, passing the Architecture Brief as its input — the full markdown block verbatim, or the file path (e.g. \`docs/ARCHITECTURE_BRIEF.md\`) if you saved it. This lets the plan build on the confirmed technology and version decisions instead of re-litigating them.
+
+Before chaining, confirm with the user in one line, e.g. "Brief confirmed — creating the plan now." Do NOT chain if the user has not yet approved the brief, or if they explicitly say they want to stop at the brief.
+
+The user can also run \`/eh:create-plan\` themselves at any time (it remains user-invocable) and pass the brief or its file path as the argument.
 `,
   },
   {
