@@ -516,7 +516,7 @@
     "tree-sitter-php": "^0.24.2",
     "tree-sitter-python": "^0.25.0",
     "tree-sitter-typescript": "^0.23.0",
-    "web-tree-sitter": "^0.25.0",
+    "web-tree-sitter": "^0.26.12",
     "ws": "^8.21.2"
   },
   "devDependencies": {
