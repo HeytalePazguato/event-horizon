@@ -26,6 +26,9 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### CI
 - **A changelog gate now blocks stable releases.** `changelog-check` compares the top dated `## [X.Y.Z]` heading in `apps/vscode/CHANGELOG.md` against `package.json`, and the `release` job depends on it. Runs on pushes to `master` and PRs targeting it, so a version bump without a changelog entry fails before the tag is created rather than after — the exact failure that lost the 3.1.0 and 3.1.1 entries.
 
+### Code quality
+- **Lint is now warning-clean across the monorepo** (24 warnings → 0; it was already error-free). Every warning was `@typescript-eslint/no-explicit-any` in a test file. Pixi `Graphics`/`Container` and `execFile` mocks now go through narrow local interfaces cast via `unknown` instead of `any`, so a change to the real signature shows up as a type error in the tests instead of being silently swallowed.
+- **Two dead `eslint-disable` directives removed.** One sat 14 lines above the `any` it was meant to suppress; the other named `no-console`, a rule that package doesn't enable. Neither suppressed anything, and both would have masked a real finding if code moved under them.
 ### Security
 - **All 11 open Dependabot alerts resolved** (6 high, 5 moderate) without a single major bump — every fix was available inside the current major. The overrides existed already but each was pinned just below its fix line, so they satisfied the constraint while still resolving a vulnerable version:
 

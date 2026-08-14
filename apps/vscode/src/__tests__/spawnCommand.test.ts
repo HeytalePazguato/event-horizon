@@ -13,6 +13,13 @@ vi.mock('child_process', async (importOriginal) => {
 });
 
 import { execFile } from 'child_process';
+import type { ChildProcess } from 'child_process';
+
+/** The execFile callback shape `resolveCommand` invokes. */
+type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+
+/** `resolveCommand` ignores the returned handle, so an empty stand-in is enough. */
+const noopChildProcess = (): ChildProcess => ({} as ChildProcess);
 
 function baseOpts(overrides: Partial<SpawnOpts> = {}): SpawnOpts {
   return {
@@ -99,9 +106,9 @@ describe('resolveCommand — Windows shim preference', () => {
   it('prefers .cmd over extensionless file when where returns both', async () => {
     // Simulate Windows
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32' as NodeJS.Platform);
-    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: ExecFileCallback) => {
       cb(null, 'C:\\Program Files\\nodejs\\opencode\r\nC:\\Program Files\\nodejs\\opencode.cmd\r\n', '');
-      return {} as any;
+      return noopChildProcess();
     });
 
     const result = await resolveCommand('opencode');
@@ -115,9 +122,9 @@ describe('resolveCommand — Windows shim preference', () => {
 
   it('prefers .exe over extensionless file on Windows', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32' as NodeJS.Platform);
-    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: ExecFileCallback) => {
       cb(null, 'C:\\tools\\mytool\r\nC:\\tools\\mytool.exe\r\n', '');
-      return {} as any;
+      return noopChildProcess();
     });
 
     const result = await resolveCommand('mytool');
@@ -130,9 +137,9 @@ describe('resolveCommand — Windows shim preference', () => {
 
   it('falls back to extensionless file if no Windows-executable extension found', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32' as NodeJS.Platform);
-    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: ExecFileCallback) => {
       cb(null, 'C:\\tools\\mytool\r\n', '');
-      return {} as any;
+      return noopChildProcess();
     });
 
     const result = await resolveCommand('mytool');
@@ -143,9 +150,9 @@ describe('resolveCommand — Windows shim preference', () => {
 
   it('does not apply Windows preference logic on non-Windows platforms', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux' as NodeJS.Platform);
-    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: any) => {
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: ExecFileCallback) => {
       cb(null, '/usr/bin/opencode\n', '');
-      return {} as any;
+      return noopChildProcess();
     });
 
     const result = await resolveCommand('opencode');

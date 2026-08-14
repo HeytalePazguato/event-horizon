@@ -15,14 +15,13 @@ import { MessageQueue } from '../messageQueue.js';
 import { RoleManager } from '../roleManager.js';
 import { AgentProfiler } from '../agentProfiler.js';
 import { SharedKnowledgeStore } from '../sharedKnowledge.js';
-import type { SpawnOpts, SpawnResult } from '../spawnRegistry.js';
+import type { SpawnOpts, SpawnResult, SpawnRegistry } from '../spawnRegistry.js';
 
 /** Minimal fake spawnRegistry that records calls. */
 function makeSpawnRegistry() {
   const calls: Array<{ type: string; opts: SpawnOpts }> = [];
   return {
     calls,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     registry: {
       async spawn(type: string, opts: SpawnOpts): Promise<SpawnResult> {
         calls.push({ type, opts });
@@ -36,7 +35,7 @@ function makeSpawnRegistry() {
       untrackAgent() { /* no-op */ },
       getTerminal() { return undefined; },
       findTerminalForAgent() { return undefined; },
-    } as any,
+    } as unknown as SpawnRegistry,
   };
 }
 
@@ -146,8 +145,7 @@ describe('eh_spawn_agent — agent_type resolution', () => {
       roleManager: new RoleManager(),
       agentProfiler: new AgentProfiler(),
       sharedKnowledge: new SharedKnowledgeStore(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      spawnRegistry: s.registry as any,
+      spawnRegistry: s.registry,
       syncSkills: async () => ({ synced: true }),
     });
     planBoardManager.loadPlan('# Plan\n- [ ] 1.1 x [role: tester]\n', 'p.md');
