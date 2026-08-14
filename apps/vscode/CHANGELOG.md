@@ -29,6 +29,22 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Code quality
 - **Lint is now warning-clean across the monorepo** (24 warnings → 0; it was already error-free). Every warning was `@typescript-eslint/no-explicit-any` in a test file. Pixi `Graphics`/`Container` and `execFile` mocks now go through narrow local interfaces cast via `unknown` instead of `any`, so a change to the real signature shows up as a type error in the tests instead of being silently swallowed.
 - **Two dead `eslint-disable` directives removed.** One sat 14 lines above the `any` it was meant to suppress; the other named `no-console`, a rule that package doesn't enable. Neither suppressed anything, and both would have masked a real finding if code moved under them.
+### Security
+- **All 11 open Dependabot alerts resolved** (6 high, 5 moderate) without a single major bump — every fix was available inside the current major. The overrides existed already but each was pinned just below its fix line, so they satisfied the constraint while still resolving a vulnerable version:
+
+  | package | was | now | advisories |
+  |---|---|---|---|
+  | `fast-uri` | `>=3.1.2` → 3.1.2 | `^3.1.5` → 3.1.5 | GHSA-4c8g-83qw-93j6, GHSA-7p8r-x3mc-p8w7, GHSA-v2hh-gcrm-f6hx |
+  | `js-yaml` | `^4.2.0` → 4.3.0 | `^4.3.1` → 4.3.1 | GHSA-5p4m-2wfm-xmqj |
+  | `postcss` | `>=8.5.10` → 8.5.13 | `^8.5.26` → 8.5.26 | GHSA-r28c-9q8g-f849, GHSA-fxqj-rqcc-2cmp |
+  | `undici` | `^8.5.0` → 8.7.0 | `^8.9.0` → 8.10.0 | GHSA-4cwx-7wf7-3272 + 4 moderate |
+
+  Unbounded `>=` overrides were converted to `^` so a future install can't silently pull a breaking major.
+
+### Dependencies
+- **Grouped Dependabot updates applied** (#113, #114): `eslint` 10.7.0 → 10.8.1, `globals` 17.7.0 → 17.11.0, `turbo` 2.10.5 → 2.10.10, `typescript-eslint` 8.65.0 → 8.67.0, `react`/`react-dom` 19.2.7 → 19.2.8, `@types/react` 19.2.17 → 19.2.18, `@types/react-dom` 19.2.3 → 19.2.4, `tsx` 4.23.1 → 4.23.9, `ws` 8.20.0 → 8.21.3.
+- **`ws` override raised to `^8.21.2`.** The manifest asked for `^8.21.2` while `pnpm.overrides` still pinned `^8.21.0`, so installs silently resolved 8.21.1 — the override wins, and the two had drifted apart.
+- **`web-tree-sitter` deliberately held at 0.25.x**, deferring the `web-tree-sitter` half of #113. 0.26 renames the WASM export from `./tree-sitter.wasm` to `./web-tree-sitter.wasm`, so `require.resolve('web-tree-sitter/tree-sitter.wasm')` in `scripts/copy-tree-sitter-wasm.mjs` throws and the build produces an extension with no parser. The main entry also moved from `tree-sitter.{js,cjs}` to `web-tree-sitter.{js,cjs}`, which `scripts/build-extension.mjs` special-cases by name. Upgrading is a real migration across the copy script, the esbuild config, `verify-treesitter-bundle.mjs`, and both extractors — tracked separately rather than bundled into a dependency sweep.
 
 ## [3.1.1] — 2026-07-21
 
