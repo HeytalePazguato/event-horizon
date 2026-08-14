@@ -603,9 +603,38 @@ export function activate(context: vscode.ExtensionContext): void {
     void context.globalState.update('agentProfiles', agentProfiler.serialize());
   });
 
-  // Send role instructions when a task with a role is claimed
+  // ── System-notice suppression state ────────────────────────────────────────
+  // Event Horizon's own messages share an inbox with real agent-to-agent
+  // traffic, so every notice below is deduped at the source. Without this, a
+  // peer message ends up buried under hundreds of identical system notices.
+
+  /** agentId → the active-plan set it was last told about. */
+  const planNoticeSignatures = new Map<string, string>();
+  /** "agentId|taskId" pairs that already received role instructions. */
+  const roleNoticesSent = new Set<string>();
+  /** Dedupe state for worker-failure escalations (see orchestratorNotifier). */
+  const failureNoticeTimes = new Map<string, number>();
+
+  // Send role instructions when a task with a role is claimed.
+  // Once per agent+task — a re-claim or reassignment of the same task would
+  // otherwise resend the identical instruction block.
   planBoardManager.onTaskClaim((task, _planId) => {
-    if (!task.role || !task.assignee) return;
+    if (!task.assignee) return;
+
+    // Give orchestrated workers a handle named after the work they took on, so
+    // a peer can reach "reviewer-2.1" instead of looking up a session ID.
+    if (task.role && !messageQueue.getHandleRoute(task.assignee)) {
+      const cwd = agentStateManager.getAgent(task.assignee)?.cwd
+        ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      messageQueue.claimHandle(
+        task.assignee, cwd, `${task.role}-${task.id}`,
+        (holder) => !!agentStateManager.getAgent(holder),
+      );
+    }
+
+    if (!task.role) return;
+    const noticeKey = `${task.assignee}|${task.id}`;
+    if (roleNoticesSent.has(noticeKey)) return;
     const instructions = roleManager.getInstructionsForRole(task.role);
     const skills = roleManager.getSkillsForRole(task.role);
     const role = roleManager.getRole(task.role);
@@ -614,6 +643,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (role) parts.push(`**Role assigned: ${role.name}**`);
     if (instructions) parts.push(instructions);
     if (skills.length > 0) parts.push(`Recommended skills: ${skills.map(s => '/' + s.replace('eh-', 'eh:')).join(', ')}`);
+    roleNoticesSent.add(noticeKey);
     messageQueue.send('event-horizon', 'Event Horizon', task.assignee, parts.join('\n\n'));
   });
 
@@ -961,6 +991,17 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
+    // Give this session a readable, unique address the first time we see it —
+    // `event-horizon-claude-143022` rather than a 40-character session ID.
+    // Assigned once and kept for the session's entire life, however long it
+    // idles; nothing here expires it.
+    messageQueue.ensureAlias(
+      event.agentId,
+      event.payload?.cwd as string | undefined,
+      event.agentType,
+      event.timestamp,
+    );
+
     // When a transcript watcher is active for this Claude Code agent, skip hook
     // events that the watcher covers with better accuracy. Hooks still handle:
     // - agent.spawn / agent.terminate (session lifecycle)
@@ -1022,7 +1063,9 @@ export function activate(context: vscode.ExtensionContext): void {
     updateStatusBar();
 
     // ── Push worker errors to the orchestrator so they can react ──
-    notifyOrchestratorsOfFailure(event, planBoardManager.getAllPlans(), messageQueue);
+    notifyOrchestratorsOfFailure(event, planBoardManager.getAllPlans(), messageQueue, {
+      recent: failureNoticeTimes,
+    });
 
     // ── Rate extension prompt (one-time, after 2+ agents connect) ──
     if (event.type === 'agent.spawn' && !ratingPromptShown) {
@@ -1107,23 +1150,36 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
-    // Auto-discovery: notify newly joined agents about active plans
+    // Auto-discovery: notify newly joined agents about active plans.
+    //
+    // Edge-triggered, not level-triggered. agent.spawn fires far more often
+    // than "an agent joined" — session resume, compaction, and every batch-mode
+    // re-invocation all emit it — so sending on each one buried real peer
+    // messages under hundreds of identical notices. We send only when the set
+    // of active plans this agent has been told about actually changes, and skip
+    // entirely while an earlier notice is still sitting unread.
     if (event.type === 'agent.spawn') {
       const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
-      if (activePlans.length === 1) {
-        const plan = activePlans[0];
-        const done = plan.tasks.filter((t) => t.status === 'done').length;
-        const pending = plan.tasks.filter((t) => t.status === 'pending').length;
-        messageQueue.send(
-          'event-horizon', 'Event Horizon', event.agentId,
-          `A shared plan "${plan.name}" is active (${done}/${plan.tasks.length} done, ${pending} pending). ` +
-          'Use eh_get_plan to see tasks and eh_claim_task to claim work.',
-        );
-      } else if (activePlans.length > 1) {
-        messageQueue.send(
-          'event-horizon', 'Event Horizon', event.agentId,
-          `${activePlans.length} active plans available. Use eh_list_plans to see them and eh_get_plan with a plan_id to view tasks.`,
-        );
+      const signature = activePlans.map((p) => p.id).sort().join(',');
+      const alreadyTold = planNoticeSignatures.get(event.agentId) === signature;
+
+      if (!alreadyTold && !messageQueue.hasUnreadFrom(event.agentId, 'event-horizon')) {
+        let body: string | null = null;
+        if (activePlans.length === 1) {
+          const plan = activePlans[0];
+          const done = plan.tasks.filter((t) => t.status === 'done').length;
+          const pending = plan.tasks.filter((t) => t.status === 'pending').length;
+          body = `A shared plan "${plan.name}" is active (${done}/${plan.tasks.length} done, ${pending} pending). `
+            + 'Use eh_get_plan to see tasks and eh_claim_task to claim work.';
+        } else if (activePlans.length > 1) {
+          body = `${activePlans.length} active plans available. Use eh_list_plans to see them and eh_get_plan with a plan_id to view tasks.`;
+        }
+        if (body) {
+          messageQueue.send('event-horizon', 'Event Horizon', event.agentId, body);
+        }
+        // Record even when there was nothing to say, so an agent that joins
+        // with no active plans isn't re-evaluated on every later spawn.
+        planNoticeSignatures.set(event.agentId, signature);
       }
     }
 
@@ -1340,6 +1396,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // Release any file locks held by the terminated agent
       releaseAgentLocks(event.agentId);
+
+      // Forget the plan notice we sent this session. A replacement session gets
+      // a fresh ID and should be told about active plans once, on its own.
+      planNoticeSignatures.delete(event.agentId);
+
+      // Addresses are deliberately NOT released here. An agent that idles for
+      // a day, or that a watchdog wrongly declares stale, must still be
+      // reachable at the address a peer was given. A stopped agent's handle is
+      // taken over by its replacement at claim time, which needs no cleanup.
 
       // Also clean up OpenCode SSE watcher
       const sseWatcher = openCodeSSEWatchers.get(event.agentId);

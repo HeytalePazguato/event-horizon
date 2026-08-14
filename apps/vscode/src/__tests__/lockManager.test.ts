@@ -89,11 +89,15 @@ describe('waitForUnlock', () => {
   });
 
   it('times out if lock is never released', async () => {
-    lm.acquire('src/index.ts', 'agent-a', 'Agent A');
-    // Refresh lock to prevent TTL expiry during test
-    const refreshInterval = setInterval(() => lm.acquire('src/index.ts', 'agent-a', 'Agent A'), 50);
-    const result = await lm.waitForUnlock('src/index.ts', 'agent-b', 'Agent B', 200);
-    clearInterval(refreshInterval);
+    // A TTL longer than the wait keeps the lock held for the whole test. The
+    // previous version refreshed a 100ms lock from a 50ms setInterval, which
+    // let the lock lapse whenever a loaded event loop delayed a tick — the
+    // waiter then acquired the lock and the assertion flipped.
+    const held = new LockManager(60_000);
+    held.setEnabled(true);
+    held.acquire('src/index.ts', 'agent-a', 'Agent A');
+
+    const result = await held.waitForUnlock('src/index.ts', 'agent-b', 'Agent B', 200);
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('Timeout');
   });

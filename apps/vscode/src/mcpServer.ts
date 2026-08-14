@@ -10,6 +10,7 @@ import type { AgentStateManager, AgentMetrics, AgentEvent } from '@event-horizon
 import type { LockManager } from './lockManager.js';
 import type { PlanBoardManager } from './planBoard.js';
 import type { MessageQueue } from './messageQueue.js';
+import { buildHandleRoute } from './messageQueue.js';
 import type { RoleManager } from './roleManager.js';
 import type { AgentProfiler } from './agentProfiler.js';
 import type { SharedKnowledgeStore } from './sharedKnowledge.js';
@@ -224,25 +225,42 @@ export const MCP_TOOLS: McpToolDef[] = [
   // ── Agent messaging tools ────────────────────────────────────────────────
   {
     name: 'eh_send_message',
-    description: 'Send a message to another agent or broadcast to all. Messages persist until read.',
+    description: 'Send a message to another agent or broadcast to all. Messages persist until read. Delivery is also keyed to the recipient\'s stable alias (workspace + name from eh_list_agents), so the message still arrives if their session restarts with a new ID.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent ID (sender)' },
         agent_name: { type: 'string', description: 'Human-readable sender name' },
-        to_agent_id: { type: 'string', description: 'Target agent ID, or \'*\' for broadcast' },
+        to_agent_id: { type: 'string', description: 'Target agent ID or alias, or \'*\' for broadcast. Prefer the alias from eh_list_agents — session IDs die with the session.' },
+        to_agent_name: { type: 'string', description: 'Alternative to to_agent_id: target by agent name (resolved within the sender\'s workspace). Use when you know who but not their session ID.' },
         message: { type: 'string', description: 'Message content' },
       },
-      required: ['agent_id', 'to_agent_id', 'message'],
+      required: ['agent_id', 'message'],
     },
   },
   {
-    name: 'eh_get_messages',
-    description: 'Get unread messages for your agent. Messages are marked as read after retrieval.',
+    name: 'eh_claim_handle',
+    description: 'Claim a short, workspace-unique handle (e.g. "reviewer", "csp") so other agents can address you by a name that survives session restarts. Call this once at session start. Re-claiming the same handle after a restart is allowed and restores any mail queued for it. Fails if another live agent already holds the handle.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent/session ID' },
+        handle: { type: 'string', description: 'Desired handle: 1-32 chars, starts alphanumeric, letters/digits/dot/dash/underscore only' },
+      },
+      required: ['agent_id', 'handle'],
+    },
+  },
+  {
+    name: 'eh_get_messages',
+    description: 'Get unread messages for your agent. Returns peer (agent-to-agent) messages first, then Event Horizon system notices, capped by limit. Only the messages actually returned are marked read — anything held back stays unread and is reported in `pending`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        kind: { type: 'string', enum: ['peer', 'system', 'all'], description: 'peer = messages another Event Horizon-connected agent session sent you via eh_send_message (findings, context, questions, coordination — any content), system = Event Horizon\'s own generated notices, all = both (default). Use "peer" to read agent traffic without wading through system notices.' },
+        from_agent_id: { type: 'string', description: 'Only messages from this sender ID' },
+        exclude_from: { type: 'string', description: 'Drop messages from this sender ID (e.g. "event-horizon")' },
+        limit: { type: 'number', description: 'Max messages to return (default 50, max 200)' },
       },
       required: ['agent_id'],
     },
@@ -978,6 +996,66 @@ export class McpServer {
     return rawId; // No match — return as-is
   }
 
+  /**
+   * Resolve a message recipient to a session ID plus a stable alias.
+   *
+   * Senders are given a session ID by whoever they are talking to, but session
+   * IDs die with the session. Every message therefore carries an alias
+   * (workspace + agent name) so a restarted recipient still collects its mail.
+   * The raw target may be a session ID, an alias, or a bare agent name.
+   */
+  private resolveRecipient(
+    rawTarget: string,
+    senderAgentId: string,
+  ): { agentId: string; alias: string | null; warning?: string; error?: string } {
+    const { agentStateManager, messageQueue } = this.deps;
+    const agents = agentStateManager.getAllAgents();
+    const wanted = rawTarget.trim().toLowerCase();
+
+    // Prefer a handle when the recipient holds one: it is the only address
+    // that still works after the recipient restarts.
+    const routeFor = (agentId: string) =>
+      messageQueue.getHandleRoute(agentId) ?? messageQueue.getAlias(agentId);
+
+    // 1. Exact session ID.
+    const exact = agents.find((a) => a.id === rawTarget);
+    if (exact) return { agentId: exact.id, alias: routeFor(exact.id) };
+
+    // 2. A handle or an alias, given as a full route or a bare name. Both are
+    //    unique, so a match is unambiguous.
+    const senderCwd = agentStateManager.getAgent(senderAgentId)?.cwd ?? null;
+    const candidates = [wanted, buildHandleRoute(senderCwd, wanted.replace(/^@/, ''))];
+    for (const route of candidates) {
+      const owner = messageQueue.getRouteOwner(route);
+      if (owner) return { agentId: owner, alias: route };
+    }
+
+    // 3. Bare agent name. Runtimes report a constant name, so this usually
+    //    matches several sessions — say so instead of picking one.
+    const byName = agents.filter((a) => (a.name ?? '').trim().toLowerCase() === wanted);
+    if (byName.length > 1) {
+      const options = byName.map((a) => messageQueue.getAlias(a.id) ?? a.id);
+      return {
+        agentId: rawTarget,
+        alias: null,
+        error: `"${rawTarget}" is the runtime name shared by ${byName.length} running agents. `
+          + `Address one of them directly: ${options.join(', ')}. `
+          + 'eh_list_agents shows which is which.',
+      };
+    }
+    if (byName.length === 1) {
+      return { agentId: byName[0].id, alias: routeFor(byName[0].id) };
+    }
+
+    // 4. Unknown target — queue it against whatever route we already associate
+    //    with this ID, so a reconnecting session still receives it.
+    return {
+      agentId: rawTarget,
+      alias: routeFor(rawTarget),
+      warning: `No running agent matches "${rawTarget}". The message is queued and will be delivered if that agent connects.`,
+    };
+  }
+
   /** Handle a JSON-RPC request and return a response. */
   async handleRequest(body: unknown): Promise<JsonRpcResponse> {
     const req = body as Partial<JsonRpcRequest>;
@@ -1087,17 +1165,27 @@ export class McpServer {
         const locks = lockManager.getActiveLocks();
 
         return {
-          agents: agents.map((a) => ({
-            id: a.id,
-            name: a.name,
-            type: a.type,
-            state: a.state,
-            cwd: a.cwd ?? null,
-            locks: locks.filter((l) => l.agentId === a.id).map((l) => ({
-              file: l.path,
-              reason: l.reason,
-            })),
-          })),
+          agents: agents.map((a) => {
+            const alias = messageQueue.getAlias(a.id);
+            const handle = messageQueue.getHandle(a.id);
+            return {
+              id: a.id,
+              name: a.name,
+              type: a.type,
+              state: a.state,
+              cwd: a.cwd ?? null,
+              // `alias` is unique and readable but belongs to this session
+              // only; `handle` is what the agent claimed and is the one address
+              // that keeps working after it restarts.
+              alias,
+              handle,
+              address: handle ?? alias ?? a.id,
+              locks: locks.filter((l) => l.agentId === a.id).map((l) => ({
+                file: l.path,
+                reason: l.reason,
+              })),
+            };
+          }),
         };
       }
 
@@ -1357,31 +1445,90 @@ export class McpServer {
       // ── Agent messaging tools ──────────────────────────────────────────────
 
       case 'eh_send_message': {
-        const agentId = args.agent_id as string;
+        const agentId = this.resolveAgentId(args.agent_id as string);
         const agentName = (args.agent_name as string) ?? agentId;
-        const toAgentId = args.to_agent_id as string;
         const message = args.message as string;
-        const msg = messageQueue.send(agentId, agentName, toAgentId, message);
+        const rawTarget = (args.to_agent_id as string | undefined)
+          ?? (args.to_agent_name as string | undefined);
+        if (!rawTarget) {
+          return { sent: false, error: 'Provide either to_agent_id or to_agent_name.' };
+        }
+
+        // Always 'peer': anything sent through this tool came from an agent, so
+        // a caller passing agent_id="event-horizon" can't forge a system notice.
+        if (rawTarget === '*') {
+          const msg = messageQueue.send(agentId, agentName, '*', message, { kind: 'peer' });
+          return { sent: true, messageId: msg.id, to: 'broadcast' };
+        }
+
+        const target = this.resolveRecipient(rawTarget, agentId);
+        if (target.error) {
+          return { sent: false, error: target.error };
+        }
+        const msg = messageQueue.send(agentId, agentName, target.agentId, message, {
+          kind: 'peer',
+          toAlias: target.alias,
+        });
         return {
           sent: true,
           messageId: msg.id,
-          to: toAgentId === '*' ? 'broadcast' : toAgentId,
+          to: target.agentId,
+          to_alias: target.alias,
+          resolved_from: target.agentId !== rawTarget ? rawTarget : undefined,
+          warning: target.warning,
+        };
+      }
+
+      case 'eh_claim_handle': {
+        const agentId = this.resolveAgentId(args.agent_id as string);
+        const cwd = agentStateManager.getAgent(agentId)?.cwd ?? this.deps.workspaceRoot ?? null;
+        // A handle is only blocked by an agent that is still running — the
+        // replacement for a stopped agent takes the name back.
+        const result = messageQueue.claimHandle(
+          agentId, cwd, args.handle as string,
+          (holder) => !!agentStateManager.getAgent(holder),
+        );
+        if (!result.ok) {
+          return { claimed: false, error: result.error, held_by: result.heldBy };
+        }
+        return {
+          claimed: true,
+          handle: result.handle,
+          route: result.route,
+          note: 'Other agents can now reach you with eh_send_message(to_agent_id: "'
+            + result.handle + '"). Re-claim this handle after a restart to keep the address.',
         };
       }
 
       case 'eh_get_messages': {
-        const agentId = args.agent_id as string;
-        const messages = messageQueue.getUnread(agentId);
+        const rawAgentId = args.agent_id as string;
+        const agentId = this.resolveAgentId(rawAgentId);
+        const kindArg = args.kind as string | undefined;
+        const kind = kindArg === 'peer' || kindArg === 'system' ? kindArg : 'all';
+        const limit = typeof args.limit === 'number'
+          ? Math.max(1, Math.min(args.limit, 200))
+          : undefined;
+
+        const { messages, pending } = messageQueue.getUnread(agentId, {
+          kind,
+          fromAgentId: args.from_agent_id as string | undefined,
+          excludeFrom: args.exclude_from as string | undefined,
+          limit,
+        });
+
         return {
           messages: messages.map((m) => ({
             id: m.id,
             from: m.fromAgentName,
             fromAgentId: m.fromAgentId,
+            kind: m.kind,
             broadcast: m.toAgentId === '*',
             message: m.message,
             timestamp: m.timestamp,
           })),
           count: messages.length,
+          pending,
+          resolved_from: agentId !== rawAgentId ? rawAgentId : undefined,
         };
       }
 

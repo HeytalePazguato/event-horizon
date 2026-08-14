@@ -113,6 +113,21 @@ fi
   return { checkScript, releaseScript };
 }
 
+/**
+ * Build the UserPromptSubmit command.
+ *
+ * Unlike every other hook, this one keeps stdout: Claude Code injects a
+ * UserPromptSubmit hook's output into that turn's context. The /claude/inbox
+ * route records the event like /claude does, then answers with a one-line
+ * notice when peer mail is waiting (and an empty body when it isn't). That
+ * gives a dormant session a wake-up it can act on the next time you type,
+ * without the extension host needing to push anything.
+ */
+function buildPromptSubmitCommand(): string {
+  const authHeader = buildAuthHeader();
+  return `curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeader} -d @- http://127.0.0.1:${PORT}/claude/inbox 2>/dev/null || true`;
+}
+
 /** Build the PreToolUse command — calls the external script file. */
 function buildPreToolUseCommand(): string {
   const scriptPath = path.join(os.homedir(), '.event-horizon', 'eh-lock-check.sh').split('\\').join('/');
@@ -147,6 +162,7 @@ function isCurrentEhHook(h: Record<string, unknown>): boolean {
     if (h.command.includes('?token=')) return false;
     if (h.command === buildEhCommand()) return true;
     if (h.command === buildPreToolUseCommand()) return true;
+    if (h.command === buildPromptSubmitCommand()) return true;
   }
   if (h.type === 'http' && h.url === buildEhUrl()) return true;
   return false;
@@ -265,7 +281,11 @@ export async function setupClaudeCodeHooks(): Promise<void> {
     });
 
     // PreToolUse uses the lock-checking script; everything else uses the normal curl
-    const cmd = hookEvent === 'PreToolUse' ? buildPreToolUseCommand() : buildEhCommand();
+    const cmd = hookEvent === 'PreToolUse'
+      ? buildPreToolUseCommand()
+      : hookEvent === 'UserPromptSubmit'
+        ? buildPromptSubmitCommand()
+        : buildEhCommand();
     merged[hookEvent] = alreadyCurrent
       ? withoutStale
       : [...withoutStale, { matcher: '', hooks: [{ type: 'command', command: cmd }] }];

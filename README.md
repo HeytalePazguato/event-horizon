@@ -102,7 +102,7 @@ One-click connect for all agents. MCP server auto-registered. Hooks auto-updated
 
 **Session resume** -- Agents resume prior conversations when picking up previously worked tasks. No lost context, no wasted tokens.
 
-**51 MCP tools** -- All agents access coordination tools via the auto-registered MCP server. Eleven bundled skills handle common workflows so agents don't need to memorize tool names.
+**52 MCP tools** -- All agents access coordination tools via the auto-registered MCP server. Eleven bundled skills handle common workflows so agents don't need to memorize tool names.
 
 **28 achievements** -- Milestones tracking your multi-agent journey. Some are secret. Some have tiers. All persist across sessions.
 

@@ -4,8 +4,13 @@
     "outDir": "out",
     "rootDir": "src",
     "module": "CommonJS",
+    // The extension host is CommonJS and resolves via node10 semantics.
+    // TypeScript deprecated that mode and removes it in 7.0; the suppression
+    // must name the version that will drop it, and newer toolchains reject the
+    // older "5.0" value outright. Migrating to Node16/Bundler resolution is a
+    // separate change — it alters how every import specifier resolves.
     "moduleResolution": "Node",
-    "ignoreDeprecations": "5.0",
+    "ignoreDeprecations": "6.0",
     "types": ["node"]
   },
   "include": ["src/**/*"]

@@ -106,7 +106,7 @@ Run `/eh:optimize-context` to scan the workspace (tree-sitter for TS/JS/TSX, PHP
 
 ---
 
-## 50 MCP tools
+## 52 MCP tools
 
 All agents access coordination tools via the MCP server (auto-registered on connect):
 
@@ -114,7 +114,7 @@ All agents access coordination tools via the MCP server (auto-registered on conn
 
 **Plans and tasks** -- `eh_load_plan` `eh_get_plan` `eh_list_plans` `eh_claim_task` `eh_update_task` `eh_verify_task` `eh_retry_task` `eh_recommend_task` `eh_archive_plan` `eh_delete_plan`
 
-**Messaging** -- `eh_send_message` `eh_get_messages`
+**Messaging** -- `eh_send_message` `eh_get_messages` `eh_claim_handle`
 
 **Roles and profiling** -- `eh_list_roles` `eh_assign_role` `eh_get_agent_profile` `eh_recommend_agent`
 

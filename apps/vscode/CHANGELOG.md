@@ -2,11 +2,58 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [3.0.5] — Unreleased
+## [Unreleased]
+
+### Changed
+- **`eh_get_messages` now filters and paginates.** New `kind` (`peer` / `system` / `all`), `from_agent_id`, `exclude_from`, and `limit` parameters. Messages carry a `kind` recording who sent them: `peer` for anything another EH-connected agent session sent via `eh_send_message`, `system` for Event Horizon's own generated notices. Results return peer messages first, then system notices, capped at 50 per call. Only the messages actually returned are marked read, and the response reports a `pending` count per kind, so a filtered read can't silently consume mail the caller never saw. Previously the tool dumped the entire inbox and marked all of it read — a real peer message could sit past the tool-output truncation point and be lost.
+- **`eh_send_message` accepts readable addresses.** `to_agent_id` resolves an alias, a claimed handle, a session ID, or an agent name, and a new `to_agent_name` parameter targets by name directly. Every message is tagged with the recipient's address, so a message addressed to a handle reaches whichever session holds that handle when it is read.
+- **`eh_list_agents` returns `alias`, `handle`, and `address`** — `address` holds the best way to reach that agent, so callers don't have to work out the precedence themselves.
+
+### Added
+- **Every agent now gets a readable address.** Event Horizon assigns each session an alias on arrival: `<project>-<runtime>-<hhmmss>`, e.g. `event-horizon-claude-143022`. Runtimes report a constant name per runtime (every Claude Code session is called `Claude Code`), so the session start time is what distinguishes agents in a project running several sessions of one runtime. Assigned once, never changed, never expired — an agent idling for hours or days keeps the address peers were given.
+- **`eh_claim_handle` MCP tool.** An agent claims a short project-unique name (`csp`, `reviewer`) that survives a restart: the replacement session claims the same handle and collects everything queued for it in the interim, which an alias cannot do because a restarted session is a new session. A handle is refused only while another *running* agent holds it. Agents that claim a plan task are given one automatically (`<role>-<task-id>`), so orchestrated workers are addressable without doing anything.
+- **Prompt-submit inbox notice.** A dormant CLI session can't be woken by the extension host, so peer messages sat unread until the agent happened to poll. The `UserPromptSubmit` hook now posts to a new `/claude/inbox` route and injects its reply into the turn, so the next time you send a prompt the agent starts out knowing it has mail and who it's from. Nothing is injected when the inbox is empty, and peeking never marks messages read. Installed hooks are rewritten on every activation, so this arrives with the upgrade — no re-running setup.
+
+### Fixed
+- **Plan auto-discovery no longer floods agent inboxes.** The "N active plans available" notice was sent on every `agent.spawn` event — which fires on session resume, compaction, and every batch-mode re-invocation, not just when an agent first joins. A long-running session accumulated hundreds of identical notices (485 messages, one every ~30s, in one report) that buried real peer messages. The notice is now edge-triggered: it fires only when the set of active plans an agent has been told about actually changes, and is skipped entirely while an earlier notice sits unread.
+- **Routine tool failures no longer escalate to the orchestrator.** Connectors map `PostToolUseFailure` to `agent.error`, so a grep with no match or a non-zero `Bash` exit sent the orchestrator a "worker reported an error" message. Tool-level failures are now ignored, and identical failures from the same worker are suppressed for 60s so a retry loop reports once instead of once per attempt.
+- **Role instructions are sent once per agent+task.** Re-claiming or reassigning the same task resent the identical instruction block.
+- **Sending to a runtime name no longer picks an arbitrary session.** `eh_send_message` targeted by a bare name (`Claude Code`) now refuses when several agents share that runtime name, and lists their aliases so the caller can pick one, instead of delivering to whichever session was seen most recently.
+- **`waitForUnlock` timeout test no longer flakes under load.** It refreshed a 100ms lock from a 50ms `setInterval`, so a delayed tick let the lock lapse and the waiter acquire it. It now holds a lock whose TTL outlasts the wait.
+- **CHANGELOG entries restored for 3.1.0 and 3.1.1.** Both release commits bumped only `apps/vscode/package.json`, so both versions shipped with no changelog entry and their work sat under a `[3.0.5] — Unreleased` heading. Entries reconstructed from the tags and commit history.
+- **`tsconfig.json` no longer errors in the editor.** `ignoreDeprecations` was pinned to `"5.0"`, which current TypeScript rejects for `moduleResolution: "Node"`; it now names `"6.0"`, the release that drops the mode. Migrating off node10 resolution remains outstanding.
+
+### CI
+- **A changelog gate now blocks stable releases.** `changelog-check` compares the top dated `## [X.Y.Z]` heading in `apps/vscode/CHANGELOG.md` against `package.json`, and the `release` job depends on it. Runs on pushes to `master` and PRs targeting it, so a version bump without a changelog entry fails before the tag is created rather than after — the exact failure that lost the 3.1.0 and 3.1.1 entries.
+
+## [3.1.1] — 2026-07-21
+
+### Changed
+- **`eh:architect` chains into `eh:create-plan`** after the architecture brief is confirmed, instead of ending at the brief. Still user-invocable on its own.
+
+### Docs
+- **`eh:architect` documented** in the README and user manual; stale skill and tool counts corrected.
+
+### Dependencies
+- Consolidated grouped dependabot updates (#102-#104).
+
+## [3.1.0] — 2026-07-20
+
+### Added
+- **Cost-aware orchestration.** New core modules — `FileReadCache`, budget enforcement, and model pricing — wired through the extension host: a shared read cache deduplicates file reads across agents, budgets can halt spawning when a plan exceeds its limit, and task routing accounts for both complexity and cost.
+- **`eh:architect` skill** — a pre-planning discovery interview that produces an architecture brief before any plan exists.
+- **MkDocs user manual** with GitHub Pages deployment, plus the first captured screenshots wired into the index and getting-started pages.
+
+### Fixed
+- **Duplicate-read detection now covers Copilot and Cursor**, not just Claude Code and OpenCode.
+- **VSIX packaging repaired** after dependency updates broke it.
 
 ### Changed
 - **Dependency bumps** (all patch-level, no behavior changes): `react` 19.2.5 → 19.2.6, `react-dom` 19.2.5 → 19.2.6, `typescript-eslint` 8.59.1 → 8.59.2, `ovsx` 0.10.11 → 0.10.12, `@types/node` 25.6.0 → 25.6.2.
-- **Dependabot now groups patch/minor bumps into one PR per week.** Previously each dep produced its own PR (5 PRs/week was typical), making routine maintenance feel like daily chores. `.github/dependabot.yml` now declares `dev-dependencies` and `production-dependencies` groups so weekly runs collapse to 1-2 PRs. Major bumps still come individually so they get proper scrutiny.
+- **Dependabot now groups patch/minor bumps into one PR per week.** Previously each dep produced its own PR (5 PRs/week was typical), making routine maintenance feel like daily chores. `.github/dependabot.yml` now declares `dev-dependencies` and `production-dependencies` groups so weekly runs collapse to 1-2 PRs. Major bumps still come individually so they get proper scrutiny. Consolidated dependabot updates (#89-#97) landed under the new grouping.
+
+### Security
+- **All 21 outstanding dependabot vulnerabilities resolved** via pnpm overrides (#100).
 
 ## [3.0.4] — 2026-05-09
 

@@ -154,6 +154,26 @@ export const worktreeManager = new WorktreeManager();
 export const budgetManager = new BudgetManager();
 
 /**
+ * Build the text injected into an agent's context when it submits a prompt.
+ *
+ * A dormant CLI session can't be woken by the extension host, so mail sits in
+ * the queue until the agent happens to call eh_get_messages. Piggybacking on
+ * the prompt-submit hook closes that gap: the next time the user types, the
+ * agent starts the turn already knowing it has peer mail waiting.
+ *
+ * Returns '' when nothing is waiting, so quiet turns inject nothing at all.
+ * Only peer mail is announced — system notices are not worth a nudge.
+ */
+export function buildInboxNotice(agentId: string): string {
+  const { peer, senders } = messageQueue.summarizeUnread(agentId);
+  if (peer === 0) return '';
+  const from = senders.slice(0, 3).join(', ');
+  const more = senders.length > 3 ? ` and ${senders.length - 3} more` : '';
+  return `[Event Horizon] You have ${peer} unread message${peer === 1 ? '' : 's'} `
+    + `from ${from}${more}. Call eh_get_messages(agent_id: "${agentId}", kind: "peer") to read them.`;
+}
+
+/**
  * Track which plan ID the webview is currently viewing. Used by knowledge
  * broadcasts so `getAllEntries()` pulls the correct plan's entries rather
  * than falling back to `_default`.
@@ -588,7 +608,7 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
       }
 
       let event: AgentEvent | null = null;
-      if (route === '/claude') {
+      if (route === '/claude' || route === '/claude/inbox') {
         event = mapClaudeHookToEvent(body);
       } else if (route === '/copilot') {
         event = mapCopilotHookToEvent(body);
@@ -636,7 +656,11 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
       if (event) {
         cb.onEvent(event);
         activeBridge?.ingestEvent(event);
-        if (route === '/claude') {
+        if (route === '/claude/inbox') {
+          // The body is injected into the agent's context by the hook, so it is
+          // plain prose, not JSON — and empty when there is nothing waiting.
+          send(200, buildInboxNotice(event.agentId));
+        } else if (route === '/claude') {
           send(200, '');
         } else {
           send(200, JSON.stringify({ ok: true }));
