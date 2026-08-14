@@ -12,6 +12,7 @@ import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentL
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
+import { backfillSessionCost, forgetBackfill } from './openCodeCostBackfill';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -1367,6 +1368,20 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
+    // ── OpenCode: seed real session spend on first sight ──
+    // The connector's accumulator starts at zero and only counts messages that
+    // arrive while we're attached, so a session already running (or one that
+    // survived a VS Code restart) reported a fraction of what it had spent.
+    // The plugin sends its serverUrl, so ask OpenCode for the history once.
+    if (event.agentType === 'opencode' && event.payload?.serverUrl) {
+      void backfillSessionCost(
+        event.agentId,
+        event.payload.serverUrl as string,
+        event.payload.cwd as string | undefined,
+        { log: (message) => console.log(message) },
+      ).catch(() => { /* best-effort: never block event processing */ });
+    }
+
     // NOTE: OpenCode SSE watcher is disabled - hooks now provide subagent events
     // via session.created with parentID. Keeping code for potential future use
     // when OpenCode's SSE endpoint becomes more reliable.
@@ -1396,6 +1411,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // Release any file locks held by the terminated agent
       releaseAgentLocks(event.agentId);
+
+      // Allow a re-backfill if this session id reconnects later.
+      forgetBackfill(event.agentId);
 
       // Forget the plan notice we sent this session. A replacement session gets
       // a fresh ID and should be told about active plans once, on its own.

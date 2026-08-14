@@ -76,11 +76,22 @@ export function createUniverseSlice(set: SetFn, get: GetFn): UniverseSlice {
       selectedAgentId: id, selectedAgent: null, selectedMetrics: null, singularitySelected: false,
       isolatedAgentId: s.isolatedAgentId && id ? id : s.isolatedAgentId,
     })),
-    setSelectedAgentData: (agent, metrics) => set((s) => ({
-      selectedAgentId: agent?.id ?? null, selectedAgent: agent ?? null, selectedMetrics: metrics ?? null,
-      singularitySelected: false,
-      isolatedAgentId: s.isolatedAgentId && agent?.id ? agent.id : s.isolatedAgentId,
-    })),
+    // Called on every event for the selected agent, so it must not push new
+    // state when nothing actually changed — Zustand notifies subscribers on any
+    // set(), and a redundant one re-renders the whole command centre.
+    setSelectedAgentData: (agent, metrics) => set((s) => {
+      const unchanged =
+        s.selectedAgent === (agent ?? null)
+        && s.selectedMetrics === (metrics ?? null)
+        && s.selectedAgentId === (agent?.id ?? null)
+        && !s.singularitySelected;
+      if (unchanged) return s;
+      return {
+        selectedAgentId: agent?.id ?? null, selectedAgent: agent ?? null, selectedMetrics: metrics ?? null,
+        singularitySelected: false,
+        isolatedAgentId: s.isolatedAgentId && agent?.id ? agent.id : s.isolatedAgentId,
+      };
+    }),
     selectSingularity: () => set((s) => ({
       selectedAgentId: null, selectedAgent: null, selectedMetrics: null, singularitySelected: true,
       isolatedAgentId: s.isolatedAgentId ? '__singularity__' : null,

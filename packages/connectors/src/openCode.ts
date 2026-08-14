@@ -50,18 +50,62 @@ interface TokenAccumulator {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
-  lastMessageId: string | null;
+  /**
+   * Every assistant message already folded into the totals.
+   *
+   * This used to be a single `lastMessageId`, which only caught a message
+   * repeating back-to-back. OpenCode re-emits a message as it streams, and
+   * updates for two messages can interleave (A, B, A'), so A' was counted a
+   * second time and inflated the totals.
+   */
+  countedMessageIds: Set<string>;
 }
 const tokenAccumulators = new Map<string, TokenAccumulator>();
+
+/** Bound the per-session id set so a long conversation can't grow without limit. */
+const COUNTED_IDS_MAX = 5000;
 
 /** Get or create token accumulator for an agent session. */
 function getTokenAccumulator(agentId: string): TokenAccumulator {
   let acc = tokenAccumulators.get(agentId);
   if (!acc) {
-    acc = { inputTokens: 0, outputTokens: 0, costUsd: 0, lastMessageId: null };
+    acc = { inputTokens: 0, outputTokens: 0, costUsd: 0, countedMessageIds: new Set() };
     tokenAccumulators.set(agentId, acc);
   }
   return acc;
+}
+
+/**
+ * Replace a session's running totals with figures read from OpenCode itself.
+ *
+ * The accumulator starts at zero and only sees messages that arrive while
+ * Event Horizon is attached, so a session that was already running — or one
+ * that outlived a VS Code restart — reported a fraction of its real spend
+ * (a session at $202 showed $0.62). The extension host fetches the session's
+ * message history and seeds the true totals here.
+ *
+ * `messageIds` are marked as already counted so live events for those same
+ * messages don't add them a second time.
+ */
+export function seedTokenAccumulator(
+  agentId: string,
+  totals: { inputTokens: number; outputTokens: number; costUsd: number },
+  messageIds: Iterable<string> = [],
+): void {
+  const acc = getTokenAccumulator(agentId);
+  acc.inputTokens = totals.inputTokens;
+  acc.outputTokens = totals.outputTokens;
+  acc.costUsd = totals.costUsd;
+  for (const id of messageIds) acc.countedMessageIds.add(id);
+}
+
+/** Current totals for a session, for callers that need to read without mutating. */
+export function getTokenTotals(
+  agentId: string,
+): { inputTokens: number; outputTokens: number; costUsd: number } | null {
+  const acc = tokenAccumulators.get(agentId);
+  if (!acc) return null;
+  return { inputTokens: acc.inputTokens, outputTokens: acc.outputTokens, costUsd: acc.costUsd };
 }
 
 /** Clear token accumulator on session end. */
@@ -230,10 +274,14 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
       const enrichedPayload = { ...payload };
       const acc = getTokenAccumulator(agentId);
       
-      // Only accumulate if this is a new message (avoid double-counting on updates)
-      if (acc.lastMessageId !== messageId) {
-        acc.lastMessageId = messageId;
-        
+      // Only accumulate a message once, however many times it is re-emitted.
+      if (!acc.countedMessageIds.has(messageId)) {
+        if (acc.countedMessageIds.size >= COUNTED_IDS_MAX) {
+          const oldest = acc.countedMessageIds.values().next().value;
+          if (oldest !== undefined) acc.countedMessageIds.delete(oldest);
+        }
+        acc.countedMessageIds.add(messageId);
+
         const cost = info?.cost as number | undefined;
         const tokens = info?.tokens as Record<string, unknown> | undefined;
         
