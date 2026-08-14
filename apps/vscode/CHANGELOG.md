@@ -26,6 +26,14 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### CI
 - **A changelog gate now blocks stable releases.** `changelog-check` compares the top dated `## [X.Y.Z]` heading in `apps/vscode/CHANGELOG.md` against `package.json`, and the `release` job depends on it. Runs on pushes to `master` and PRs targeting it, so a version bump without a changelog entry fails before the tag is created rather than after — the exact failure that lost the 3.1.0 and 3.1.1 entries.
 
+### Changed
+- **`web-tree-sitter` upgraded 0.25.10 → 0.26.12**, closing an upgrade deferred twice (in 3.0.4 and again during the 11-alert security sweep). 0.26 renamed the core runtime WASM from `tree-sitter.wasm` to `web-tree-sitter.wasm` and dropped the old subpath from its `exports` map, which broke resolution in two places and runtime loading in a third:
+  - `scripts/copy-tree-sitter-wasm.mjs` and `treeSitterExtractor.ts` now try the new export name and fall back to the old one, so the build works on either version.
+  - `locateWasm()` normalizes the request. Emscripten asks its `locateFile` hook for whichever name *it* was compiled with, so under 0.26 it asked for a name nothing recognized, fell through to a bare filename, and `Parser.init()` died with "failed to asynchronously prepare wasm". The shipped file keeps the stable name `tree-sitter.wasm`.
+  - `scripts/verify-treesitter-bundle.mjs` now passes `locateFile` the way the extension does, instead of testing emscripten's default lookup that the extension never uses.
+
+  Verified beyond a green build: the bundle harness parses a real function, all 923 tests pass, and `vsce package` produces a VSIX with all 8 WASM binaries. A build that succeeds proves nothing here — the first attempt at this change built cleanly and still failed to load a parser.
+
 ### Code quality
 - **Lint is now warning-clean across the monorepo** (24 warnings → 0; it was already error-free). Every warning was `@typescript-eslint/no-explicit-any` in a test file. Pixi `Graphics`/`Container` and `execFile` mocks now go through narrow local interfaces cast via `unknown` instead of `any`, so a change to the real signature shows up as a type error in the tests instead of being silently swallowed.
 - **Two dead `eslint-disable` directives removed.** One sat 14 lines above the `any` it was meant to suppress; the other named `no-console`, a rule that package doesn't enable. Neither suppressed anything, and both would have masked a real finding if code moved under them.

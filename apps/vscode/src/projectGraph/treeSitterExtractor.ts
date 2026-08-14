@@ -52,6 +52,14 @@ export interface ExtractResult {
  *   3. The bare filename — last-resort fallback.
  */
 function locateWasm(file: string): string {
+  // web-tree-sitter 0.26 renamed the core runtime WASM to 'web-tree-sitter.wasm'.
+  // Emscripten asks locateFile() for whichever name its own build was compiled
+  // with, so the request differs by version even though it means the same file.
+  // We ship it as 'tree-sitter.wasm', so normalize here — otherwise 0.26 asks
+  // for a name nothing below knows about, falls through to the bare filename,
+  // and Parser.init() dies with "failed to asynchronously prepare wasm".
+  if (file === 'web-tree-sitter.wasm') file = 'tree-sitter.wasm';
+
   // Compiled location is `apps/vscode/out/projectGraph/treeSitterExtractor.js`,
   // so __dirname is .../out/projectGraph/ — but copy-tree-sitter-wasm.mjs writes
   // the WASMs to .../out/. Check the parent dir first.
@@ -61,7 +69,14 @@ function locateWasm(file: string): string {
   if (fs.existsSync(nearby)) return nearby;
   try {
     if (file === 'tree-sitter.wasm') {
-      return require.resolve(`web-tree-sitter/${file}`);
+      // 0.26 renamed this export to './web-tree-sitter.wasm' and removed the
+      // old subpath, so resolving the old name throws. Try the new one first
+      // and fall back, keeping dev/test working on either version.
+      try {
+        return require.resolve('web-tree-sitter/web-tree-sitter.wasm');
+      } catch {
+        return require.resolve(`web-tree-sitter/${file}`);
+      }
     }
     if (file === 'tree-sitter-typescript.wasm' || file === 'tree-sitter-tsx.wasm') {
       return require.resolve(`tree-sitter-typescript/${file}`);

@@ -23,8 +23,35 @@ if (!existsSync(outDir)) {
   mkdirSync(outDir, { recursive: true });
 }
 
-// Copy tree-sitter.wasm from web-tree-sitter
-const treeSitterWasm = require.resolve('web-tree-sitter/tree-sitter.wasm');
+// Copy the core runtime WASM from web-tree-sitter.
+//
+// 0.26 renamed this export: './tree-sitter.wasm' became './web-tree-sitter.wasm',
+// and dropped the old subpath from the exports map, so resolving the old name
+// throws ERR_PACKAGE_PATH_NOT_EXPORTED. Accept either, so the build works on
+// both versions.
+function resolveCoreWasm() {
+  const candidates = [
+    'web-tree-sitter/web-tree-sitter.wasm', // 0.26+
+    'web-tree-sitter/tree-sitter.wasm',     // 0.25 and earlier
+  ];
+  for (const candidate of candidates) {
+    try {
+      return require.resolve(candidate);
+    } catch {
+      // Not this name — try the next.
+    }
+  }
+  throw new Error(
+    `Could not resolve the web-tree-sitter runtime WASM. Tried: ${candidates.join(', ')}. ` +
+    'The package may have renamed its export again — check its "exports" map.',
+  );
+}
+
+// The destination name stays 'tree-sitter.wasm' across versions. Emscripten
+// asks for whichever name it was built with, but treeSitterExtractor's
+// locateFile() hook normalizes that request, so one copy under one stable name
+// serves both 0.25 and 0.26.
+const treeSitterWasm = resolveCoreWasm();
 const treeSitterDest = join(outDir, 'tree-sitter.wasm');
 copyFileSync(treeSitterWasm, treeSitterDest);
 console.log(`[copy-tree-sitter-wasm] ${treeSitterWasm} -> ${treeSitterDest}`);
