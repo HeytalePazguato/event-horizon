@@ -16,8 +16,8 @@
     "pixi.js": "^8.19.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.17",
-    "react": "^19.2.7",
+    "@types/react": "^19.2.18",
+    "react": "^19.2.8",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6"
   },
