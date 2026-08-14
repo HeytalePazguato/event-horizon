@@ -346,12 +346,21 @@ function App() {
   }, [graphStats, graphBrowseResult, graphNodeDetails, graphBuildProgress, graphFilter]);
 
   // ── Sync selected agent data ──
+  //
+  // Depend on the selected agent's own entries, NOT on the whole agentMap /
+  // metricsMap. Those objects are replaced on every incoming event from any
+  // agent, so depending on them re-ran this — and pushed new store state — once
+  // per event across the entire fleet. With nothing selected the effect
+  // returned immediately, so the cost only appeared after clicking an agent:
+  // the UI then re-rendered per event and locked up under a busy agent.
+  const selectedAgentEntry = selectedAgentId ? agentMap[selectedAgentId] : undefined;
+  const selectedMetricEntry = selectedAgentId ? metricsMap[selectedAgentId] : undefined;
   useEffect(() => {
     if (!selectedAgentId) return;
-    const agent = agentMap[selectedAgentId];
-    const metric = metricsMap[selectedAgentId];
-    if (agent || metric) setSelectedAgentData(agent ?? null, metric ?? null);
-  }, [selectedAgentId, agentMap, metricsMap, setSelectedAgentData]);
+    if (selectedAgentEntry || selectedMetricEntry) {
+      setSelectedAgentData(selectedAgentEntry ?? null, selectedMetricEntry ?? null);
+    }
+  }, [selectedAgentId, selectedAgentEntry, selectedMetricEntry, setSelectedAgentData]);
 
   // Planets are only removed by explicit agent.terminate events.
   // No automatic stale-agent cleanup — idle agents stay visible indefinitely.
