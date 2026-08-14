@@ -5,19 +5,22 @@
 
 import { describe, it, expect } from 'vitest';
 import { EntitySystem } from '../systems/EntitySystem.js';
+import type { Container } from 'pixi.js';
 import type { Entity, UpdateContext } from '../systems/EntitySystem.js';
 
 /** Minimal mock entity for testing pure logic (no PixiJS container needed). */
 class MockEntity implements Entity {
   id: string;
-  container: any;
+  // EntitySystem never reads the container in these tests, so an empty
+  // stand-in is enough — a real one would need a WebGL context.
+  container: Container;
   updateCount = 0;
   destroyed = false;
   lastDt = 0;
 
   constructor(id: string) {
     this.id = id;
-    this.container = {};
+    this.container = {} as Container;
   }
 
   update(dt: number, _context: UpdateContext): void {

@@ -1629,7 +1629,6 @@ const UniverseImpl: FC<UniverseProps> = ({
             .filter(([, v]) => v > 1)
             .map(([k, v]) => `${k}=${v.toFixed(0)}ms`)
             .join(' ');
-          // eslint-disable-next-line no-console
           console.log(`[EH pixi-tick] ${frameCount}fps heap=${heap}MB planets=${children} stars=${shootingStarsRef.current.length} ${phases}`);
         }
         frameCount = 0;
