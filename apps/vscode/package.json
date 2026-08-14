@@ -527,7 +527,7 @@
     "@types/vscode": "^1.100.0",
     "@types/ws": "^8.18.1",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.2",
     "ovsx": "^0.10.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
