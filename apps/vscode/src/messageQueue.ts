@@ -335,6 +335,17 @@ export class MessageQueue {
     // Route delivery. Aliases map to one session for life; a handle goes to
     // whoever holds it now, which is how mail reaches a restarted agent.
     if (msg.toAlias && this.getRouteOwner(msg.toAlias) === agentId) return true;
+
+    // Late resolution. A message sent to a name that didn't resolve was stored
+    // with the raw target and no route, and would never be delivered even once
+    // the name became resolvable — it just sat in the queue forever. Retry the
+    // lookup at read time so a handle claimed later, or one that failed to
+    // resolve because of a bug, still reaches its owner.
+    if (!msg.toAlias) {
+      if (this.getRouteOwner(msg.toAgentId) === agentId) return true;
+      const holders = this.findHandleHolders(msg.toAgentId);
+      if (holders.length === 1 && holders[0].agentId === agentId) return true;
+    }
     return false;
   }
 
