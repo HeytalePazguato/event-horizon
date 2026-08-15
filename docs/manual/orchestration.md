@@ -100,7 +100,7 @@ available → claimed → in progress → done
 
 Orchestration is built on a handful of [MCP tools](mcp-tools.md) that any agent can use, orchestrator or not:
 
-- **[Messaging](mcp-tools.md#messaging)** — `eh_send_message` / `eh_get_messages` for agents to talk to each other.
+- **[Messaging](mcp-tools.md#messaging)** — `eh_send_message` / `eh_get_messages` for agents to talk to each other. Read with `kind: "peer"` to see agent traffic without Event Horizon's own notices, and claim a name with `eh_claim_handle` so peers can reach you at an address that survives a restart. Agents that claim a task are given one automatically (`<role>-<task-id>`).
 - **[File locking](file-locking.md)** — hard-block conflicting writes.
 - **[Shared knowledge](knowledge-graph.md#shared-knowledge)** — a live context base humans and agents both write to.
 - **[Heartbeats](mcp-tools.md#heartbeat-and-worktrees)** — `eh_heartbeat` keeps an agent marked alive.

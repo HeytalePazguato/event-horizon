@@ -148,4 +148,60 @@ describe('notifyOrchestratorsOfFailure', () => {
     notifyOrchestratorsOfFailure(event, [plan], queue);
     expect(queue.sent[0].content).toContain('unknown error');
   });
+
+  // Connectors map PostToolUseFailure to agent.error, so without this filter a
+  // grep with no match or a non-zero exit pings the orchestrator every time.
+  it('ignores routine tool failures', () => {
+    const plan = makePlan({ orchestratorAgentId: 'orch-1' });
+    const event = makeEvent({
+      type: 'agent.error',
+      payload: { isToolFailure: true, message: 'File not found' },
+    });
+    const result = notifyOrchestratorsOfFailure(event, [plan], queue);
+    expect(result.notified).toEqual([]);
+    expect(result.skipped).toBe('tool-failure');
+    expect(queue.sent).toHaveLength(0);
+  });
+
+  describe('repeat suppression', () => {
+    it('sends an identical failure only once per cooldown', () => {
+      const plan = makePlan({ orchestratorAgentId: 'orch-1' });
+      const event = makeEvent({ type: 'agent.error', payload: { message: 'boom', taskId: '1.1' } });
+      const recent = new Map<string, number>();
+
+      notifyOrchestratorsOfFailure(event, [plan], queue, { recent, now: 1000 });
+      const second = notifyOrchestratorsOfFailure(event, [plan], queue, { recent, now: 5000 });
+
+      expect(queue.sent).toHaveLength(1);
+      expect(second.notified).toEqual([]);
+      expect(second.skipped).toBe('cooldown');
+    });
+
+    it('sends again once the cooldown expires', () => {
+      const plan = makePlan({ orchestratorAgentId: 'orch-1' });
+      const event = makeEvent({ type: 'agent.error', payload: { message: 'boom' } });
+      const recent = new Map<string, number>();
+
+      notifyOrchestratorsOfFailure(event, [plan], queue, { recent, now: 1000 });
+      notifyOrchestratorsOfFailure(event, [plan], queue, { recent, now: 1000 + 60_001 });
+
+      expect(queue.sent).toHaveLength(2);
+    });
+
+    it('does not suppress a different failure', () => {
+      const plan = makePlan({ orchestratorAgentId: 'orch-1' });
+      const recent = new Map<string, number>();
+
+      notifyOrchestratorsOfFailure(
+        makeEvent({ type: 'agent.error', payload: { message: 'boom' } }),
+        [plan], queue, { recent, now: 1000 },
+      );
+      notifyOrchestratorsOfFailure(
+        makeEvent({ type: 'agent.error', payload: { message: 'different' } }),
+        [plan], queue, { recent, now: 1100 },
+      );
+
+      expect(queue.sent).toHaveLength(2);
+    });
+  });
 });

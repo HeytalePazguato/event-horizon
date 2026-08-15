@@ -12,6 +12,7 @@ import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentL
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
+import { backfillSessionCost, forgetBackfill } from './openCodeCostBackfill';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
@@ -125,6 +126,33 @@ function normalizePath(p: string): string {
 }
 
 /**
+ * Map a working directory to the project it belongs to.
+ *
+ * Addresses name the project, and the project name comes from the last path
+ * segment — so an agent running in `event-horizon/apps/vscode` was labelled
+ * project "vscode" while its sibling in the repo root was "event-horizon". Two
+ * agents in one repo appeared to be in different projects, and an agent that
+ * changed directory appeared to change project.
+ *
+ * Resolving to the containing VS Code workspace folder keeps every agent in a
+ * repo under one name. A cwd outside any open folder is returned unchanged —
+ * agents in other projects are the normal case, not an error.
+ */
+function projectRootFor(cwd: string | undefined): string | undefined {
+  if (!cwd) return cwd;
+  const target = normalizePath(cwd);
+  let best: string | undefined;
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const root = normalizePath(folder.uri.fsPath);
+    if (target === root || target.startsWith(root.endsWith('/') ? root : `${root}/`)) {
+      // Deepest matching folder wins, for nested multi-root setups.
+      if (!best || root.length > normalizePath(best).length) best = folder.uri.fsPath;
+    }
+  }
+  return best ?? cwd;
+}
+
+/**
  * Returns true if two cwd paths share a workspace folder or one is a parent of the other.
  * Uses VS Code's workspace folders as the authority for multi-root workspaces.
  */
@@ -189,6 +217,47 @@ export function activate(context: vscode.ExtensionContext): void {
   // Restore roles and agent profiles from globalState
   const savedRoles = context.globalState.get<ReturnType<typeof roleManager.serialize>>('agentRoles');
   if (savedRoles) roleManager.restore(savedRoles);
+
+  // Restore claimed handles. These lived only in memory, so restarting the
+  // extension voided every agent's address at once — and the resulting
+  // "no running agent matches" on the sender's side looked like a routing bug
+  // rather than "that name no longer exists". Agent session IDs outlive an
+  // extension restart, so restoring the map puts each address straight back.
+  // Addresses are never re-derived once assigned — that is the whole point, so
+  // a peer holding one keeps working. The cost is that an address derived by a
+  // buggy rule is preserved just as faithfully: agents persisted before the
+  // project name resolved to the workspace folder kept names like
+  // `vscode-claude-…` for a repo called event-horizon, forever.
+  //
+  // The version stamp is the escape hatch. Bump it whenever the derivation
+  // rules change; entries written under an older stamp are dropped once and
+  // rebuilt under the new rules, and stable from then on.
+  const IDENTITY_SCHEMA_VERSION = 2;
+
+  function loadIdentityState<T>(key: string): T[] | undefined {
+    const raw = context.globalState.get<{ v?: number; entries?: T[] } | T[]>(key);
+    if (!raw) return undefined;
+    // A bare array is the original unversioned payload — predates the project
+    // fix by definition, so discard it.
+    if (Array.isArray(raw)) return undefined;
+    if (raw.v !== IDENTITY_SCHEMA_VERSION) return undefined;
+    return raw.entries;
+  }
+
+  messageQueue.restoreHandles(
+    loadIdentityState<{ route: string; agentId: string }>('agentHandles'),
+  );
+  messageQueue.restoreAliases(
+    loadIdentityState<{ agentId: string; alias: string }>('agentAliases'),
+  );
+  messageQueue.setOnIdentityChanged(() => {
+    void context.globalState.update('agentHandles', {
+      v: IDENTITY_SCHEMA_VERSION, entries: messageQueue.serializeHandles(),
+    });
+    void context.globalState.update('agentAliases', {
+      v: IDENTITY_SCHEMA_VERSION, entries: messageQueue.serializeAliases(),
+    });
+  });
 
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
   if (savedProfiles) {
@@ -603,9 +672,38 @@ export function activate(context: vscode.ExtensionContext): void {
     void context.globalState.update('agentProfiles', agentProfiler.serialize());
   });
 
-  // Send role instructions when a task with a role is claimed
+  // ── System-notice suppression state ────────────────────────────────────────
+  // Event Horizon's own messages share an inbox with real agent-to-agent
+  // traffic, so every notice below is deduped at the source. Without this, a
+  // peer message ends up buried under hundreds of identical system notices.
+
+  /** agentId → the active-plan set it was last told about. */
+  const planNoticeSignatures = new Map<string, string>();
+  /** "agentId|taskId" pairs that already received role instructions. */
+  const roleNoticesSent = new Set<string>();
+  /** Dedupe state for worker-failure escalations (see orchestratorNotifier). */
+  const failureNoticeTimes = new Map<string, number>();
+
+  // Send role instructions when a task with a role is claimed.
+  // Once per agent+task — a re-claim or reassignment of the same task would
+  // otherwise resend the identical instruction block.
   planBoardManager.onTaskClaim((task, _planId) => {
-    if (!task.role || !task.assignee) return;
+    if (!task.assignee) return;
+
+    // Give orchestrated workers a handle named after the work they took on, so
+    // a peer can reach "reviewer-2.1" instead of looking up a session ID.
+    if (task.role && !messageQueue.getHandleRoute(task.assignee)) {
+      const cwd = agentStateManager.getAgent(task.assignee)?.cwd
+        ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      messageQueue.claimHandle(
+        task.assignee, cwd, `${task.role}-${task.id}`,
+        (holder) => !!agentStateManager.getAgent(holder),
+      );
+    }
+
+    if (!task.role) return;
+    const noticeKey = `${task.assignee}|${task.id}`;
+    if (roleNoticesSent.has(noticeKey)) return;
     const instructions = roleManager.getInstructionsForRole(task.role);
     const skills = roleManager.getSkillsForRole(task.role);
     const role = roleManager.getRole(task.role);
@@ -614,6 +712,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (role) parts.push(`**Role assigned: ${role.name}**`);
     if (instructions) parts.push(instructions);
     if (skills.length > 0) parts.push(`Recommended skills: ${skills.map(s => '/' + s.replace('eh-', 'eh:')).join(', ')}`);
+    roleNoticesSent.add(noticeKey);
     messageQueue.send('event-horizon', 'Event Horizon', task.assignee, parts.join('\n\n'));
   });
 
@@ -731,9 +830,20 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     // Auto-evict agents whose heartbeat is 'lost' (>5 min silence).
-    // Skip agents that are still tracked in the spawn registry — their process
-    // exit handler will emit the terminate event when the process actually dies.
-    for (const beat of allBeats) {
+    //
+    // OFF by default. Silence is not evidence that an agent is gone: a session
+    // sitting idle sends nothing, so this removed live agents from the universe
+    // after five quiet minutes — the regression where an idle Claude session
+    // simply vanished. It also contradicts the rule further down that planets
+    // are only removed by an explicit agent.terminate.
+    //
+    // Real deaths are still handled: SessionEnd emits agent.terminate, spawned
+    // agents report process exit, and eventHorizon.purgeStaleAgents /
+    // eh_purge_stale_agents clean up on demand. Turn this on only if you would
+    // rather lose an idle agent than keep a dead one on screen.
+    const autoEvictLost = vscode.workspace.getConfiguration('eventHorizon')
+      .get<boolean>('autoEvictLostAgents', false);
+    for (const beat of autoEvictLost ? allBeats : []) {
       if (beat.status !== 'lost') continue;
       const agent = agentStateManager.getAgent(beat.agentId);
       if (!agent) continue;
@@ -961,6 +1071,17 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
+    // Give this session a readable, unique address the first time we see it —
+    // `event-horizon-claude-143022` rather than a 40-character session ID.
+    // Assigned once and kept for the session's entire life, however long it
+    // idles; nothing here expires it.
+    messageQueue.ensureAlias(
+      event.agentId,
+      projectRootFor(event.payload?.cwd as string | undefined),
+      event.agentType,
+      event.timestamp,
+    );
+
     // When a transcript watcher is active for this Claude Code agent, skip hook
     // events that the watcher covers with better accuracy. Hooks still handle:
     // - agent.spawn / agent.terminate (session lifecycle)
@@ -1022,7 +1143,9 @@ export function activate(context: vscode.ExtensionContext): void {
     updateStatusBar();
 
     // ── Push worker errors to the orchestrator so they can react ──
-    notifyOrchestratorsOfFailure(event, planBoardManager.getAllPlans(), messageQueue);
+    notifyOrchestratorsOfFailure(event, planBoardManager.getAllPlans(), messageQueue, {
+      recent: failureNoticeTimes,
+    });
 
     // ── Rate extension prompt (one-time, after 2+ agents connect) ──
     if (event.type === 'agent.spawn' && !ratingPromptShown) {
@@ -1107,23 +1230,36 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
-    // Auto-discovery: notify newly joined agents about active plans
+    // Auto-discovery: notify newly joined agents about active plans.
+    //
+    // Edge-triggered, not level-triggered. agent.spawn fires far more often
+    // than "an agent joined" — session resume, compaction, and every batch-mode
+    // re-invocation all emit it — so sending on each one buried real peer
+    // messages under hundreds of identical notices. We send only when the set
+    // of active plans this agent has been told about actually changes, and skip
+    // entirely while an earlier notice is still sitting unread.
     if (event.type === 'agent.spawn') {
       const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
-      if (activePlans.length === 1) {
-        const plan = activePlans[0];
-        const done = plan.tasks.filter((t) => t.status === 'done').length;
-        const pending = plan.tasks.filter((t) => t.status === 'pending').length;
-        messageQueue.send(
-          'event-horizon', 'Event Horizon', event.agentId,
-          `A shared plan "${plan.name}" is active (${done}/${plan.tasks.length} done, ${pending} pending). ` +
-          'Use eh_get_plan to see tasks and eh_claim_task to claim work.',
-        );
-      } else if (activePlans.length > 1) {
-        messageQueue.send(
-          'event-horizon', 'Event Horizon', event.agentId,
-          `${activePlans.length} active plans available. Use eh_list_plans to see them and eh_get_plan with a plan_id to view tasks.`,
-        );
+      const signature = activePlans.map((p) => p.id).sort().join(',');
+      const alreadyTold = planNoticeSignatures.get(event.agentId) === signature;
+
+      if (!alreadyTold && !messageQueue.hasUnreadFrom(event.agentId, 'event-horizon')) {
+        let body: string | null = null;
+        if (activePlans.length === 1) {
+          const plan = activePlans[0];
+          const done = plan.tasks.filter((t) => t.status === 'done').length;
+          const pending = plan.tasks.filter((t) => t.status === 'pending').length;
+          body = `A shared plan "${plan.name}" is active (${done}/${plan.tasks.length} done, ${pending} pending). `
+            + 'Use eh_get_plan to see tasks and eh_claim_task to claim work.';
+        } else if (activePlans.length > 1) {
+          body = `${activePlans.length} active plans available. Use eh_list_plans to see them and eh_get_plan with a plan_id to view tasks.`;
+        }
+        if (body) {
+          messageQueue.send('event-horizon', 'Event Horizon', event.agentId, body);
+        }
+        // Record even when there was nothing to say, so an agent that joins
+        // with no active plans isn't re-evaluated on every later spawn.
+        planNoticeSignatures.set(event.agentId, signature);
       }
     }
 
@@ -1311,6 +1447,20 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
+    // ── OpenCode: seed real session spend on first sight ──
+    // The connector's accumulator starts at zero and only counts messages that
+    // arrive while we're attached, so a session already running (or one that
+    // survived a VS Code restart) reported a fraction of what it had spent.
+    // The plugin sends its serverUrl, so ask OpenCode for the history once.
+    if (event.agentType === 'opencode' && event.payload?.serverUrl) {
+      void backfillSessionCost(
+        event.agentId,
+        event.payload.serverUrl as string,
+        event.payload.cwd as string | undefined,
+        { log: (message) => console.log(message) },
+      ).catch(() => { /* best-effort: never block event processing */ });
+    }
+
     // NOTE: OpenCode SSE watcher is disabled - hooks now provide subagent events
     // via session.created with parentID. Keeping code for potential future use
     // when OpenCode's SSE endpoint becomes more reliable.
@@ -1340,6 +1490,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // Release any file locks held by the terminated agent
       releaseAgentLocks(event.agentId);
+
+      // Allow a re-backfill if this session id reconnects later.
+      forgetBackfill(event.agentId);
+
+      // Forget the plan notice we sent this session. A replacement session gets
+      // a fresh ID and should be told about active plans once, on its own.
+      planNoticeSignatures.delete(event.agentId);
+
+      // Addresses are deliberately NOT released here. An agent that idles for
+      // a day, or that a watchdog wrongly declares stale, must still be
+      // reachable at the address a peer was given. A stopped agent's handle is
+      // taken over by its replacement at claim time, which needs no cleanup.
 
       // Also clean up OpenCode SSE watcher
       const sseWatcher = openCodeSSEWatchers.get(event.agentId);

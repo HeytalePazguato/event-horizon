@@ -277,11 +277,56 @@ jobs:
             }
             console.log(`Kept ${Math.min(prereleases.length, 5)} pre-releases, deleted ${toDelete.length}`);
 
+  # ── Changelog gate ─────────────────────────────────────────────────────────
+  # CI reads the shipped version from package.json and never reads the
+  # changelog, so a release commit that bumps only package.json ships a release
+  # with no entry and leaves its work under "Unreleased". 3.1.0 and 3.1.1 both
+  # shipped that way and had to be reconstructed from git history. This blocks
+  # the release job until the two agree.
+  changelog-check:
+    name: Changelog matches version
+    runs-on: ubuntu-latest
+    if: |
+      (github.ref == 'refs/heads/master' && github.event_name == 'push') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'master')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compare CHANGELOG heading against package.json
+        run: |
+          set -euo pipefail
+          CHANGELOG=apps/vscode/CHANGELOG.md
+          VERSION=$(node -p "require('./apps/vscode/package.json').version")
+
+          # First versioned heading, ignoring any [Unreleased] section above it.
+          HEADING=$(grep -m1 -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' "$CHANGELOG" || true)
+          if [ -z "$HEADING" ]; then
+            echo "::error file=$CHANGELOG::No versioned '## [X.Y.Z]' heading found."
+            exit 1
+          fi
+
+          TOP_VERSION=$(printf '%s' "$HEADING" | sed -E 's/^## \[([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/')
+
+          if [ "$TOP_VERSION" != "$VERSION" ]; then
+            echo "::error file=$CHANGELOG::package.json is $VERSION but the top changelog entry is $TOP_VERSION."
+            echo "Rename '## [Unreleased]' to '## [$VERSION] — $(date -u +%Y-%m-%d)' and open a fresh empty Unreleased above it."
+            exit 1
+          fi
+
+          if ! printf '%s' "$HEADING" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+            echo "::error file=$CHANGELOG::'$HEADING' has no release date. Expected '## [$VERSION] — YYYY-MM-DD'."
+            exit 1
+          fi
+
+          echo "OK: $VERSION documented as \"$HEADING\""
+
   # ── Stable releases (master) — tagged release on Releases page ─────────────
   release:
     name: Create Stable Release
     runs-on: ubuntu-latest
-    needs: lint-build-test
+    needs: [lint-build-test, changelog-check]
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     permissions:
       contents: write

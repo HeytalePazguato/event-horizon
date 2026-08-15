@@ -2,11 +2,99 @@
 
 All notable changes to the Event Horizon VS Code extension will be documented in this file.
 
-## [3.0.5] — Unreleased
+## [Unreleased]
+
+## [3.2.0] — 2026-08-15
+
+### Added
+- **Every agent now gets a readable address.** Event Horizon assigns each session an alias on arrival: `<project>-<runtime>-<hhmmss>`, e.g. `event-horizon-claude-143022`. Runtimes report a constant name per runtime (every Claude Code session is called `Claude Code`), so the session start time is what distinguishes agents in a project running several sessions of one runtime. Assigned once, never changed, never expired — an agent idling for hours or days keeps the address peers were given.
+- **`eh_claim_handle` MCP tool.** An agent claims a short project-unique name (`csp`, `reviewer`) that survives a restart: the replacement session claims the same handle and collects everything queued for it in the interim, which an alias cannot do because a restarted session is a new session. A handle is refused only while another *running* agent holds it. Agents that claim a plan task are given one automatically (`<role>-<task-id>`), so orchestrated workers are addressable without doing anything.
+- **Prompt-submit inbox notice.** A dormant CLI session can't be woken by the extension host, so peer messages sat unread until the agent happened to poll. The `UserPromptSubmit` hook now posts to a new `/claude/inbox` route and injects its reply into the turn, so the next time you send a prompt the agent starts out knowing it has mail and who it's from. Nothing is injected when the inbox is empty, and peeking never marks messages read. Installed hooks are rewritten on every activation, so this arrives with the upgrade — no re-running setup.
+
+### Changed
+- **`eh_get_messages` now filters and paginates.** New `kind` (`peer` / `system` / `all`), `from_agent_id`, `exclude_from`, and `limit` parameters. Messages carry a `kind` recording who sent them: `peer` for anything another EH-connected agent session sent via `eh_send_message`, `system` for Event Horizon's own generated notices. Results return peer messages first, then system notices, capped at 50 per call. Only the messages actually returned are marked read, and the response reports a `pending` count per kind, so a filtered read can't silently consume mail the caller never saw. Previously the tool dumped the entire inbox and marked all of it read — a real peer message could sit past the tool-output truncation point and be lost.
+- **`eh_send_message` accepts readable addresses.** `to_agent_id` resolves an alias, a claimed handle, a session ID, or an agent name, and a new `to_agent_name` parameter targets by name directly. Every message is tagged with the recipient's address, so a message addressed to a handle reaches whichever session holds that handle when it is read.
+- **`eh_list_agents` returns `alias`, `handle`, and `address`** — `address` holds the best way to reach that agent, so callers don't have to work out the precedence themselves.
+- **`web-tree-sitter` upgraded 0.25.10 → 0.26.12**, closing an upgrade deferred twice (in 3.0.4 and again during the 11-alert security sweep). 0.26 renamed the core runtime WASM from `tree-sitter.wasm` to `web-tree-sitter.wasm` and dropped the old subpath from its `exports` map, which broke resolution in two places and runtime loading in a third:
+  - `scripts/copy-tree-sitter-wasm.mjs` and `treeSitterExtractor.ts` now try the new export name and fall back to the old one, so the build works on either version.
+  - `locateWasm()` normalizes the request. Emscripten asks its `locateFile` hook for whichever name *it* was compiled with, so under 0.26 it asked for a name nothing recognized, fell through to a bare filename, and `Parser.init()` died with "failed to asynchronously prepare wasm". The shipped file keeps the stable name `tree-sitter.wasm`.
+  - `scripts/verify-treesitter-bundle.mjs` now passes `locateFile` the way the extension does, instead of testing emscripten's default lookup that the extension never uses.
+
+  Verified beyond a green build: the bundle harness parses a real function, the full suite passes, and `vsce package` produces a VSIX with all 8 WASM binaries. A build that succeeds proves nothing here — the first attempt at this change built cleanly and still failed to load a parser.
+
+### Fixed
+- **Plan auto-discovery no longer floods agent inboxes.** The "N active plans available" notice was sent on every `agent.spawn` event — which fires on session resume, compaction, and every batch-mode re-invocation, not just when an agent first joins. A long-running session accumulated hundreds of identical notices (485 messages, one every ~30s, in one report) that buried real peer messages. The notice is now edge-triggered: it fires only when the set of active plans an agent has been told about actually changes, and is skipped entirely while an earlier notice sits unread.
+- **Routine tool failures no longer escalate to the orchestrator.** Connectors map `PostToolUseFailure` to `agent.error`, so a grep with no match or a non-zero `Bash` exit sent the orchestrator a "worker reported an error" message. Tool-level failures are now ignored, and identical failures from the same worker are suppressed for 60s so a retry loop reports once instead of once per attempt.
+- **Role instructions are sent once per agent+task.** Re-claiming or reassigning the same task resent the identical instruction block.
+- **Sending to a runtime name no longer picks an arbitrary session.** `eh_send_message` targeted by a bare name (`Claude Code`) now refuses when several agents share that runtime name, and lists their aliases so the caller can pick one, instead of delivering to whichever session was seen most recently.
+- **`waitForUnlock` timeout test no longer flakes under load.** It refreshed a 100ms lock from a 50ms `setInterval`, so a delayed tick let the lock lapse and the waiter acquire it. It now holds a lock whose TTL outlasts the wait.
+- **CHANGELOG entries restored for 3.1.0 and 3.1.1.** Both release commits bumped only `apps/vscode/package.json`, so both versions shipped with no changelog entry and their work sat under a `[3.0.5] — Unreleased` heading. Entries reconstructed from the tags and commit history.
+- **`tsconfig.json` no longer errors in the editor.** `ignoreDeprecations` was pinned to `"5.0"`, which current TypeScript rejects for `moduleResolution: "Node"`; it now names `"6.0"`, the release that drops the mode. Migrating off node10 resolution remains outstanding.
+- **Aliases survive an Event Horizon restart too.** The alias embeds the clock reading from when Event Horizon first saw a session, so a restart re-derived it and handed every long-running agent a brand new address — invalidating every address already shared with peers. Aliases now persist alongside handles and are restored on activation, so `assigned once, never changes` holds across restarts and not just within one.
+- **An agent in a subfolder is no longer treated as a different project.** The project half of an address came from the last path segment of the agent cwd, so a session in `event-horizon/apps/vscode` was labelled project `vscode` while its sibling at the repo root was `event-horizon` — and an agent that changed directory appeared to change project. The cwd now resolves to its containing VS Code workspace folder (deepest match wins for nested multi-root setups); a cwd outside every open folder is used as-is, since agents in other projects are the normal case.
+- **Claimed handles survive an Event Horizon restart.** Handles lived only in memory, so restarting the extension voided every agent address at once. Worse, the sender then saw `No running agent matches "<handle>"` — indistinguishable from a routing failure, so an unclaimed handle was repeatedly misdiagnosed as a broken lookup. Handle ownership now persists to workspace state and is restored on activation; agent session IDs outlive an extension restart, so each address comes straight back without the agent noticing.
+- **The unresolved-recipient warning now names both failure modes.** A session ID and a handle cannot be told apart by shape, so the warning no longer guesses: it states that nothing matches, explains what it means if the target was a handle versus a session ID, and points at `eh_list_agents`. The previous wording described only the session-ID case.
+- **Messages queued against an unresolved name are no longer orphaned.** A send to a name that did not resolve stored the raw target with no route, and stayed undeliverable forever — even once that name became resolvable. Delivery now retries the lookup at read time, so a handle claimed later (or one that failed to resolve because of the bug above) still reaches its owner. Ambiguous names are held rather than handed to an arbitrary agent.
+- **Idle agents no longer vanish from the universe.** A heartbeat gone quiet for 5 minutes emitted a synthetic `agent.terminate`, so a live but idle session was removed from the agent list and its planet disappeared. Silence is not evidence an agent exited — an idle session sends nothing — and this contradicted the rule that planets are only removed by an explicit terminate. The behaviour is now behind `eventHorizon.autoEvictLostAgents`, off by default. Real exits are still caught by `SessionEnd` and spawned-process exit, and the existing Purge Stale Agents command still cleans up on demand.
+- **Tool breakdown labels no longer overlap the bars.** Labels sat in a fixed 50px box with no overflow handling, so a fully qualified MCP name like `mcp__event-horizon__eh_list_agents` wrapped across two lines and rendered on top of the chart. Labels are now clipped with an ellipsis in a wider column, and MCP tools drop their `mcp__<server>__` prefix — the trailing tool name is the part worth reading.
+- **Hook changes now actually reach machines that already have hooks installed.** `isCurrentEhHook()` accepted any command Event Horizon might install, regardless of which event it was attached to. So when `UserPromptSubmit` moved to the inbox command, the old generic command still counted as current — it was neither removed as stale nor replaced, and the prompt-submit notice silently never rolled out. Freshness is now judged per event against the command that event is supposed to run, so any future per-event divergence rolls out on the next activation. Found by testing the notice on a real session and seeing nothing appear.
+- **Handles now resolve across projects, which is the point of them.** `eh_send_message` built the handle route from the *sender's* working directory, so a send from one project to a handle claimed in another reported `No running agent matches "<handle>"` and queued the message against nothing. Cross-project delivery is the main thing handles exist for. Resolution now prefers a handle claimed in the sender's own project, then falls back to any project, and refuses with the candidate routes listed when a handle is claimed in more than one.
+- **Selecting an agent no longer freezes the universe.** The webview effect that syncs the selected agent depended on the whole `agentMap` and `metricsMap`, both of which are replaced on every incoming event from any agent — so once an agent was selected it re-ran and pushed new store state per event across the fleet, re-rendering the command centre and Operations view each time until the webview stopped responding and VS Code dimmed it. With nothing selected the effect returned early, which is why the freeze only appeared after clicking a planet. It now depends on the selected agent's own entries, and `setSelectedAgentData` returns the existing state unchanged instead of notifying every subscriber on a no-op update.
+- **OpenCode agents now report their real session cost.** The connector's accumulator starts at zero and only counts assistant messages that arrive while Event Horizon is attached, so a session already running — or one that outlived a VS Code restart — showed only what it spent since EH connected. One session at $202.68 displayed $0.62. Event Horizon now asks the OpenCode server (whose URL the plugin already sends) for the session's message history on first sight and seeds the true totals; the fetch is best-effort and leaves the live counter untouched if the server can't be reached.
+- **OpenCode token totals no longer inflate on re-emitted messages.** Deduplication tracked only the single previous message id, so when updates for two messages interleaved (A, B, A') the repeat was counted again. It now tracks every message id already folded into the totals, bounded so a long conversation can't grow the set without limit.
+- **A mis-derived address can now be corrected.** Addresses are deliberately never re-derived once assigned, so an address produced by a buggy rule was preserved just as faithfully — agents persisted before the project name resolved to the workspace folder kept aliases like `vscode-claude-…` for a repo called event-horizon, permanently. Persisted identity now carries a version stamp; entries written under an older stamp are dropped once and rebuilt under current rules, then stable again.
+
+### Security
+- **All 11 open Dependabot alerts resolved** (6 high, 5 moderate) without a single major bump — every fix was available inside the current major. The overrides existed already but each was pinned just below its fix line, so they satisfied the constraint while still resolving a vulnerable version:
+
+  | package | was | now | advisories |
+  |---|---|---|---|
+  | `fast-uri` | `>=3.1.2` → 3.1.2 | `^3.1.5` → 3.1.5 | GHSA-4c8g-83qw-93j6, GHSA-7p8r-x3mc-p8w7, GHSA-v2hh-gcrm-f6hx |
+  | `js-yaml` | `^4.2.0` → 4.3.0 | `^4.3.1` → 4.3.1 | GHSA-5p4m-2wfm-xmqj |
+  | `postcss` | `>=8.5.10` → 8.5.13 | `^8.5.26` → 8.5.26 | GHSA-r28c-9q8g-f849, GHSA-fxqj-rqcc-2cmp |
+  | `undici` | `^8.5.0` → 8.7.0 | `^8.9.0` → 8.10.0 | GHSA-4cwx-7wf7-3272 + 4 moderate |
+
+  Unbounded `>=` overrides were converted to `^` so a future install can't silently pull a breaking major.
+
+### Dependencies
+- **Grouped Dependabot updates applied** (#113, #114): `eslint` 10.7.0 → 10.8.1, `globals` 17.7.0 → 17.11.0, `turbo` 2.10.5 → 2.10.10, `typescript-eslint` 8.65.0 → 8.67.0, `react`/`react-dom` 19.2.7 → 19.2.8, `@types/react` 19.2.17 → 19.2.18, `@types/react-dom` 19.2.3 → 19.2.4, `tsx` 4.23.1 → 4.23.9, `ws` 8.20.0 → 8.21.3.
+- **`ws` override raised to `^8.21.2`.** The manifest asked for `^8.21.2` while `pnpm.overrides` still pinned `^8.21.0`, so installs silently resolved 8.21.1 — the override wins, and the two had drifted apart.
+
+### CI
+- **A changelog gate now blocks stable releases.** `changelog-check` compares the top dated `## [X.Y.Z]` heading in `apps/vscode/CHANGELOG.md` against `package.json`, and the `release` job depends on it. Runs on pushes to `master` and PRs targeting it, so a version bump without a changelog entry fails before the tag is created rather than after — the exact failure that lost the 3.1.0 and 3.1.1 entries.
+
+### Code quality
+- **Lint is now warning-clean across the monorepo** (24 warnings → 0; it was already error-free). Every warning was `@typescript-eslint/no-explicit-any` in a test file. Pixi `Graphics`/`Container` and `execFile` mocks now go through narrow local interfaces cast via `unknown` instead of `any`, so a change to the real signature shows up as a type error in the tests instead of being silently swallowed.
+- **Two dead `eslint-disable` directives removed.** One sat 14 lines above the `any` it was meant to suppress; the other named `no-console`, a rule that package doesn't enable. Neither suppressed anything, and both would have masked a real finding if code moved under them.
+
+## [3.1.1] — 2026-07-21
+
+### Changed
+- **`eh:architect` chains into `eh:create-plan`** after the architecture brief is confirmed, instead of ending at the brief. Still user-invocable on its own.
+
+### Docs
+- **`eh:architect` documented** in the README and user manual; stale skill and tool counts corrected.
+
+### Dependencies
+- Consolidated grouped dependabot updates (#102-#104).
+
+## [3.1.0] — 2026-07-20
+
+### Added
+- **Cost-aware orchestration.** New core modules — `FileReadCache`, budget enforcement, and model pricing — wired through the extension host: a shared read cache deduplicates file reads across agents, budgets can halt spawning when a plan exceeds its limit, and task routing accounts for both complexity and cost.
+- **`eh:architect` skill** — a pre-planning discovery interview that produces an architecture brief before any plan exists.
+- **MkDocs user manual** with GitHub Pages deployment, plus the first captured screenshots wired into the index and getting-started pages.
+
+### Fixed
+- **Duplicate-read detection now covers Copilot and Cursor**, not just Claude Code and OpenCode.
+- **VSIX packaging repaired** after dependency updates broke it.
 
 ### Changed
 - **Dependency bumps** (all patch-level, no behavior changes): `react` 19.2.5 → 19.2.6, `react-dom` 19.2.5 → 19.2.6, `typescript-eslint` 8.59.1 → 8.59.2, `ovsx` 0.10.11 → 0.10.12, `@types/node` 25.6.0 → 25.6.2.
-- **Dependabot now groups patch/minor bumps into one PR per week.** Previously each dep produced its own PR (5 PRs/week was typical), making routine maintenance feel like daily chores. `.github/dependabot.yml` now declares `dev-dependencies` and `production-dependencies` groups so weekly runs collapse to 1-2 PRs. Major bumps still come individually so they get proper scrutiny.
+- **Dependabot now groups patch/minor bumps into one PR per week.** Previously each dep produced its own PR (5 PRs/week was typical), making routine maintenance feel like daily chores. `.github/dependabot.yml` now declares `dev-dependencies` and `production-dependencies` groups so weekly runs collapse to 1-2 PRs. Major bumps still come individually so they get proper scrutiny. Consolidated dependabot updates (#89-#97) landed under the new grouping.
+
+### Security
+- **All 21 outstanding dependabot vulnerabilities resolved** via pnpm overrides (#100).
 
 ## [3.0.4] — 2026-05-09
 

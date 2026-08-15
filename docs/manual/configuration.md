@@ -35,6 +35,16 @@ Hard-block conflicting writes — an agent must acquire a lock before writing a 
 
 Give each spawned agent its own git worktree — a separate working copy of the repo on its own branch. Eliminates file conflicts entirely. Works with any git host. Disable if you don't want the extra branches. See [File Locking → Worktree isolation](file-locking.md#worktree-isolation).
 
+### eventHorizon.autoEvictLostAgents
+
+**Type:** boolean &middot; **Default:** `false`
+
+Remove agents that have gone quiet for more than five minutes.
+
+Off by default, because silence is not evidence an agent exited — an idle session sends nothing, so turning this on makes live idle agents disappear from the universe mid-session. Genuine exits are detected regardless: a `SessionEnd` hook and a spawned agent's process exit both remove the agent immediately, and the **Event Horizon: Purge Stale Agents** command clears anything left over on demand.
+
+Enable it only if you would rather lose an idle agent than keep a dead one on screen.
+
 ---
 
 ## Appearance

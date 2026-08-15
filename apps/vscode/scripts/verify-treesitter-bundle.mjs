@@ -22,7 +22,14 @@ import * as path from 'path';
 
 async function main() {
   console.log('[verify] calling Parser.init...');
-  await Parser.init();
+  // Mirror the extension: TreeSitterExtractor always passes a locateFile hook,
+  // so that is the path worth verifying. Bare Parser.init() would instead test
+  // emscripten's default lookup, which the extension never uses — and which
+  // changed name in 0.26 ('tree-sitter.wasm' -> 'web-tree-sitter.wasm'),
+  // failing here for a reason that does not apply to the shipped code.
+  await Parser.init({
+    locateFile: () => path.join(${JSON.stringify(root)}, 'out', 'tree-sitter.wasm'),
+  });
   console.log('[verify] Parser.init OK');
 
   const wasmPath = path.join(${JSON.stringify(root)}, 'out', 'tree-sitter-typescript.wasm');
