@@ -1021,16 +1021,33 @@ export class McpServer {
     const exact = agents.find((a) => a.id === rawTarget);
     if (exact) return { agentId: exact.id, alias: routeFor(exact.id) };
 
-    // 2. A handle or an alias, given as a full route or a bare name. Both are
-    //    unique, so a match is unambiguous.
+    // 2. A full route, or an alias. Both are unique, so a match is exact.
     const senderCwd = agentStateManager.getAgent(senderAgentId)?.cwd ?? null;
-    const candidates = [wanted, buildHandleRoute(senderCwd, wanted.replace(/^@/, ''))];
-    for (const route of candidates) {
-      const owner = messageQueue.getRouteOwner(route);
-      if (owner) return { agentId: owner, alias: route };
+    const directOwner = messageQueue.getRouteOwner(wanted);
+    if (directOwner) return { agentId: directOwner, alias: wanted };
+
+    // 3. A bare handle. Prefer one claimed in the sender's own project, then
+    //    fall back to any project — messaging is cross-project by design, and
+    //    the sender usually has no idea where the recipient claimed its name.
+    const bare = wanted.replace(/^@/, '');
+    const localRoute = buildHandleRoute(senderCwd, bare);
+    const localOwner = messageQueue.getRouteOwner(localRoute);
+    if (localOwner) return { agentId: localOwner, alias: localRoute };
+
+    const holders = messageQueue.findHandleHolders(bare);
+    if (holders.length === 1) {
+      return { agentId: holders[0].agentId, alias: holders[0].route };
+    }
+    if (holders.length > 1) {
+      return {
+        agentId: rawTarget,
+        alias: null,
+        error: `Handle "${bare}" is claimed in ${holders.length} projects (${holders.map((h) => h.route).join(', ')}). `
+          + 'Send to the full route or to a session ID.',
+      };
     }
 
-    // 3. Bare agent name. Runtimes report a constant name, so this usually
+    // 4. Bare agent name. Runtimes report a constant name, so this usually
     //    matches several sessions — say so instead of picking one.
     const byName = agents.filter((a) => (a.name ?? '').trim().toLowerCase() === wanted);
     if (byName.length > 1) {
@@ -1047,7 +1064,7 @@ export class McpServer {
       return { agentId: byName[0].id, alias: routeFor(byName[0].id) };
     }
 
-    // 4. Unknown target — queue it against whatever route we already associate
+    // 5. Unknown target — queue it against whatever route we already associate
     //    with this ID, so a reconnecting session still receives it.
     return {
       agentId: rawTarget,

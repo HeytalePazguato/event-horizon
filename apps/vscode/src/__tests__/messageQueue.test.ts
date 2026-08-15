@@ -457,6 +457,48 @@ describe('Messaging MCP tools', () => {
       expect(parsed.to).toBe('sess-2');
     });
 
+    // The bug this guards: handles were resolved only against the sender's own
+    // project, so a send from mivaro-mobile to a handle claimed in
+    // event-horizon reported "No running agent matches" — breaking the exact
+    // cross-project messaging handles exist for.
+    it('routes to a handle claimed in a different project', async () => {
+      connectAgent('sender');
+      mcpQueue.claimHandle('receiver', 'C:/Work/event-horizon', 'eh-dev');
+
+      const res = await callTool('eh_send_message', {
+        agent_id: 'sender', agent_name: 'Mivaro', to_agent_id: 'eh-dev',
+        message: 'across projects',
+      });
+      const parsed = parseResult(res) as Record<string, unknown>;
+      expect(parsed.sent).toBe(true);
+      expect(parsed.to).toBe('receiver');
+      expect(parsed.to_alias).toBe('event-horizon::@eh-dev');
+      expect(parsed.warning).toBeUndefined();
+    });
+
+    it('prefers a handle claimed in the sender\'s own project', async () => {
+      connectAgent('sender'); // cwd /work/proj
+      mcpQueue.claimHandle('local', '/work/proj', 'reviewer');
+      mcpQueue.claimHandle('remote', '/work/other', 'reviewer');
+
+      const res = await callTool('eh_send_message', {
+        agent_id: 'sender', to_agent_id: 'reviewer', message: 'hi',
+      });
+      expect((parseResult(res) as Record<string, unknown>).to).toBe('local');
+    });
+
+    it('refuses a handle claimed in several other projects', async () => {
+      mcpQueue.claimHandle('a', '/work/one', 'reviewer');
+      mcpQueue.claimHandle('b', '/work/two', 'reviewer');
+
+      const res = await callTool('eh_send_message', {
+        agent_id: 'sender', to_agent_id: 'reviewer', message: 'hi',
+      });
+      const parsed = parseResult(res) as Record<string, unknown>;
+      expect(parsed.sent).toBe(false);
+      expect(parsed.error).toContain('2 projects');
+    });
+
     it('routes to a claimed handle', async () => {
       mcpQueue.claimHandle('sess-2', null, 'ic');
       const res = await callTool('eh_send_message', {

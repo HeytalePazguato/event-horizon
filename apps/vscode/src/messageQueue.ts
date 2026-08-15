@@ -264,6 +264,30 @@ export class MessageQueue {
   }
 
   /**
+   * Find holders of a bare handle in any project.
+   *
+   * Handles are claimed per project so two projects can each have a "reviewer",
+   * but messaging is explicitly cross-project — the sender is usually in a
+   * different workspace than the recipient and has no idea which project the
+   * handle was claimed in. Resolving only against the sender's own project made
+   * every cross-project send by handle fail with "no running agent matches",
+   * which is precisely the case handles exist for.
+   *
+   * Returns every match so the caller can refuse rather than guess when a
+   * handle is used in more than one project.
+   */
+  findHandleHolders(bareHandle: string): Array<{ agentId: string; route: string }> {
+    const wanted = bareHandle.trim().toLowerCase().replace(/^@/, '');
+    if (!wanted) return [];
+    const suffix = `::@${wanted}`;
+    const holders: Array<{ agentId: string; route: string }> = [];
+    for (const [route, agentId] of this.handleOwner) {
+      if (route.endsWith(suffix)) holders.push({ agentId, route });
+    }
+    return holders;
+  }
+
+  /**
    * Send a message to a specific agent or broadcast to all ('*').
    * Returns the created message.
    */
