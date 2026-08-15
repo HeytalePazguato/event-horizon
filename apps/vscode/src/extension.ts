@@ -223,18 +223,40 @@ export function activate(context: vscode.ExtensionContext): void {
   // "no running agent matches" on the sender's side looked like a routing bug
   // rather than "that name no longer exists". Agent session IDs outlive an
   // extension restart, so restoring the map puts each address straight back.
+  // Addresses are never re-derived once assigned — that is the whole point, so
+  // a peer holding one keeps working. The cost is that an address derived by a
+  // buggy rule is preserved just as faithfully: agents persisted before the
+  // project name resolved to the workspace folder kept names like
+  // `vscode-claude-…` for a repo called event-horizon, forever.
+  //
+  // The version stamp is the escape hatch. Bump it whenever the derivation
+  // rules change; entries written under an older stamp are dropped once and
+  // rebuilt under the new rules, and stable from then on.
+  const IDENTITY_SCHEMA_VERSION = 2;
+
+  function loadIdentityState<T>(key: string): T[] | undefined {
+    const raw = context.globalState.get<{ v?: number; entries?: T[] } | T[]>(key);
+    if (!raw) return undefined;
+    // A bare array is the original unversioned payload — predates the project
+    // fix by definition, so discard it.
+    if (Array.isArray(raw)) return undefined;
+    if (raw.v !== IDENTITY_SCHEMA_VERSION) return undefined;
+    return raw.entries;
+  }
+
   messageQueue.restoreHandles(
-    context.globalState.get<Array<{ route: string; agentId: string }>>('agentHandles'),
+    loadIdentityState<{ route: string; agentId: string }>('agentHandles'),
   );
-  // Aliases persist for the same reason. They are derived from the clock at
-  // first sight, so re-deriving after a restart hands a long-running agent a
-  // brand new address and silently invalidates every one it had shared.
   messageQueue.restoreAliases(
-    context.globalState.get<Array<{ agentId: string; alias: string }>>('agentAliases'),
+    loadIdentityState<{ agentId: string; alias: string }>('agentAliases'),
   );
   messageQueue.setOnIdentityChanged(() => {
-    void context.globalState.update('agentHandles', messageQueue.serializeHandles());
-    void context.globalState.update('agentAliases', messageQueue.serializeAliases());
+    void context.globalState.update('agentHandles', {
+      v: IDENTITY_SCHEMA_VERSION, entries: messageQueue.serializeHandles(),
+    });
+    void context.globalState.update('agentAliases', {
+      v: IDENTITY_SCHEMA_VERSION, entries: messageQueue.serializeAliases(),
+    });
   });
 
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
