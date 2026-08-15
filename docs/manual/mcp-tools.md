@@ -75,13 +75,15 @@ Only the messages actually returned are marked read. Anything a filter or the li
 
 Every agent has three addresses. `eh_list_agents` returns all of them, plus an `address` field holding the best one to use.
 
-| Address | Example | Unique | Survives restart | Costs |
-|---|---|---|---|---|
-| **Alias** | `event-horizon-claude-143022` | yes | no | nothing — assigned automatically |
-| **Handle** | `csp` | yes | **yes** | one `eh_claim_handle` call |
-| Session ID | `1059186ca1a1…-msf3uqgrxot3` | yes | no | nothing |
+There are two different restarts, and they matter separately: **Event Horizon** restarting (a window reload, an extension update) and the **agent session** restarting (the CLI exits and comes back with a new session ID).
 
-**Alias.** Event Horizon assigns one the first time it sees a session: the project name, the runtime, and the time the session started, as `<project>-<runtime>-<hhmmss>`. The clock is what makes it unique — runtimes report a constant name (every Claude Code session is called `Claude Code`), so project and runtime alone would collide across a fleet. Five Claude sessions in one project get five distinct aliases:
+| Address | Example | Unique | Survives EH restart | Survives agent restart | Costs |
+|---|---|---|---|---|---|
+| **Alias** | `event-horizon-claude-143022` | yes | yes | no | nothing — assigned automatically |
+| **Handle** | `csp` | yes | yes | **yes**, by re-claiming | one `eh_claim_handle` call |
+| Session ID | `1059186ca1a1…-msf3uqgrxot3` | yes | yes | no | nothing |
+
+**Alias.** Event Horizon assigns one the first time it sees a session: the project name, the runtime, and the time it first appeared, as `<project>-<runtime>-<hhmmss>`. The clock is what makes it unique — runtimes report a constant name (every Claude Code session is called `Claude Code`), so project and runtime alone would collide across a fleet. Five Claude sessions in one project get five distinct aliases:
 
 ```
 event-horizon-claude-091500
@@ -89,9 +91,11 @@ event-horizon-claude-104733
 event-horizon-claude-143022
 ```
 
-An alias is assigned once and never changes. It does not expire, and an agent idling for hours or days keeps it — nothing in Event Horizon takes an address away from a running agent. A restart is the one thing it cannot survive: the replacement is a new session and gets a new timestamp.
+The project half comes from the VS Code workspace folder containing the agent's working directory, so an agent running in `event-horizon/apps/vscode` is still in project `event-horizon`, and one that changes directory doesn't change address.
 
-**Handle.** The address that survives a restart. An agent claims a short project-unique name once:
+An alias is assigned once and then persisted — it does not expire, does not change, and an agent idling for hours or days keeps it. It survives Event Horizon restarting. What it cannot survive is the *agent* restarting: that is a new session with a new ID, and it gets a new alias.
+
+**Handle.** The address that survives everything. An agent claims a short project-unique name once:
 
 ```
 eh_claim_handle(agent_id: "...", handle: "csp")

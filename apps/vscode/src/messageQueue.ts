@@ -18,7 +18,8 @@
  *
  * Session IDs are opaque and unreadable, so agents get two friendlier
  * addresses. Both are permanent: nothing here expires, and an idle agent keeps
- * its address for as long as it lives, however long that is.
+ * its address for as long as it lives, however long that is. The host
+ * persists both, so an Event Horizon restart does not change either.
  *
  *   - an alias, assigned automatically the first time Event Horizon sees a
  *     session: `<project>-<runtime>-<hhmmss>`, e.g. `event-horizon-claude-143022`.
@@ -26,10 +27,10 @@
  *     otherwise identical), readable, and fixed for the session's whole life.
  *     It costs the agent nothing — no call, no cooperation.
  *   - a handle, claimed by the agent itself: `<project>::@name`, e.g.
- *     `event-horizon::@csp`. The one address that survives a restart, because
- *     the replacement session can claim the same name and collect everything
- *     queued for it. Aliases can't do this — a restarted session is a new
- *     session, and gets a new timestamp.
+ *     `event-horizon::@csp`. The address that survives the *agent* restarting
+ *     too: the replacement session claims the same name and collects
+ *     everything queued for it. An alias cannot do that — a restarted agent is
+ *     a new session with a new ID, so it gets a new alias.
  */
 
 export type MessageKind = 'peer' | 'system';

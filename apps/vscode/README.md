@@ -130,10 +130,11 @@ All agents access coordination tools via the MCP server (auto-registered on conn
 
 **Project graph** -- `eh_build_graph` `eh_scan_status` `eh_query_graph` `eh_curate_context` `eh_extract_concepts` `eh_rescan_files`
 
-Ten bundled skills handle common workflows so agents don't need to memorize tool names:
+Eleven bundled skills handle common workflows so agents don't need to memorize tool names:
 
 | Skill | What it does |
 |-------|-------------|
+| `/eh:architect` | Run a discovery interview before any plan exists, producing an architecture brief that feeds `/eh:create-plan` |
 | `/eh:create-plan` | Generate a plan with parallel tracks, dependencies, acceptance criteria, and verify steps |
 | `/eh:work-on-plan` | Claim tasks, implement, self-verify against acceptance criteria, mark progress |
 | `/eh:orchestrate` | Manage a plan as orchestrator -- spawn workers, assign tasks, monitor, handle failures |
