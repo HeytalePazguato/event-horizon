@@ -263,6 +263,38 @@ describe('MessageQueue', () => {
       expect(messages[0].message).toBe('Build ready');
     });
 
+    // A message sent to a name that couldn't be resolved was stored with the
+    // raw target and no route, and stayed undeliverable forever — even after
+    // the name became resolvable. That orphaned a real reply in practice.
+    it('delivers a message queued against an unresolved handle once it resolves', () => {
+      queue.send('a1', 'Alpha', 'eh-dev', 'queued before the handle existed', { toAlias: null });
+      expect(queue.getUnread('receiver').messages).toHaveLength(0);
+
+      queue.claimHandle('receiver', '/work/proj', 'eh-dev');
+
+      const { messages } = queue.getUnread('receiver');
+      expect(messages).toHaveLength(1);
+      expect(messages[0].message).toBe('queued before the handle existed');
+    });
+
+    it('does not hand an unresolved message to the wrong agent', () => {
+      queue.send('a1', 'Alpha', 'eh-dev', 'for eh-dev only', { toAlias: null });
+      queue.claimHandle('receiver', '/work/proj', 'eh-dev');
+      queue.claimHandle('bystander', '/work/proj', 'someone-else');
+
+      expect(queue.getUnread('bystander').messages).toHaveLength(0);
+      expect(queue.getUnread('receiver').messages).toHaveLength(1);
+    });
+
+    it('holds an unresolved message when the handle is claimed in several projects', () => {
+      queue.send('a1', 'Alpha', 'reviewer', 'ambiguous', { toAlias: null });
+      queue.claimHandle('one', '/work/a', 'reviewer');
+      queue.claimHandle('two', '/work/b', 'reviewer');
+
+      expect(queue.getUnread('one').messages).toHaveLength(0);
+      expect(queue.getUnread('two').messages).toHaveLength(0);
+    });
+
     it('routes to the handle holder, not to a sibling session', () => {
       queue.ensureAlias('sess-1', '/work/proj', 'claude-code', 1);
       queue.ensureAlias('sess-2', '/work/proj', 'claude-code', 2);
