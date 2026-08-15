@@ -168,6 +168,9 @@ export class MessageQueue {
   /** agentId → the handle route it holds. */
   private handleByAgent = new Map<string, string>();
 
+  /** Notified whenever handle ownership changes, so the host can persist it. */
+  private onHandlesChanged: (() => void) | null = null;
+
   constructor(maxMessages = 1000) {
     this.maxMessages = maxMessages;
   }
@@ -239,7 +242,39 @@ export class MessageQueue {
     if (previous && previous !== route) this.handleOwner.delete(previous);
     this.handleOwner.set(route, agentId);
     this.handleByAgent.set(agentId, route);
+    this.onHandlesChanged?.();
     return { ok: true, route, handle };
+  }
+
+  /**
+   * Register a callback fired whenever handle ownership changes.
+   *
+   * Handles were memory-only, so restarting Event Horizon silently voided every
+   * one of them. Agent session IDs outlive an extension restart, so persisting
+   * the map and restoring it on activation puts each agent's address back
+   * without the agent having to notice anything happened.
+   */
+  setOnHandlesChanged(fn: (() => void) | null): void {
+    this.onHandlesChanged = fn;
+  }
+
+  /** Handle ownership in a form the host can persist. */
+  serializeHandles(): Array<{ route: string; agentId: string }> {
+    return [...this.handleOwner].map(([route, agentId]) => ({ route, agentId }));
+  }
+
+  /**
+   * Restore persisted handle ownership. Does not fire the change callback —
+   * this is loading what was already saved, not a new claim.
+   */
+  restoreHandles(entries: ReadonlyArray<{ route: string; agentId: string }> | undefined): void {
+    if (!entries) return;
+    for (const entry of entries) {
+      if (!entry?.route || !entry?.agentId) continue;
+      // A route names exactly one holder; last write wins, as when claiming.
+      this.handleOwner.set(entry.route, entry.agentId);
+      this.handleByAgent.set(entry.agentId, entry.route);
+    }
   }
 
   /** The alias assigned to an agent, if it has been seen. */

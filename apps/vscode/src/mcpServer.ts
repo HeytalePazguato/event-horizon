@@ -1066,11 +1066,19 @@ export class McpServer {
 
     // 5. Unknown target — queue it against whatever route we already associate
     //    with this ID, so a reconnecting session still receives it.
-    return {
-      agentId: rawTarget,
-      alias: routeFor(rawTarget),
-      warning: `No running agent matches "${rawTarget}". The message is queued and will be delivered if that agent connects.`,
-    };
+    //
+    // Name both possibilities instead of guessing between them — a session ID
+    // and a handle are not reliably distinguishable by shape. The old wording,
+    // "No running agent matches", described only the session-ID case, so an
+    // unclaimed handle read as a routing failure and was repeatedly
+    // misdiagnosed as one.
+    const warning = `Nothing currently matches "${rawTarget}". `
+      + `If that is a handle, no agent holds it right now — handles are claimed with eh_claim_handle `
+      + `and exist only while Event Horizon knows that agent. If it is a session ID, that agent is not connected. `
+      + `Call eh_list_agents to see current addresses. `
+      + `The message is queued and will be delivered if "${rawTarget}" becomes reachable.`;
+
+    return { agentId: rawTarget, alias: routeFor(rawTarget), warning };
   }
 
   /** Handle a JSON-RPC request and return a response. */
