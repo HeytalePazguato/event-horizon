@@ -155,14 +155,29 @@ function isEhHook(h: Record<string, unknown>): boolean {
   return false;
 }
 
-/** True if the hook matches the current expected format exactly. */
-function isCurrentEhHook(h: Record<string, unknown>): boolean {
+/** The command this specific hook event is supposed to run. */
+function expectedCommandFor(hookEvent: string): string {
+  if (hookEvent === 'PreToolUse') return buildPreToolUseCommand();
+  if (hookEvent === 'UserPromptSubmit') return buildPromptSubmitCommand();
+  return buildEhCommand();
+}
+
+/**
+ * True if the hook matches what this event is supposed to run.
+ *
+ * Must be checked per event, not against "any command Event Horizon might
+ * install". It used to accept all three shapes regardless of which event they
+ * were attached to, so when UserPromptSubmit moved from the generic command to
+ * the inbox one, the old generic command still counted as current: it was
+ * neither removed as stale nor replaced, and the change never reached anyone
+ * who already had hooks installed. Any future per-event divergence would have
+ * failed to roll out the same silent way.
+ */
+function isCurrentEhHook(h: Record<string, unknown>, hookEvent: string): boolean {
   if (typeof h.command === 'string') {
     // Legacy hooks contain the query-string token; they're NOT current (v2.0.0 breaking change).
     if (h.command.includes('?token=')) return false;
-    if (h.command === buildEhCommand()) return true;
-    if (h.command === buildPreToolUseCommand()) return true;
-    if (h.command === buildPromptSubmitCommand()) return true;
+    return h.command === expectedCommandFor(hookEvent);
   }
   if (h.type === 'http' && h.url === buildEhUrl()) return true;
   return false;
@@ -205,7 +220,7 @@ export async function hasStaleClaudeCodeHooks(): Promise<boolean> {
         for (const c of hs) {
           if (isEhHook(c)) {
             hasAny = true;
-            if (isCurrentEhHook(c)) hasCurrent = true;
+            if (isCurrentEhHook(c, hookEvent)) hasCurrent = true;
           }
         }
       }
@@ -269,7 +284,7 @@ export async function setupClaudeCodeHooks(): Promise<void> {
     const withoutStale = current.filter((h) => {
       const hh = h as Record<string, unknown>;
       const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
-      const hasStale = hs.some((c) => isEhHook(c) && !isCurrentEhHook(c));
+      const hasStale = hs.some((c) => isEhHook(c) && !isCurrentEhHook(c, hookEvent));
       return !hasStale;
     });
 
@@ -277,7 +292,7 @@ export async function setupClaudeCodeHooks(): Promise<void> {
     const alreadyCurrent = withoutStale.some((h) => {
       const hh = h as Record<string, unknown>;
       const hs = (hh.hooks ?? []) as Array<Record<string, unknown>>;
-      return hs.some((c) => isCurrentEhHook(c));
+      return hs.some((c) => isCurrentEhHook(c, hookEvent));
     });
 
     // PreToolUse uses the lock-checking script; everything else uses the normal curl
@@ -365,3 +380,14 @@ export async function runSetupClaudeCodeHooks(): Promise<void> {
     void vscode.window.showErrorMessage(`Event Horizon: Failed to set up hooks — ${msg}`);
   }
 }
+
+/**
+ * Internals exposed for tests. These decide whether an installed hook gets
+ * replaced on activation, which is the difference between a change reaching
+ * users automatically and silently never rolling out.
+ */
+export const __hookTestables = {
+  expectedCommandFor,
+  isCurrentEhHook,
+  isEhHook,
+};
