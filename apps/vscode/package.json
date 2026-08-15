@@ -377,6 +377,12 @@
           "description": "Estimated context window size in tokens (drives the planet fuel-gauge calculation). Default is 200000 for Claude Sonnet/Opus.",
           "order": 34
         },
+        "eventHorizon.autoEvictLostAgents": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically remove agents that have been silent for more than 5 minutes. Off by default: an idle agent sends nothing, so silence is not evidence it has exited, and enabling this makes live idle agents disappear from the universe. Real exits are still detected via SessionEnd and spawned-process exit; use the 'Purge Stale Agents' command to clean up on demand.",
+          "order": 36
+        },
         "eventHorizon.autoDetect.enabled": {
           "type": "boolean",
           "default": true,

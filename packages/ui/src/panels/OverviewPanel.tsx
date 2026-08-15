@@ -49,6 +49,19 @@ const stateColors: Record<string, string> = {
 
 // ── Tool breakdown bar chart ─────────────────────────────────────────────────
 
+/**
+ * Shorten a tool name for the breakdown label.
+ *
+ * MCP tools arrive fully qualified — `mcp__event-horizon__eh_list_agents` —
+ * which is far too long for the label column and carries no information the
+ * agent panel doesn't already show. The trailing tool name is the part worth
+ * reading, so drop the `mcp__<server>__` prefix.
+ */
+export function shortenToolName(name: string): string {
+  const mcp = /^mcp__[^_]+(?:_[^_]+)*__(.+)$/.exec(name);
+  return mcp ? mcp[1] : name;
+}
+
 const ToolBreakdown: FC<{ breakdown: Record<string, number> }> = ({ breakdown }) => {
   const entries = Object.entries(breakdown).sort(([, a], [, b]) => b - a).slice(0, 8);
   const max = entries.length > 0 ? entries[0][1] : 1;
@@ -58,11 +71,28 @@ const ToolBreakdown: FC<{ breakdown: Record<string, number> }> = ({ breakdown })
       <div style={{ ...labelStyle, marginBottom: 4 }}>Tool Breakdown</div>
       {entries.map(([name, count]) => (
         <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-          <span style={{ width: 50, fontSize: 11, color: '#6a9a78', textAlign: 'right', flexShrink: 0 }}>{name}</span>
-          <div style={{ flex: 1, height: 6, background: '#0a1a10', borderRadius: 2 }}>
+          {/* Fixed width with ellipsis: a long name used to overflow its box and
+              render on top of the bar. minWidth 0 is required or flexbox lets
+              the span expand past its width and clip nothing. */}
+          <span
+            style={{
+              width: 118,
+              minWidth: 0,
+              fontSize: 11,
+              color: '#6a9a78',
+              textAlign: 'right',
+              flexShrink: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {shortenToolName(name)}
+          </span>
+          <div style={{ flex: 1, minWidth: 0, height: 6, background: '#0a1a10', borderRadius: 2 }}>
             <div style={{ width: `${(count / max) * 100}%`, height: '100%', background: '#2a7a4a', borderRadius: 2 }} />
           </div>
-          <span style={{ fontSize: 11, color: '#5a8a6a', width: 30, flexShrink: 0 }}>{count}</span>
+          <span style={{ fontSize: 11, color: '#5a8a6a', width: 40, flexShrink: 0, textAlign: 'right' }}>{count}</span>
         </div>
       ))}
     </div>

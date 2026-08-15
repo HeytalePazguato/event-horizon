@@ -762,9 +762,20 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     // Auto-evict agents whose heartbeat is 'lost' (>5 min silence).
-    // Skip agents that are still tracked in the spawn registry — their process
-    // exit handler will emit the terminate event when the process actually dies.
-    for (const beat of allBeats) {
+    //
+    // OFF by default. Silence is not evidence that an agent is gone: a session
+    // sitting idle sends nothing, so this removed live agents from the universe
+    // after five quiet minutes — the regression where an idle Claude session
+    // simply vanished. It also contradicts the rule further down that planets
+    // are only removed by an explicit agent.terminate.
+    //
+    // Real deaths are still handled: SessionEnd emits agent.terminate, spawned
+    // agents report process exit, and eventHorizon.purgeStaleAgents /
+    // eh_purge_stale_agents clean up on demand. Turn this on only if you would
+    // rather lose an idle agent than keep a dead one on screen.
+    const autoEvictLost = vscode.workspace.getConfiguration('eventHorizon')
+      .get<boolean>('autoEvictLostAgents', false);
+    for (const beat of autoEvictLost ? allBeats : []) {
       if (beat.status !== 'lost') continue;
       const agent = agentStateManager.getAgent(beat.agentId);
       if (!agent) continue;
