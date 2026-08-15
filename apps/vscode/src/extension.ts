@@ -126,6 +126,33 @@ function normalizePath(p: string): string {
 }
 
 /**
+ * Map a working directory to the project it belongs to.
+ *
+ * Addresses name the project, and the project name comes from the last path
+ * segment — so an agent running in `event-horizon/apps/vscode` was labelled
+ * project "vscode" while its sibling in the repo root was "event-horizon". Two
+ * agents in one repo appeared to be in different projects, and an agent that
+ * changed directory appeared to change project.
+ *
+ * Resolving to the containing VS Code workspace folder keeps every agent in a
+ * repo under one name. A cwd outside any open folder is returned unchanged —
+ * agents in other projects are the normal case, not an error.
+ */
+function projectRootFor(cwd: string | undefined): string | undefined {
+  if (!cwd) return cwd;
+  const target = normalizePath(cwd);
+  let best: string | undefined;
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const root = normalizePath(folder.uri.fsPath);
+    if (target === root || target.startsWith(root.endsWith('/') ? root : `${root}/`)) {
+      // Deepest matching folder wins, for nested multi-root setups.
+      if (!best || root.length > normalizePath(best).length) best = folder.uri.fsPath;
+    }
+  }
+  return best ?? cwd;
+}
+
+/**
  * Returns true if two cwd paths share a workspace folder or one is a parent of the other.
  * Uses VS Code's workspace folders as the authority for multi-root workspaces.
  */
@@ -199,8 +226,15 @@ export function activate(context: vscode.ExtensionContext): void {
   messageQueue.restoreHandles(
     context.globalState.get<Array<{ route: string; agentId: string }>>('agentHandles'),
   );
-  messageQueue.setOnHandlesChanged(() => {
+  // Aliases persist for the same reason. They are derived from the clock at
+  // first sight, so re-deriving after a restart hands a long-running agent a
+  // brand new address and silently invalidates every one it had shared.
+  messageQueue.restoreAliases(
+    context.globalState.get<Array<{ agentId: string; alias: string }>>('agentAliases'),
+  );
+  messageQueue.setOnIdentityChanged(() => {
     void context.globalState.update('agentHandles', messageQueue.serializeHandles());
+    void context.globalState.update('agentAliases', messageQueue.serializeAliases());
   });
 
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
@@ -1021,7 +1055,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // idles; nothing here expires it.
     messageQueue.ensureAlias(
       event.agentId,
-      event.payload?.cwd as string | undefined,
+      projectRootFor(event.payload?.cwd as string | undefined),
       event.agentType,
       event.timestamp,
     );

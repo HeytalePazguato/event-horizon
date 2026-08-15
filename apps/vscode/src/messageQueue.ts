@@ -168,8 +168,8 @@ export class MessageQueue {
   /** agentId → the handle route it holds. */
   private handleByAgent = new Map<string, string>();
 
-  /** Notified whenever handle ownership changes, so the host can persist it. */
-  private onHandlesChanged: (() => void) | null = null;
+  /** Notified whenever an address is assigned or claimed, so the host can persist it. */
+  private onIdentityChanged: (() => void) | null = null;
 
   constructor(maxMessages = 1000) {
     this.maxMessages = maxMessages;
@@ -203,7 +203,31 @@ export class MessageQueue {
 
     this.aliasByAgent.set(agentId, alias);
     this.aliasOwner.set(alias, agentId);
+    this.onIdentityChanged?.();
     return alias;
+  }
+
+  /** Assigned aliases in a form the host can persist. */
+  serializeAliases(): Array<{ agentId: string; alias: string }> {
+    return [...this.aliasByAgent].map(([agentId, alias]) => ({ agentId, alias }));
+  }
+
+  /**
+   * Restore persisted aliases.
+   *
+   * Without this, an Event Horizon restart re-derived every alias from scratch
+   * — with a fresh clock reading and whatever cwd the agent happened to report
+   * next — so a long-running agent silently changed address on every restart
+   * and every previously-shared address went stale. The clock in an alias is
+   * meant to mark when that agent first appeared, once, for good.
+   */
+  restoreAliases(entries: ReadonlyArray<{ agentId: string; alias: string }> | undefined): void {
+    if (!entries) return;
+    for (const entry of entries) {
+      if (!entry?.agentId || !entry?.alias) continue;
+      this.aliasByAgent.set(entry.agentId, entry.alias);
+      this.aliasOwner.set(entry.alias, entry.agentId);
+    }
   }
 
   /**
@@ -242,20 +266,20 @@ export class MessageQueue {
     if (previous && previous !== route) this.handleOwner.delete(previous);
     this.handleOwner.set(route, agentId);
     this.handleByAgent.set(agentId, route);
-    this.onHandlesChanged?.();
+    this.onIdentityChanged?.();
     return { ok: true, route, handle };
   }
 
   /**
-   * Register a callback fired whenever handle ownership changes.
+   * Register a callback fired whenever an address is assigned or claimed.
    *
    * Handles were memory-only, so restarting Event Horizon silently voided every
    * one of them. Agent session IDs outlive an extension restart, so persisting
    * the map and restoring it on activation puts each agent's address back
    * without the agent having to notice anything happened.
    */
-  setOnHandlesChanged(fn: (() => void) | null): void {
-    this.onHandlesChanged = fn;
+  setOnIdentityChanged(fn: (() => void) | null): void {
+    this.onIdentityChanged = fn;
   }
 
   /** Handle ownership in a form the host can persist. */

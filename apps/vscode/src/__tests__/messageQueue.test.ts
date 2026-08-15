@@ -329,16 +329,41 @@ describe('MessageQueue', () => {
       expect(restarted.getUnread('sess-1').messages).toHaveLength(1);
     });
 
+    it('notifies on alias assignment so the host can persist', () => {
+      let calls = 0;
+      queue.setOnIdentityChanged(() => { calls++; });
+      queue.ensureAlias('sess-1', '/work/proj', 'claude-code', Date.now());
+      expect(calls).toBe(1);
+    });
+
+    it('round-trips aliases through serialize/restore', () => {
+      const alias = queue.ensureAlias('sess-1', '/work/proj', 'claude-code', Date.now());
+      const restarted = new MessageQueue();
+      restarted.restoreAliases(queue.serializeAliases());
+      expect(restarted.getAlias('sess-1')).toBe(alias);
+      expect(restarted.getRouteOwner(alias)).toBe('sess-1');
+    });
+
+    // The regression: a restart re-derived the alias from a fresh clock, so a
+    // long-running agent silently changed address and every shared one broke.
+    it('keeps the original alias after a restart, not a fresh clock reading', () => {
+      const original = queue.ensureAlias('sess-1', '/work/proj', 'claude-code', new Date(2026, 0, 1, 9, 15, 0).getTime());
+      const restarted = new MessageQueue();
+      restarted.restoreAliases(queue.serializeAliases());
+      const afterRestart = restarted.ensureAlias('sess-1', '/work/other', 'claude-code', new Date(2026, 0, 2, 23, 59, 0).getTime());
+      expect(afterRestart).toBe(original);
+    });
+
     it('notifies on claim so the host can persist', () => {
       let calls = 0;
-      queue.setOnHandlesChanged(() => { calls++; });
+      queue.setOnIdentityChanged(() => { calls++; });
       queue.claimHandle('sess-1', '/work/proj', 'csp');
       expect(calls).toBe(1);
     });
 
     it('does not notify while restoring — that is a load, not a claim', () => {
       let calls = 0;
-      queue.setOnHandlesChanged(() => { calls++; });
+      queue.setOnIdentityChanged(() => { calls++; });
       queue.restoreHandles([{ route: 'proj::@csp', agentId: 'sess-1' }]);
       expect(calls).toBe(0);
     });
