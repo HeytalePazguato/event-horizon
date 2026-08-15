@@ -191,6 +191,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const savedRoles = context.globalState.get<ReturnType<typeof roleManager.serialize>>('agentRoles');
   if (savedRoles) roleManager.restore(savedRoles);
 
+  // Restore claimed handles. These lived only in memory, so restarting the
+  // extension voided every agent's address at once — and the resulting
+  // "no running agent matches" on the sender's side looked like a routing bug
+  // rather than "that name no longer exists". Agent session IDs outlive an
+  // extension restart, so restoring the map puts each address straight back.
+  messageQueue.restoreHandles(
+    context.globalState.get<Array<{ route: string; agentId: string }>>('agentHandles'),
+  );
+  messageQueue.setOnHandlesChanged(() => {
+    void context.globalState.update('agentHandles', messageQueue.serializeHandles());
+  });
+
   const savedProfiles = context.globalState.get<ReturnType<typeof agentProfiler.serialize>>('agentProfiles');
   if (savedProfiles) {
     // Migrate stale records: fix 'unknown' agent types and -1 costs

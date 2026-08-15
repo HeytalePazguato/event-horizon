@@ -306,6 +306,58 @@ describe('MessageQueue', () => {
     });
   });
 
+  // Handles lived only in memory, so restarting Event Horizon voided every
+  // agent's address at once and the sender saw what looked like a routing bug.
+  describe('handle persistence', () => {
+    it('round-trips ownership through serialize/restore', () => {
+      queue.claimHandle('sess-1', '/work/proj', 'csp');
+      const saved = queue.serializeHandles();
+      expect(saved).toEqual([{ route: 'proj::@csp', agentId: 'sess-1' }]);
+
+      const restarted = new MessageQueue();
+      restarted.restoreHandles(saved);
+      expect(restarted.getRouteOwner('proj::@csp')).toBe('sess-1');
+      expect(restarted.getHandle('sess-1')).toBe('csp');
+    });
+
+    it('delivers to a restored handle after a restart', () => {
+      queue.claimHandle('sess-1', '/work/proj', 'csp');
+      const restarted = new MessageQueue();
+      restarted.restoreHandles(queue.serializeHandles());
+
+      restarted.send('other', 'Other', 'csp', 'still reachable', { toAlias: 'proj::@csp' });
+      expect(restarted.getUnread('sess-1').messages).toHaveLength(1);
+    });
+
+    it('notifies on claim so the host can persist', () => {
+      let calls = 0;
+      queue.setOnHandlesChanged(() => { calls++; });
+      queue.claimHandle('sess-1', '/work/proj', 'csp');
+      expect(calls).toBe(1);
+    });
+
+    it('does not notify while restoring — that is a load, not a claim', () => {
+      let calls = 0;
+      queue.setOnHandlesChanged(() => { calls++; });
+      queue.restoreHandles([{ route: 'proj::@csp', agentId: 'sess-1' }]);
+      expect(calls).toBe(0);
+    });
+
+    it('ignores malformed persisted entries', () => {
+      queue.restoreHandles([
+        { route: '', agentId: 'x' },
+        { route: 'proj::@ok', agentId: '' },
+        { route: 'proj::@good', agentId: 'sess-9' },
+      ]);
+      expect(queue.getRouteOwner('proj::@good')).toBe('sess-9');
+      expect(queue.getRouteOwner('')).toBeNull();
+    });
+
+    it('tolerates nothing saved yet', () => {
+      expect(() => queue.restoreHandles(undefined)).not.toThrow();
+    });
+  });
+
   describe('summarizeUnread', () => {
     it('counts without consuming', () => {
       queue.send('a1', 'Alpha', 'a2', 'Peer one');
@@ -476,7 +528,12 @@ describe('Messaging MCP tools', () => {
       });
       const parsed = parseResult(res) as Record<string, unknown>;
       expect(parsed.sent).toBe(true);
-      expect(parsed.warning).toContain('No running agent');
+      expect(parsed.warning).toContain('Nothing currently matches');
+      // Both failure modes are named, because a session ID and a handle are
+      // not reliably distinguishable by shape.
+      expect(parsed.warning).toContain('eh_claim_handle');
+      expect(parsed.warning).toContain('session ID');
+      expect(parsed.warning).toContain('eh_list_agents');
     });
 
     it('routes to an assigned alias', async () => {
