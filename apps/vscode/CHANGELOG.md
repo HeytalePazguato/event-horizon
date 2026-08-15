@@ -4,6 +4,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-08-14
+
 ### Changed
 - **`eh_get_messages` now filters and paginates.** New `kind` (`peer` / `system` / `all`), `from_agent_id`, `exclude_from`, and `limit` parameters. Messages carry a `kind` recording who sent them: `peer` for anything another EH-connected agent session sent via `eh_send_message`, `system` for Event Horizon's own generated notices. Results return peer messages first, then system notices, capped at 50 per call. Only the messages actually returned are marked read, and the response reports a `pending` count per kind, so a filtered read can't silently consume mail the caller never saw. Previously the tool dumped the entire inbox and marked all of it read — a real peer message could sit past the tool-output truncation point and be lost.
 - **`eh_send_message` accepts readable addresses.** `to_agent_id` resolves an alias, a claimed handle, a session ID, or an agent name, and a new `to_agent_name` parameter targets by name directly. Every message is tagged with the recipient's address, so a message addressed to a handle reaches whichever session holds that handle when it is read.
