@@ -534,7 +534,7 @@
     "@types/ws": "^8.18.1",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
-    "ovsx": "^0.10.12",
+    "ovsx": "^1.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^5.9.3"
