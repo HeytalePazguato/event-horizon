@@ -526,7 +526,7 @@
     "ws": "^8.21.2"
   },
   "devDependencies": {
-    "@types/node": "^25.8.0",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/sql.js": "^1.4.11",
