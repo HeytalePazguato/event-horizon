@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@event-horizon/core": "workspace:*",
-    "pixi.js": "^8.19.0"
+    "pixi.js": "^8.20.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
