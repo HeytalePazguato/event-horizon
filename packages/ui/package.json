@@ -14,7 +14,7 @@
   "dependencies": {
     "@event-horizon/core": "workspace:*",
     "d3-force": "^3.0.0",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@types/d3-force": "^3.0.10",
