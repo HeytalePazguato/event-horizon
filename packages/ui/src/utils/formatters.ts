@@ -12,12 +12,18 @@ export function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
-export function formatCost(usd: number): string {
-  if (usd < 0) return '-';
-  if (usd === 0) return '$0.00';
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  if (usd < 10) return `$${usd.toFixed(2)}`;
-  return `$${usd.toFixed(1)}`;
+/**
+ * Format a USD cost for display.
+ * Negative values mean "no data" and render as an em dash. Estimated values
+ * (transcript-derived or unpriced model) get a leading '~'.
+ */
+export function formatCost(usd: number, opts?: { estimated?: boolean }): string {
+  if (usd < 0) return '—';
+  const prefix = opts?.estimated ? '~' : '';
+  if (usd === 0) return `${prefix}$0.00`;
+  if (usd < 0.01) return `${prefix}$${usd.toFixed(4)}`;
+  if (usd < 10) return `${prefix}$${usd.toFixed(2)}`;
+  return `${prefix}$${usd.toFixed(1)}`;
 }
 
 export function formatDuration(ms: number): string {

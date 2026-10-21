@@ -138,7 +138,7 @@ const AgentOverview: FC<{ agent: AgentState; metrics: AgentMetrics }> = ({ agent
         <div style={cellStyle}><div style={labelStyle}>Uptime</div><div style={valStyle}>{uptime}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Last Active</div><div style={valStyle}>{lastActive}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Tokens</div><div style={valStyle}>{formatTokens(m.inputTokens + m.outputTokens)}</div></div>
-        <div style={cellStyle}><div style={labelStyle}>Cost</div><div style={valStyle}>{formatCost(m.estimatedCostUsd)}</div></div>
+        <div style={cellStyle}><div style={labelStyle}>Cost</div><div style={valStyle}>{formatCost(m.estimatedCostUsd, { estimated: m.estimated })}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Tasks</div><div style={valStyle}>{m.activeTasks}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Prompts/min</div><div style={valStyle}>{m.sessionStartedAt > 0 ? ((m.promptsSubmitted / Math.max(1, (Date.now() - m.sessionStartedAt) / 60000))).toFixed(1) : '-'}</div></div>
       </div>
@@ -157,6 +157,8 @@ const AllAgentsOverview: FC<{
 }> = ({ stats, agentMap, metricsMap }) => {
   const agents = Object.values(agentMap);
   const uptime = stats.firstEventAt ? formatDuration(Date.now() - stats.firstEventAt) : '-';
+  // The aggregate total is estimated if any contributing agent's cost is estimated (-1 = no data, excluded)
+  const anyCostEstimated = Object.values(metricsMap).some((m) => m.estimated && m.estimatedCostUsd >= 0);
 
   return (
     <div style={{ padding: 16, overflowY: 'auto' }}>
@@ -178,7 +180,7 @@ const AllAgentsOverview: FC<{
         <div style={cellStyle}><div style={labelStyle}>Errors</div><div style={{ ...valStyle, color: stats.errorsWitnessed > 0 ? '#c65858' : '#90d898' }}>{stats.errorsWitnessed}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Uptime</div><div style={valStyle}>{uptime}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Tokens</div><div style={valStyle}>{formatTokens(stats.totalTokens)}</div></div>
-        <div style={cellStyle}><div style={labelStyle}>Cost</div><div style={valStyle}>{formatCost(stats.totalCostUsd)}</div></div>
+        <div style={cellStyle}><div style={labelStyle}>Cost</div><div style={valStyle}>{formatCost(stats.totalCostUsd, { estimated: anyCostEstimated })}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Ships</div><div style={valStyle}>{stats.shipsObserved}</div></div>
         <div style={cellStyle}><div style={labelStyle}>Consumed</div><div style={valStyle}>{stats.planetsSwallowed + stats.astronautsConsumed + stats.ufosConsumed}</div></div>
       </div>
@@ -215,7 +217,7 @@ const AllAgentsOverview: FC<{
                       <td style={{ padding: '4px 8px', color: '#7a9a82' }}>{m?.toolCalls ?? '-'}</td>
                       <td style={{ padding: '4px 8px', color: m?.errorCount ? '#c65858' : '#7a9a82' }}>{m?.errorCount ?? 0}</td>
                       <td style={{ padding: '4px 8px', color: '#7a9a82' }}>{m ? formatTokens(m.inputTokens + m.outputTokens) : '-'}</td>
-                      <td style={{ padding: '4px 8px', color: '#7a9a82' }}>{m ? formatCost(m.estimatedCostUsd) : '-'}</td>
+                      <td style={{ padding: '4px 8px', color: '#7a9a82' }}>{m ? formatCost(m.estimatedCostUsd, { estimated: m.estimated }) : '-'}</td>
                     </tr>
                   );
                 })}

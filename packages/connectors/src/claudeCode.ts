@@ -86,6 +86,8 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   if (p.taskId) safePayload.taskId = String(p.taskId).slice(0, 128);
   if (isSubagent) safePayload.isSubagent = true;
   if (isToolFailure) safePayload.isToolFailure = true;
+  // Turn-end hint for the extension host's lifecycle manager (never retires interactive sessions).
+  if (hookEvent === 'TaskCompleted') safePayload.lifecycleSignal = 'work-complete';
   if (waitingSource) safePayload.waitingSource = waitingSource;
   // Capture working directory for workspace-aware cooperation detection
   if (p.cwd) safePayload.cwd = String(p.cwd).slice(0, 512);

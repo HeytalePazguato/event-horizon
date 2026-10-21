@@ -14,6 +14,7 @@ import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
 import { AgentLifecycleManager } from './agentLifecycle';
 import type { DeathSignal } from './agentLifecycle';
+import { applyLifecycleClassification } from './lifecycleSignals';
 import { backfillSessionCost, forgetBackfill } from './openCodeCostBackfill';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
@@ -991,7 +992,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
-    lifecycleManager.registerSignal(event.agentId, 'activity');
+    applyLifecycleClassification(lifecycleManager, event);
     // Feed transcript events to TokenAnalyzer — they carry the real per-turn
     // token deltas, so without this the Costs tab stays empty forever for
     // Claude Code sessions (hooks alone only report tokens on Stop).
@@ -1060,10 +1061,13 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     if (event.type === 'agent.spawn') {
+      // The OpenCode plugin re-sends session.created every 30s. For an agent the
+      // lifecycle manager already retired, that must not resurrect the planet.
+      if (event.payload?.heartbeat === true && !lifecycleManager.isAlive(event.agentId)) return;
       // A resumed session keeps its id — clear any earlier termination.
       lifecycleManager.revive(event.agentId);
-    } else if (event.type !== 'agent.terminate' && event.payload?.source !== 'watchdog') {
-      lifecycleManager.registerSignal(event.agentId, 'activity');
+    } else if (event.type !== 'agent.terminate') {
+      applyLifecycleClassification(lifecycleManager, event);
     }
 
     // Feed event to TokenAnalyzer for cost insights
