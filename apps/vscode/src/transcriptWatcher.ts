@@ -11,7 +11,7 @@
 
 import * as fs from 'node:fs';
 import type { AgentEvent, AgentEventType } from '@event-horizon/core';
-import { costOfTokens, type ModelTier } from './modelPricing.js';
+import { costOfTokens, priceForTier, type ModelTier } from './modelPricing.js';
 
 // ─── Keyword Dictionary ─────────────────────────────────────────────────────
 // Maps JSONL entry patterns to AgentEvent types.
@@ -396,11 +396,10 @@ export class TranscriptWatcher {
           parsed.payload.inputTokens = totalInput;
           parsed.payload.outputTokens = this.cumulativeOutputTokens;
           // Estimate cost via centralized pricing helper.
-          // No model name is available in this scope, so default to the
-          // 'sonnet' tier — its prices equal the previous inline constants,
-          // preserving cost numbers exactly for Sonnet/unknown transcripts.
+          // No model name is available in this scope yet, so price at the
+          // representative Sonnet row (per-model transcript pricing is separate).
           const tier: ModelTier = 'sonnet';
-          parsed.payload.costUsd = costOfTokens(tier, {
+          parsed.payload.costUsd = costOfTokens(priceForTier(tier), {
             input: this.cumulativeInputTokens,
             output: this.cumulativeOutputTokens,
             cacheRead: this.cumulativeCacheReadTokens,

@@ -498,10 +498,10 @@
     ]
   },
   "scripts": {
-    "build": "node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs && pnpm run build:webview",
+    "build": "node scripts/build-plugins.mjs && node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs && pnpm run build:webview",
     "lint": "eslint src/ webview/",
-    "build:ext": "node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
-    "build:ext:prod": "node scripts/build-extension.mjs --prod && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
+    "build:ext": "node scripts/build-plugins.mjs && node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
+    "build:ext:prod": "node scripts/build-plugins.mjs && node scripts/build-extension.mjs --prod && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
     "build:webview": "node webview/esbuild.mjs",
     "build:webview:dev": "node webview/esbuild.mjs --dev",
     "build:webview:prod": "node webview/esbuild.mjs --minify",

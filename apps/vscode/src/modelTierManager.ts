@@ -4,7 +4,7 @@
  * tracks first-attempt success rates, and drops underperformers.
  */
 
-import { MODEL_PRICES, costOfTokens, type ModelTier } from './modelPricing.js';
+import { MODEL_TIERS, costOfTokens, priceForTier, type ModelTier } from './modelPricing.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -93,7 +93,7 @@ export class ModelTierManager {
    * representative 70% input / 30% output token split (no cache activity).
    */
   estimateTaskCost(tier: ModelTier, avgTokens: number): number {
-    return costOfTokens(tier, {
+    return costOfTokens(priceForTier(tier), {
       input: avgTokens * 0.7,
       output: avgTokens * 0.3,
       cacheRead: 0,
@@ -117,8 +117,7 @@ export class ModelTierManager {
     if (tiers.length === 0) return 'sonnet'; // fallback
 
     // Min-max range of the representative cost across the three known tiers.
-    const knownTiers = Object.keys(MODEL_PRICES) as ModelTier[];
-    const costs = knownTiers.map((t) => this.estimateTaskCost(t, REPRESENTATIVE_AVG_TOKENS));
+    const costs = MODEL_TIERS.map((t) => this.estimateTaskCost(t, REPRESENTATIVE_AVG_TOKENS));
     const minCost = Math.min(...costs);
     const maxCost = Math.max(...costs);
     const costRange = maxCost - minCost;
@@ -138,7 +137,7 @@ export class ModelTierManager {
 
       // Cost normalization only applies to the three known tiers; unknown
       // tiers score as most expensive so they don't win on cost alone.
-      const isKnown = (knownTiers as string[]).includes(model);
+      const isKnown = (MODEL_TIERS as readonly string[]).includes(model);
       const cost = isKnown ? this.estimateTaskCost(model as ModelTier, REPRESENTATIVE_AVG_TOKENS) : maxCost;
       const normalizedCost = costRange > 0 ? (cost - minCost) / costRange : 0;
 
