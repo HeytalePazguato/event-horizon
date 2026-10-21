@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setMcpPurgeStaleAgents, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -749,9 +749,13 @@ export function activate(context: vscode.ExtensionContext): void {
     hasActiveTask: (agentId) => planBoardManager.getAllPlans().some((plan) =>
       plan.tasks.some((t) => t.assignee === agentId && (t.status === 'claimed' || t.status === 'in_progress'))),
     heartbeat: heartbeatManager,
+    knownAgentIds: () => agentStateManager.getAllAgents().map((a) => a.id),
     isProcessAlive: (agentId) => spawnRegistry.isProcessAlive(agentId),
     isSpawnedNonInteractive: (agentId) => spawnRegistry.isSpawnedNonInteractive(agentId),
   });
+  // Explicit purges (MCP tool and command) include stale-but-not-yet-lost agents.
+  const purgeStaleAgents = (): string[] => lifecycleManager.purgeStale({ includeStale: true });
+  setMcpPurgeStaleAgents(purgeStaleAgents);
 
   /**
    * What triggered a pending termination, so the emitted event keeps the
@@ -1997,21 +2001,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // ── Purge stale agents ──────────────────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand('eventHorizon.purgeStaleAgents', () => {
-      const agents = agentStateManager.getAllAgents();
-      let purged = 0;
-      for (const agent of agents) {
-        // Skip agents that are still tracked in the spawn registry (process alive)
-        if (spawnRegistry.getSpawnedAgent(agent.id)) continue;
-        const hb = heartbeatManager.getStatus(agent.id);
-        if (hb === 'stale' || hb === 'lost') {
-          signalWithOrigin(agent.id, 'user-purge', {
-            agentName: agent.name,
-            agentType: agent.type as import('@event-horizon/core').AgentType,
-            payload: { reason: 'manual-purge', synthetic: true },
-          });
-          purged++;
-        }
-      }
+      const purged = purgeStaleAgents().length;
       if (purged > 0) {
         vscode.window.showInformationMessage(`Event Horizon: purged ${purged} stale agent(s).`);
       } else {

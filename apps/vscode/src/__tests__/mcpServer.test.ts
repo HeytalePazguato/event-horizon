@@ -2,7 +2,7 @@
  * MCP Server tests — exercises JSON-RPC protocol, all 6 tools, and error handling.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { McpServer, FileActivityTracker } from '../mcpServer.js';
 import { LockManager } from '../lockManager.js';
 import { AgentStateManager } from '@event-horizon/core';
@@ -177,6 +177,43 @@ describe('eh_list_agents', () => {
     expect(parsed.agents[0].name).toBe('Claude');
     expect(parsed.agents[0].locks).toHaveLength(1);
     expect(parsed.agents[0].locks[0].file).toContain('src/index.ts');
+  });
+});
+
+describe('eh_purge_stale_agents', () => {
+  it('reports the ids returned by the lifecycle-owned purge', async () => {
+    const purge = vi.fn(() => ['dead-1', 'dead-2']);
+    mcp.setPurgeStaleAgents(purge);
+    const res = await callTool('eh_purge_stale_agents', { agent_id: 'a1' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    expect(JSON.parse(content.text)).toEqual({ purged: ['dead-1', 'dead-2'], count: 2 });
+    expect(purge).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an empty purge when the lifecycle finds nothing to remove', async () => {
+    mcp.setPurgeStaleAgents(() => []);
+    const res = await callTool('eh_purge_stale_agents', { agent_id: 'a1' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    expect(JSON.parse(content.text)).toEqual({ purged: [], count: 0 });
+  });
+
+  it('does not inspect heartbeats or emit terminate events itself', async () => {
+    const onEvent = vi.fn();
+    mcp.setOnEvent(onEvent);
+    agentStateManager.apply({
+      id: 'ev1', agentId: 'stale-1', agentName: 'Stale', agentType: 'claude-code',
+      type: 'agent.spawn', timestamp: Date.now(), payload: { cwd: '/project' },
+    });
+    mcp.setPurgeStaleAgents(() => []);
+    await callTool('eh_purge_stale_agents', { agent_id: 'a1' });
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(agentStateManager.getAgent('stale-1')).toBeDefined();
+  });
+
+  it('returns an error when no lifecycle purge is wired', async () => {
+    const res = await callTool('eh_purge_stale_agents', { agent_id: 'a1' });
+    const content = (res.result as { content: Array<{ text: string }> }).content[0];
+    expect(JSON.parse(content.text)).toEqual({ error: 'Lifecycle manager not available' });
   });
 });
 

@@ -10,6 +10,7 @@ interface Harness {
   nonInteractive: Set<string>;
   alive: Set<string>;
   hbStatus: Map<string, string>;
+  known: string[];
 }
 
 function setup(): Harness {
@@ -17,16 +18,18 @@ function setup(): Harness {
   const nonInteractive = new Set<string>();
   const alive = new Set<string>();
   const hbStatus = new Map<string, string>();
+  const known: string[] = [];
   const mgr = new AgentLifecycleManager({
     hasActiveTask: (id) => activeTasks.has(id),
     heartbeat: { getStatus: (id) => (hbStatus.get(id) ?? 'alive') as never },
+    knownAgentIds: () => known,
     isProcessAlive: (id) => alive.has(id),
     isSpawnedNonInteractive: (id) => nonInteractive.has(id),
     graceMs: GRACE,
   });
   const terminated: Array<[string, DeathSignal]> = [];
   mgr.onTerminate((id, reason) => terminated.push([id, reason]));
-  return { mgr, terminated, activeTasks, nonInteractive, alive, hbStatus };
+  return { mgr, terminated, activeTasks, nonInteractive, alive, hbStatus, known };
 }
 
 describe('AgentLifecycleManager', () => {
@@ -143,6 +146,31 @@ describe('AgentLifecycleManager', () => {
     expect(h.mgr.isAlive('a')).toBe(true);
     h.alive.delete('a');
     expect(h.mgr.purgeStale()).toEqual(['a']);
+  });
+
+  it('explicit purge with includeStale also terminates stale or lost agents with a dead process', () => {
+    h.known.push('stale-dead', 'lost-dead', 'stale-alive', 'healthy', 'stale-but-terminated');
+    h.hbStatus.set('stale-dead', 'stale');
+    h.hbStatus.set('lost-dead', 'lost');
+    h.hbStatus.set('stale-alive', 'stale');
+    h.alive.add('stale-alive');
+    h.hbStatus.set('stale-but-terminated', 'stale');
+    h.mgr.registerSignal('stale-but-terminated', 'session-end');
+    h.terminated.length = 0;
+    expect(h.mgr.purgeStale({ includeStale: true }).sort()).toEqual(['lost-dead', 'stale-dead']);
+    expect(h.terminated.sort()).toEqual([
+      ['lost-dead', 'heartbeat-lost'],
+      ['stale-dead', 'heartbeat-lost'],
+    ]);
+    expect(h.mgr.isAlive('stale-alive')).toBe(true);
+    expect(h.mgr.isAlive('healthy')).toBe(true);
+  });
+
+  it('default purgeStale ignores stale agents that were never signalled', () => {
+    h.known.push('stale-dead');
+    h.hbStatus.set('stale-dead', 'stale');
+    expect(h.mgr.purgeStale()).toEqual([]);
+    expect(h.mgr.isAlive('stale-dead')).toBe(true);
   });
 
   it('activity clears heartbeat-lost eligibility', () => {

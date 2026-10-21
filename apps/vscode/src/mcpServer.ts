@@ -901,6 +901,8 @@ export interface McpServerDeps {
   isAgentExtractionEnabled?: () => boolean;
   /** Callback to inject events into the main event pipeline (for synthetic terminate, etc.). */
   onEvent?: (event: AgentEvent) => void;
+  /** Lifecycle-owned purge: terminates dead stale/lost agents and returns their ids. */
+  purgeStaleAgents?: () => string[];
 }
 
 export class McpServer {
@@ -953,6 +955,10 @@ export class McpServer {
 
   setOnEvent(onEvent: (event: AgentEvent) => void): void {
     this.deps.onEvent = onEvent;
+  }
+
+  setPurgeStaleAgents(purgeStaleAgents: () => string[]): void {
+    this.deps.purgeStaleAgents = purgeStaleAgents;
   }
 
   /**
@@ -1969,31 +1975,11 @@ export class McpServer {
       }
 
       case 'eh_purge_stale_agents': {
-        const { agentStateManager, heartbeatManager, spawnRegistry, onEvent } = this.deps;
-        if (!agentStateManager || !heartbeatManager) {
-          return { error: 'Agent state manager or heartbeat manager not available' };
+        const { purgeStaleAgents } = this.deps;
+        if (!purgeStaleAgents) {
+          return { error: 'Lifecycle manager not available' };
         }
-        const agents = agentStateManager.getAllAgents();
-        const purged: string[] = [];
-        for (const agent of agents) {
-          if (spawnRegistry?.getSpawnedAgent(agent.id)) continue;
-          const hb = heartbeatManager.getStatus(agent.id);
-          if (hb === 'stale' || hb === 'lost') {
-            if (onEvent) {
-              onEvent({
-                id: `synth-purge-${agent.id}-${Date.now()}`,
-                agentId: agent.id,
-                agentName: agent.name,
-                agentType: agent.type as import('@event-horizon/core').AgentType,
-                type: 'agent.terminate',
-                timestamp: Date.now(),
-                payload: { reason: 'mcp-purge', synthetic: true },
-              });
-            }
-            heartbeatManager.remove(agent.id);
-            purged.push(agent.id);
-          }
-        }
+        const purged = purgeStaleAgents();
         return { purged, count: purged.length };
       }
 

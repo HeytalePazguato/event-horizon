@@ -31,6 +31,8 @@ export interface LifecycleDeps {
   /** True while the agent holds a `claimed` / `in_progress` plan task. */
   hasActiveTask: (agentId: string) => boolean;
   heartbeat: Pick<HeartbeatManager, 'getStatus'>;
+  /** Every agent the host currently tracks. Only consulted by `purgeStale({ includeStale: true })`. */
+  knownAgentIds?: () => string[];
   /** True while the agent's OS process (spawned child or reported pid) is running. */
   isProcessAlive: (agentId: string) => boolean;
   /** True only for agents EH spawned in non-interactive mode (e.g. `opencode run` workers). */
@@ -138,17 +140,23 @@ export class AgentLifecycleManager {
   }
 
   /**
-   * Terminate agents that reported `heartbeat-lost`, are still `lost` now, and
-   * whose process is not running. Returns the ids terminated by this call.
+   * Terminate agents whose heartbeat is `lost` and whose process is not running.
+   * Candidates are agents that reported `heartbeat-lost`; with `includeStale`
+   * (explicit user purge) every tracked agent whose heartbeat is `stale` or
+   * `lost` is also a candidate. Returns the ids terminated by this call.
    */
-  purgeStale(): string[] {
+  purgeStale(options: { includeStale?: boolean } = {}): string[] {
     const purged: string[] = [];
-    for (const agentId of [...this.heartbeatLost]) {
+    const candidates = new Set(this.heartbeatLost);
+    if (options.includeStale) for (const id of this.deps.knownAgentIds?.() ?? []) candidates.add(id);
+    for (const agentId of candidates) {
       if (this.terminated.has(agentId)) {
         this.heartbeatLost.delete(agentId);
         continue;
       }
-      if (this.deps.heartbeat.getStatus(agentId) !== 'lost') {
+      const hb = this.deps.heartbeat.getStatus(agentId);
+      const eligible = hb === 'lost' || (options.includeStale === true && hb === 'stale');
+      if (!eligible) {
         // Heartbeat recovered since the signal — no longer a candidate.
         this.heartbeatLost.delete(agentId);
         continue;

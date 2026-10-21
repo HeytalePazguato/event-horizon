@@ -306,6 +306,11 @@ export function setMcpOnEvent(onEvent: (event: import('@event-horizon/core').Age
   if (mcpServer) mcpServer.setOnEvent(onEvent);
 }
 
+/** Wire the lifecycle-owned purge into eh_purge_stale_agents. */
+export function setMcpPurgeStaleAgents(purgeStaleAgents: () => string[]): void {
+  if (mcpServer) mcpServer.setPurgeStaleAgents(purgeStaleAgents);
+}
+
 // Backward-compat exports used by extension.ts
 export function setFileLockingEnabled(enabled: boolean): void { lockManager.setEnabled(enabled); }
 export function isFileLockingEnabled(): boolean { return lockManager.isEnabled(); }
