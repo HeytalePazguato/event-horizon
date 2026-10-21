@@ -35,6 +35,7 @@ function locateSqlWasm(file: string): string {
 }
 import type { AgentEvent } from '@event-horizon/core';
 import { GRAPH_SCHEMA_DROP_SQL } from './projectGraph/schema.js';
+import type { CostSource } from './costResolver.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,11 @@ export interface PersistedKnowledgeEntry {
   tags?: string[];
   validFrom: number;
   validUntil?: number;
+  /** Agent ID or 'user'. Columns below were added in 3.3.0 — see ensureKnowledgeColumns. */
+  authorId?: string;
+  createdAt?: number;
+  tier?: string;
+  source?: string;
 }
 
 export interface AgentSession {
@@ -62,6 +68,32 @@ export interface AgentSession {
   totalTokensOut: number;
   totalCostUsd: number;
   eventCount: number;
+}
+
+/** One durable cost record. Survives the owning agent being terminated or purged. */
+export interface CostLedgerRow {
+  id: string;
+  agentId: string;
+  sessionId?: string;
+  planId?: string;
+  model?: string;
+  source: CostSource;
+  costUsd: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  timestamp: number;
+}
+
+export interface CostTotal {
+  agentId: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  entryCount: number;
 }
 
 export interface EventQueryOptions {
@@ -123,6 +155,22 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_agent_open ON agent_sessions(agent_id, session_end);
 
+CREATE TABLE IF NOT EXISTS cost_ledger (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  session_id TEXT,
+  plan_id TEXT,
+  model TEXT,
+  source TEXT NOT NULL,
+  cost_usd REAL NOT NULL,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cache_read_tokens INTEGER,
+  cache_creation_tokens INTEGER,
+  timestamp INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cost_ledger_agent ON cost_ledger(agent_id, timestamp);
+
 CREATE TABLE IF NOT EXISTS eh_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -146,6 +194,31 @@ CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
   VALUES ('delete', old.id, old.type, old.agent_id, old.payload);
 END;
 `;
+
+/** Columns the knowledge table gained in 3.3.0 when it became the system of record. */
+const KNOWLEDGE_ADDED_COLUMNS: Array<[name: string, type: string]> = [
+  ['author_id', 'TEXT'],
+  ['created_at', 'INTEGER'],
+  ['tier', 'TEXT'],
+  ['source', 'TEXT'],
+];
+
+/**
+ * Idempotently add any missing 3.3.0 knowledge columns. Databases created before
+ * 3.3.0 already have the table without them, so `CREATE TABLE IF NOT EXISTS`
+ * alone can't introduce them. Returns true if the schema changed.
+ */
+function ensureKnowledgeColumns(db: Database): boolean {
+  const info = db.exec('PRAGMA table_info(knowledge)');
+  const existing = new Set(info.length > 0 ? info[0].values.map((row) => row[1] as string) : []);
+  let changed = false;
+  for (const [name, type] of KNOWLEDGE_ADDED_COLUMNS) {
+    if (existing.has(name)) continue;
+    db.run(`ALTER TABLE knowledge ADD COLUMN ${name} ${type}`);
+    changed = true;
+  }
+  return changed;
+}
 
 // ── Database class ─────────────────────────────────────────────────────────
 
@@ -195,8 +268,10 @@ export class EventHorizonDB {
       droppedGraph = true;
     }
 
+    const addedKnowledgeColumns = ensureKnowledgeColumns(db);
+
     const instance = new EventHorizonDB(db);
-    if (droppedGraph) instance._dirty = true;
+    if (droppedGraph || addedKnowledgeColumns) instance._dirty = true;
 
     // Try to enable FTS5 — may not be available in all sql.js builds
     try {
@@ -380,8 +455,9 @@ export class EventHorizonDB {
 
   insertKnowledge(entry: PersistedKnowledgeEntry): void {
     this.db.run(
-      `INSERT OR REPLACE INTO knowledge (id, key, value, scope, plan_id, author, timestamp, tags, valid_from, valid_until)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO knowledge (id, key, value, scope, plan_id, author, timestamp, tags, valid_from, valid_until,
+                                         author_id, created_at, tier, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.key,
@@ -393,6 +469,10 @@ export class EventHorizonDB {
         entry.tags ? JSON.stringify(entry.tags) : null,
         entry.validFrom,
         entry.validUntil ?? null,
+        entry.authorId ?? null,
+        entry.createdAt ?? null,
+        entry.tier ?? null,
+        entry.source ?? null,
       ]
     );
     this._dirty = true;
@@ -433,6 +513,10 @@ export class EventHorizonDB {
         tags: row['tags'] ? JSON.parse(row['tags'] as string) : undefined,
         validFrom: row['valid_from'] as number,
         validUntil: (row['valid_until'] as number) ?? undefined,
+        authorId: (row['author_id'] as string) ?? undefined,
+        createdAt: (row['created_at'] as number) ?? undefined,
+        tier: (row['tier'] as string) ?? undefined,
+        source: (row['source'] as string) ?? undefined,
       });
     }
     stmt.free();
@@ -524,6 +608,110 @@ export class EventHorizonDB {
     };
   }
 
+  // ── Cost ledger ────────────────────────────────────────────────────────
+
+  /** Insert or replace a cost entry by id. */
+  upsertCostEntry(entry: CostLedgerRow): void {
+    this.db.run(
+      `INSERT OR REPLACE INTO cost_ledger
+       (id, agent_id, session_id, plan_id, model, source, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.agentId,
+        entry.sessionId ?? null,
+        entry.planId ?? null,
+        entry.model ?? null,
+        entry.source,
+        entry.costUsd,
+        entry.inputTokens ?? null,
+        entry.outputTokens ?? null,
+        entry.cacheReadTokens ?? null,
+        entry.cacheCreationTokens ?? null,
+        entry.timestamp,
+      ]
+    );
+    this._dirty = true;
+  }
+
+  /** All ledger entries for an agent, oldest first. */
+  queryCostByAgent(agentId: string): CostLedgerRow[] {
+    const stmt = this.db.prepare(
+      `SELECT * FROM cost_ledger WHERE agent_id = ? ORDER BY timestamp ASC`
+    );
+    stmt.bind([agentId]);
+    const results: CostLedgerRow[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: row['id'] as string,
+        agentId: row['agent_id'] as string,
+        sessionId: (row['session_id'] as string) ?? undefined,
+        planId: (row['plan_id'] as string) ?? undefined,
+        model: (row['model'] as string) ?? undefined,
+        source: row['source'] as CostSource,
+        costUsd: row['cost_usd'] as number,
+        inputTokens: (row['input_tokens'] as number) ?? undefined,
+        outputTokens: (row['output_tokens'] as number) ?? undefined,
+        cacheReadTokens: (row['cache_read_tokens'] as number) ?? undefined,
+        cacheCreationTokens: (row['cache_creation_tokens'] as number) ?? undefined,
+        timestamp: row['timestamp'] as number,
+      });
+    }
+    stmt.free();
+    return results;
+  }
+
+  /** Per-agent cost totals, optionally restricted to entries since a time and/or a plan. */
+  queryCostTotals(opts: { since?: number; planId?: string } = {}): CostTotal[] {
+    const conditions: string[] = [];
+    const params: SqlValue[] = [];
+    if (opts.since !== undefined) { conditions.push('timestamp >= ?'); params.push(opts.since); }
+    if (opts.planId) { conditions.push('plan_id = ?'); params.push(opts.planId); }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const stmt = this.db.prepare(
+      `SELECT agent_id,
+              SUM(cost_usd) AS cost,
+              COALESCE(SUM(input_tokens), 0) AS tin,
+              COALESCE(SUM(output_tokens), 0) AS tout,
+              COALESCE(SUM(cache_read_tokens), 0) AS tcr,
+              COALESCE(SUM(cache_creation_tokens), 0) AS tcc,
+              COUNT(*) AS n
+       FROM cost_ledger ${where}
+       GROUP BY agent_id
+       ORDER BY cost DESC`
+    );
+    stmt.bind(params);
+    const results: CostTotal[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        agentId: row['agent_id'] as string,
+        costUsd: row['cost'] as number,
+        inputTokens: row['tin'] as number,
+        outputTokens: row['tout'] as number,
+        cacheReadTokens: row['tcr'] as number,
+        cacheCreationTokens: row['tcc'] as number,
+        entryCount: row['n'] as number,
+      });
+    }
+    stmt.free();
+    return results;
+  }
+
+  /**
+   * Delete ledger entries older than `Date.now() - olderThanMs`.
+   * @returns Number of entries deleted.
+   */
+  pruneCostLedger(olderThanMs: number): number {
+    const cutoff = Date.now() - olderThanMs;
+    this.db.run('DELETE FROM cost_ledger WHERE timestamp < ?', [cutoff]);
+    const result = this.db.exec('SELECT changes()');
+    const count = result.length > 0 ? (result[0].values[0][0] as number) : 0;
+    if (count > 0) this._dirty = true;
+    return count;
+  }
 
   // ── Maintenance ────────────────────────────────────────────────────────
 
@@ -550,9 +738,13 @@ export class EventHorizonDB {
     return data;
   }
 
-  /** Get the approximate database size in bytes. */
+  /**
+   * Get the approximate database size in bytes.
+   * Exports directly rather than via `save()` so the dirty flag is left untouched —
+   * measuring the size must not make unsaved changes look persisted.
+   */
   getDbSizeBytes(): number {
-    return this.save().length;
+    return this.db.export().length;
   }
 
   /** Close the database connection. */

@@ -28,6 +28,7 @@ import { TranscriptWatcher } from './transcriptWatcher';
 import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
 import { ensureBundledSkills } from './bundledSkills';
 import { EventHorizonDB } from './persistence';
+import { KnowledgeStore, migrateLegacyKnowledgeOnce, LEGACY_KNOWLEDGE_KEY, KNOWLEDGE_MIGRATED_FLAG } from './knowledgeStore';
 import { deriveEventCategory } from '@event-horizon/core';
 import { CrossAgentCorrelator } from './crossAgentCorrelator';
 import { EventBridge } from './projectGraph/eventBridge';
@@ -286,12 +287,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const savedModelTiers = context.globalState.get<ReturnType<typeof modelTierManager.serialize>>('modelTierStats');
   if (savedModelTiers) modelTierManager.restore(savedModelTiers);
 
-  // Restore shared knowledge from globalState
-  const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
-  if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
+  // Shared knowledge lives in SQLite once the DB is up (see KnowledgeStore). The
+  // legacy globalState blob is only read before the one-time migration has run, or
+  // as the fallback copy when persistence is disabled/unavailable.
+  const persistenceEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('persistence.enabled', true);
+  const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>(LEGACY_KNOWLEDGE_KEY);
+  const knowledgeMigrated = context.globalState.get<boolean>(KNOWLEDGE_MIGRATED_FLAG) ?? false;
+  // While true, knowledge changes are mirrored to globalState (DB disabled, or not yet migrated).
+  let knowledgeUsesGlobalState = !persistenceEnabled || !knowledgeMigrated;
+  if (savedKnowledge && knowledgeUsesGlobalState) sharedKnowledge.restoreWorkspace(savedKnowledge);
+  let scheduleKnowledgeDbSave: (() => void) | null = null;
 
   // ── Initialize SQLite persistence ──
-  const persistenceEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('persistence.enabled', true);
   if (persistenceEnabled) {
     const dbDir = context.globalStorageUri.fsPath;
     const dbPath = path.join(dbDir, 'event-horizon.db');
@@ -322,6 +329,28 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         }, 60_000);
         context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
+
+        // SQLite becomes the system of record for shared knowledge: import the legacy
+        // globalState blob once, then hydrate the in-memory read cache from the DB.
+        const knowledgeStore = new KnowledgeStore(ehDatabase);
+        const importedKnowledge = migrateLegacyKnowledgeOnce(knowledgeStore, context.globalState);
+        if (importedKnowledge) console.log(`[Event Horizon] Migrated ${importedKnowledge} shared knowledge entries to SQLite`);
+        knowledgeUsesGlobalState = false;
+        // Knowledge writes are rare and must survive a reload, so save shortly after
+        // each change instead of waiting for the 60s interval.
+        let knowledgeSaveTimer: ReturnType<typeof setTimeout> | null = null;
+        scheduleKnowledgeDbSave = () => {
+          if (knowledgeSaveTimer) return;
+          knowledgeSaveTimer = setTimeout(() => {
+            knowledgeSaveTimer = null;
+            if (!ehDatabase || !ehDatabase.isDirty()) return;
+            try {
+              void vscode.workspace.fs.writeFile(vscode.Uri.file(dbPath), ehDatabase.save());
+            } catch { /* save failed — the 60s interval will retry */ }
+          }, 1_000);
+        };
+        context.subscriptions.push({ dispose: () => { if (knowledgeSaveTimer) clearTimeout(knowledgeSaveTimer); } });
+        sharedKnowledge.attachStore(knowledgeStore);
 
         // Wire event search engine and project graph lifecycle into MCP server now that DB is ready
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
@@ -400,6 +429,13 @@ export function activate(context: vscode.ExtensionContext): void {
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {
         console.error('[Event Horizon] Failed to initialize persistence:', err);
+        if (!sharedKnowledge.hasStore()) {
+          // No SQLite — fall back to globalState, keeping anything written since startup.
+          knowledgeUsesGlobalState = true;
+          if (savedKnowledge && knowledgeMigrated) {
+            sharedKnowledge.restoreWorkspace([...savedKnowledge, ...sharedKnowledge.serializeWorkspace()]);
+          }
+        }
       }
     })();
   }
@@ -510,9 +546,14 @@ export function activate(context: vscode.ExtensionContext): void {
     webviewRef.current.postMessage({ type: 'knowledge-update', workspace: entries.workspace, plan: entries.plan });
   }
 
-  // Persist shared knowledge on change
+  // Persist shared knowledge on change. SharedKnowledgeStore already wrote through to
+  // SQLite when attached; globalState is only the fallback copy.
   sharedKnowledge.onChange(() => {
-    void context.globalState.update('sharedKnowledge', sharedKnowledge.serializeWorkspace());
+    if (knowledgeUsesGlobalState) {
+      void context.globalState.update(LEGACY_KNOWLEDGE_KEY, sharedKnowledge.serializeWorkspace());
+    } else {
+      scheduleKnowledgeDbSave?.();
+    }
     broadcastKnowledge();
   });
 
