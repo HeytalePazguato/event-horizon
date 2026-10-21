@@ -11,7 +11,40 @@
 
 import * as fs from 'node:fs';
 import type { AgentEvent, AgentEventType } from '@event-horizon/core';
-import { costOfTokens, priceForTier, type ModelTier } from './modelPricing.js';
+import { costOfTokens, priceForModel } from './modelPricing.js';
+
+// ─── Cost ────────────────────────────────────────────────────────────────────
+
+export interface TranscriptTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheCreation: number;
+}
+
+/** Model key used for assistant entries that carry no `message.model`. */
+export const UNKNOWN_MODEL = 'unknown';
+
+/**
+ * Estimate session cost from per-model token totals. Tokens of a model with no
+ * price row contribute 0 and set `costUnpriced`.
+ */
+export function computeTranscriptCost(perModel: ReadonlyMap<string, TranscriptTokens>): {
+  costUsd: number;
+  costUnpriced: boolean;
+} {
+  let costUsd = 0;
+  let costUnpriced = false;
+  for (const [modelId, tokens] of perModel) {
+    const price = priceForModel(modelId);
+    if (price) {
+      costUsd += costOfTokens(price, tokens);
+    } else if (tokens.input + tokens.output + tokens.cacheRead + tokens.cacheCreation > 0) {
+      costUnpriced = true;
+    }
+  }
+  return { costUsd, costUnpriced };
+}
 
 // ─── Keyword Dictionary ─────────────────────────────────────────────────────
 // Maps JSONL entry patterns to AgentEvent types.
@@ -239,6 +272,8 @@ export class TranscriptWatcher {
   private cumulativeOutputTokens = 0;
   private cumulativeCacheReadTokens = 0;
   private cumulativeCacheCreationTokens = 0;
+  /** Token usage per model ID, for per-model cost estimation. */
+  private tokensByModel = new Map<string, TranscriptTokens>();
   /** Partial line buffer for incomplete trailing lines. */
   private partialLine = '';
 
@@ -346,6 +381,18 @@ export class TranscriptWatcher {
           this.cumulativeCacheCreationTokens += parsed.payload.cacheCreationTokensDelta as number;
         }
 
+        // Attribute this entry's usage to its model
+        if (entry.type === 'assistant') {
+          const rawModel = (entry.message as Record<string, unknown> | undefined)?.model;
+          const modelId = typeof rawModel === 'string' && rawModel ? rawModel : UNKNOWN_MODEL;
+          const bucket = this.tokensByModel.get(modelId) ?? { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+          bucket.input += (parsed.payload.inputTokensDelta as number | undefined) ?? 0;
+          bucket.output += (parsed.payload.outputTokensDelta as number | undefined) ?? 0;
+          bucket.cacheRead += (parsed.payload.cacheReadTokensDelta as number | undefined) ?? 0;
+          bucket.cacheCreation += (parsed.payload.cacheCreationTokensDelta as number | undefined) ?? 0;
+          this.tokensByModel.set(modelId, bucket);
+        }
+
         // Track waiting and skill tool_use IDs from assistant tool_use entries
         if (parsed.eventType === 'tool.call') {
           const content = (entry.message as Record<string, unknown>)?.content;
@@ -395,16 +442,11 @@ export class TranscriptWatcher {
           const totalInput = this.cumulativeInputTokens + this.cumulativeCacheReadTokens + this.cumulativeCacheCreationTokens;
           parsed.payload.inputTokens = totalInput;
           parsed.payload.outputTokens = this.cumulativeOutputTokens;
-          // Estimate cost via centralized pricing helper.
-          // No model name is available in this scope yet, so price at the
-          // representative Sonnet row (per-model transcript pricing is separate).
-          const tier: ModelTier = 'sonnet';
-          parsed.payload.costUsd = costOfTokens(priceForTier(tier), {
-            input: this.cumulativeInputTokens,
-            output: this.cumulativeOutputTokens,
-            cacheRead: this.cumulativeCacheReadTokens,
-            cacheCreation: this.cumulativeCacheCreationTokens,
-          });
+          // Estimate cost per model via the centralized pricing helper.
+          const { costUsd, costUnpriced } = computeTranscriptCost(this.tokensByModel);
+          parsed.payload.costUsd = costUsd;
+          parsed.payload.costSource = 'transcript-estimated';
+          if (costUnpriced) parsed.payload.costUnpriced = true;
         }
 
         this.emitEvent(parsed.eventType, parsed.payload);

@@ -62,6 +62,11 @@ export function priceForModel(modelId: string): ModelPriceRow | null {
   return best ? MODEL_PRICES_BY_ID[best] : null;
 }
 
+/** Whole days between a YYYY-MM-DD verification date and `now` (default: today). */
+export function pricesAgeDays(verifiedAt: string = PRICES_VERIFIED_AT, now: number = Date.now()): number {
+  return Math.floor((now - Date.parse(verifiedAt)) / 86_400_000);
+}
+
 /** Representative current price row for a tier. */
 export function priceForTier(tier: ModelTier): ModelPriceRow {
   return MODEL_PRICES_BY_ID[TIER_REPRESENTATIVE_ID[tier]];
