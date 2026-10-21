@@ -21,6 +21,12 @@ export interface WatchdogDeps {
   planBoardManager: Pick<PlanBoardManager, 'getAllPlans'>;
   /** Emit a synthetic task.fail event so Phase 3 pushes a notification to the orchestrator. */
   emitTaskFail: (agentId: string, taskId: string, reason: string) => void;
+  /**
+   * Report the silence finding to the lifecycle manager. The watchdog never
+   * removes an agent itself — termination follows from the manager (e.g. the
+   * process-exit signal raised when the hung worker below is stopped).
+   */
+  reportSilence?: (agentId: string) => void;
   /** Timeout in milliseconds. 0 disables the watchdog. */
   timeoutMs: number;
   /** How often to tick. Exposed for tests; default 30s. */
@@ -108,7 +114,11 @@ export class Watchdog {
       try {
         this.deps.emitTaskFail(agentId, taskId, reason);
       } catch { /* ignore emitter errors */ }
-      // Also kill the process so it stops burning tokens
+      try {
+        this.deps.reportSilence?.(agentId);
+      } catch { /* ignore reporter errors */ }
+      // Also kill the process so it stops burning tokens; the resulting exit
+      // reaches the lifecycle manager as a process-exit signal.
       void this.deps.spawnRegistry.stop(agentId).catch(() => { /* ignore */ });
     }
   }

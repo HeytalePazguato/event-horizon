@@ -401,10 +401,10 @@ export class SpawnRegistry {
   private changeListeners: Array<() => void> = [];
   /**
    * Called when a spawned agent exits (process exit or terminal closed).
-   * The extension host uses this to inject synthetic `agent.terminate` events
-   * into the event pipeline so AgentStateManager/SQLite/webview stay in sync.
+   * The extension host feeds this to the AgentLifecycleManager as a death
+   * signal; the manager's onTerminate is what emits `agent.terminate`.
    */
-  private exitCallback: ((agentId: string, info: SpawnedAgentInfo, reason: string) => void) | null = null;
+  private exitCallback: ((agentId: string, info: SpawnedAgentInfo, reason: SpawnExitReason) => void) | null = null;
 
   constructor() {
     // Track terminal close events — also kill the process if the user closed
@@ -428,7 +428,7 @@ export class SpawnRegistry {
   }
 
   /** Register a callback for when any spawned agent exits. */
-  onAgentExit(cb: (agentId: string, info: SpawnedAgentInfo, reason: string) => void): void {
+  onAgentExit(cb: (agentId: string, info: SpawnedAgentInfo, reason: SpawnExitReason) => void): void {
     this.exitCallback = cb;
   }
 
@@ -651,6 +651,32 @@ export class SpawnRegistry {
 
   getSpawnedAgent(agentId: string): SpawnedAgentInfo | undefined {
     return this.spawnedAgents.get(agentId);
+  }
+
+  /** Spawn record for a spawn id or a linked session UUID. */
+  private findRecord(agentId: string): SpawnedAgentInfo | undefined {
+    const direct = this.spawnedAgents.get(agentId);
+    if (direct) return direct;
+    const spawnId = this.sessionToSpawn.get(agentId);
+    return spawnId ? this.spawnedAgents.get(spawnId) : undefined;
+  }
+
+  /**
+   * True while EH holds a live spawn for this agent. Records are dropped on
+   * process exit / terminal close, so a record without a child process
+   * (terminal-hosted interactive spawn) counts as alive.
+   */
+  isProcessAlive(agentId: string): boolean {
+    const info = this.findRecord(agentId);
+    if (!info) return false;
+    if (!info.process) return true;
+    return info.process.exitCode === null && !info.process.killed;
+  }
+
+  /** True only for agents EH spawned in batch (non-interactive) mode. */
+  isSpawnedNonInteractive(agentId: string): boolean {
+    const info = this.findRecord(agentId);
+    return !!info && !info.interactive;
   }
 
   trackAgent(agentId: string, info: SpawnedAgentInfo): void {

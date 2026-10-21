@@ -12,6 +12,8 @@ import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentL
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
+import { AgentLifecycleManager } from './agentLifecycle';
+import type { DeathSignal } from './agentLifecycle';
 import { backfillSessionCost, forgetBackfill } from './openCodeCostBackfill';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
@@ -737,22 +739,67 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // When a spawned agent exits (process or terminal), inject a synthetic
-  // agent.terminate event so AgentStateManager, SQLite, and the webview all
-  // learn the agent is gone — preventing stale-agent persistence.
+  // ── Agent lifecycle ─────────────────────────────────────────────────────────
+  // The lifecycle manager is the single authority on agent death. Every death
+  // signal (process exit, SessionEnd, OpenCode session.deleted, heartbeat loss,
+  // manual purge) goes through registerSignal(); its onTerminate below is the
+  // only place an `agent.terminate` event is created.
+  const lifecycleManager = new AgentLifecycleManager({
+    hasActiveTask: (agentId) => planBoardManager.getAllPlans().some((plan) =>
+      plan.tasks.some((t) => t.assignee === agentId && (t.status === 'claimed' || t.status === 'in_progress'))),
+    heartbeat: heartbeatManager,
+    isProcessAlive: (agentId) => spawnRegistry.isProcessAlive(agentId),
+    isSpawnedNonInteractive: (agentId) => spawnRegistry.isSpawnedNonInteractive(agentId),
+  });
+
+  /**
+   * What triggered a pending termination, so the emitted event keeps the
+   * original name/type/payload (e.g. a SessionEnd's final token counts).
+   * Set just before a registerSignal() call and cleared right after — immediate
+   * signals terminate synchronously.
+   */
+  const terminateOrigins = new Map<string, Pick<AgentEvent, 'agentName' | 'agentType'> & Partial<Pick<AgentEvent, 'timestamp' | 'payload'>>>();
+
+  function signalWithOrigin(
+    agentId: string,
+    signal: DeathSignal,
+    origin: Pick<AgentEvent, 'agentName' | 'agentType'> & Partial<Pick<AgentEvent, 'timestamp' | 'payload'>>,
+  ): void {
+    terminateOrigins.set(agentId, origin);
+    try {
+      lifecycleManager.registerSignal(agentId, signal);
+    } finally {
+      terminateOrigins.delete(agentId);
+    }
+  }
+
+  lifecycleManager.onTerminate((agentId, reason) => {
+    const origin = terminateOrigins.get(agentId);
+    const agent = agentStateManager.getAgent(agentId);
+    const payload: Record<string, unknown> = origin?.payload ? { ...origin.payload } : { synthetic: true };
+    if (payload.reason === undefined) payload.reason = reason;
+    payload.lifecycleReason = reason;
+    payload.lifecycle = true;
+    onAgentEvent({
+      id: `lifecycle-terminate-${agentId}-${Date.now()}`,
+      agentId,
+      agentName: origin?.agentName ?? agent?.name ?? agentId,
+      agentType: (origin?.agentType ?? agent?.type ?? 'unknown') as import('@event-horizon/core').AgentType,
+      type: 'agent.terminate',
+      timestamp: origin?.timestamp ?? Date.now(),
+      payload,
+    });
+    cleanupTerminatedAgent(agentId);
+  });
+
+  // A spawned agent's process exiting or its terminal closing is a hard death
+  // signal — AgentStateManager, SQLite, and the webview learn via onTerminate.
   spawnRegistry.onAgentExit((agentId, info, reason) => {
     const agent = agentStateManager.getAgent(agentId);
-    const syntheticEvent: AgentEvent = {
-      id: `synth-terminate-${agentId}-${Date.now()}`,
-      agentId,
+    signalWithOrigin(agentId, reason, {
       agentName: agent?.name ?? info.terminalName,
       agentType: (agent?.type ?? info.type) as import('@event-horizon/core').AgentType,
-      type: 'agent.terminate',
-      timestamp: Date.now(),
-      payload: { reason, synthetic: true },
-    };
-    onAgentEvent(syntheticEvent);
-    heartbeatManager.remove(agentId);
+    });
   });
 
   // Rebroadcast role map whenever the spawn registry changes (spawn/stop)
@@ -829,37 +876,12 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
-    // Auto-evict agents whose heartbeat is 'lost' (>5 min silence).
-    //
-    // OFF by default. Silence is not evidence that an agent is gone: a session
-    // sitting idle sends nothing, so this removed live agents from the universe
-    // after five quiet minutes — the regression where an idle Claude session
-    // simply vanished. It also contradicts the rule further down that planets
-    // are only removed by an explicit agent.terminate.
-    //
-    // Real deaths are still handled: SessionEnd emits agent.terminate, spawned
-    // agents report process exit, and eventHorizon.purgeStaleAgents /
-    // eh_purge_stale_agents clean up on demand. Turn this on only if you would
-    // rather lose an idle agent than keep a dead one on screen.
-    const autoEvictLost = vscode.workspace.getConfiguration('eventHorizon')
-      .get<boolean>('autoEvictLostAgents', false);
-    for (const beat of autoEvictLost ? allBeats : []) {
-      if (beat.status !== 'lost') continue;
-      const agent = agentStateManager.getAgent(beat.agentId);
-      if (!agent) continue;
-      if (spawnRegistry.getSpawnedAgent(beat.agentId)) continue; // process still alive
-
-      const syntheticEvent: AgentEvent = {
-        id: `synth-heartbeat-${beat.agentId}-${Date.now()}`,
-        agentId: beat.agentId,
-        agentName: agent.name,
-        agentType: agent.type as import('@event-horizon/core').AgentType,
-        type: 'agent.terminate',
-        timestamp: Date.now(),
-        payload: { reason: 'heartbeat-lost', synthetic: true },
-      };
-      onAgentEvent(syntheticEvent);
-      heartbeatManager.remove(beat.agentId);
+    // A 'lost' heartbeat (>5 min silence) is reported to the lifecycle manager,
+    // never acted on here. Silence is not evidence an agent is gone — an idle
+    // session sends nothing — so the signal only makes the agent a purge
+    // candidate. Re-signalling every tick is idempotent.
+    for (const beat of allBeats) {
+      if (beat.status === 'lost') lifecycleManager.registerSignal(beat.agentId, 'heartbeat-lost');
     }
 
     // Forward heartbeat statuses to webview
@@ -969,6 +991,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
+    lifecycleManager.registerSignal(event.agentId, 'activity');
     // Feed transcript events to TokenAnalyzer — they carry the real per-turn
     // token deltas, so without this the Costs tab stays empty forever for
     // Claude Code sessions (hooks alone only report tokens on Stop).
@@ -981,6 +1004,10 @@ export function activate(context: vscode.ExtensionContext): void {
       } catch { /* persistence failure should never block event processing */ }
     }
     metricsEngine.process(event);
+    // TODO(2.6): replace with CostResolver
+    if (typeof event.payload?.costUsd === 'number') {
+      metricsEngine.setResolvedCost(event.agentId, event.payload.costUsd, event.payload.costSource === 'transcript-estimated' || event.payload.costUnpriced === true);
+    }
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
@@ -1013,7 +1040,32 @@ export function activate(context: vscode.ExtensionContext): void {
   const subagentToParent = new Map<string, string>();
   let lastRunSubagentParent: string | null = null;
 
+  /**
+   * Death signal for an `agent.terminate` that arrived from outside the
+   * lifecycle manager (connector SessionEnd / session.deleted, MCP purge).
+   */
+  function terminateSignalFor(event: AgentEvent): DeathSignal {
+    const reason = event.payload?.reason;
+    if (reason === 'mcp-purge' || reason === 'manual-purge') return 'user-purge';
+    if (event.agentType === 'opencode') return 'opencode-session-deleted';
+    return 'session-end';
+  }
+
   function onAgentEvent(event: AgentEvent): void {
+    // ── Lifecycle routing ──
+    // An incoming agent.terminate is only a signal; the lifecycle manager's
+    // onTerminate re-enters here with the one real terminate event.
+    if (event.type === 'agent.terminate' && !event.payload?.lifecycle) {
+      signalWithOrigin(event.agentId, terminateSignalFor(event), event);
+      return;
+    }
+    if (event.type === 'agent.spawn') {
+      // A resumed session keeps its id — clear any earlier termination.
+      lifecycleManager.revive(event.agentId);
+    } else if (event.type !== 'agent.terminate' && event.payload?.source !== 'watchdog') {
+      lifecycleManager.registerSignal(event.agentId, 'activity');
+    }
+
     // Feed event to TokenAnalyzer for cost insights
     tokenAnalyzer.onEvent(event);
 
@@ -1137,6 +1189,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     metricsEngine.process(event);
+    // TODO(2.6): replace with CostResolver
+    if (typeof event.payload?.costUsd === 'number') {
+      metricsEngine.setResolvedCost(event.agentId, event.payload.costUsd, event.payload.costSource === 'transcript-estimated' || event.payload.costUnpriced === true);
+    }
     agentStateManager.apply(event);
     broadcastEvent(event);
     wsBroadcast(event);
@@ -1480,39 +1536,45 @@ export function activate(context: vscode.ExtensionContext): void {
     //   }
     // }
 
-    // Clean up transcript watcher when agent terminates
-    if (event.type === 'agent.terminate') {
-      const watcher = transcriptWatchers.get(event.agentId);
-      if (watcher) {
-        watcher.destroy();
-        transcriptWatchers.delete(event.agentId);
-      }
-
-      // Release any file locks held by the terminated agent
-      releaseAgentLocks(event.agentId);
-
-      // Allow a re-backfill if this session id reconnects later.
-      forgetBackfill(event.agentId);
-
-      // Forget the plan notice we sent this session. A replacement session gets
-      // a fresh ID and should be told about active plans once, on its own.
-      planNoticeSignatures.delete(event.agentId);
-
-      // Addresses are deliberately NOT released here. An agent that idles for
-      // a day, or that a watchdog wrongly declares stale, must still be
-      // reachable at the address a peer was given. A stopped agent's handle is
-      // taken over by its replacement at claim time, which needs no cleanup.
-
-      // Also clean up OpenCode SSE watcher
-      const sseWatcher = openCodeSSEWatchers.get(event.agentId);
-      if (sseWatcher) {
-        sseWatcher.destroy();
-        openCodeSSEWatchers.delete(event.agentId);
-      }
-    }
-
     // Update sidebar badge with active agent count
 
+  }
+
+  /**
+   * Per-agent teardown, run once from lifecycleManager.onTerminate for every
+   * termination path (process exit, SessionEnd, session.deleted, purge).
+   */
+  function cleanupTerminatedAgent(agentId: string): void {
+    const watcher = transcriptWatchers.get(agentId);
+    if (watcher) {
+      watcher.destroy();
+      transcriptWatchers.delete(agentId);
+    }
+
+    // Release any file locks held by the terminated agent
+    releaseAgentLocks(agentId);
+    lastLockedFileByAgent.delete(agentId);
+
+    // Allow a re-backfill if this session id reconnects later.
+    forgetBackfill(agentId);
+
+    // Forget the plan notice we sent this session. A replacement session gets
+    // a fresh ID and should be told about active plans once, on its own.
+    planNoticeSignatures.delete(agentId);
+
+    // Addresses are deliberately NOT released here. An agent that idles for
+    // a day, or that a watchdog wrongly declares stale, must still be
+    // reachable at the address a peer was given. A stopped agent's handle is
+    // taken over by its replacement at claim time, which needs no cleanup.
+
+    // Also clean up OpenCode SSE watcher
+    const sseWatcher = openCodeSSEWatchers.get(agentId);
+    if (sseWatcher) {
+      sseWatcher.destroy();
+      openCodeSSEWatchers.delete(agentId);
+    }
+
+    heartbeatManager.remove(agentId);
   }
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
@@ -1536,6 +1598,7 @@ export function activate(context: vscode.ExtensionContext): void {
       };
       eventBus.emit(event);
     },
+    reportSilence: (agentId) => lifecycleManager.registerSignal(agentId, 'heartbeat-lost'),
   });
   // Record activity on every event so the watchdog knows the worker is alive
   const unsubscribeWatchdog = eventBus.on((event) => watchdog.onActivity(event.agentId));
@@ -1937,17 +2000,11 @@ export function activate(context: vscode.ExtensionContext): void {
         if (spawnRegistry.getSpawnedAgent(agent.id)) continue;
         const hb = heartbeatManager.getStatus(agent.id);
         if (hb === 'stale' || hb === 'lost') {
-          const syntheticEvent: AgentEvent = {
-            id: `synth-purge-${agent.id}-${Date.now()}`,
-            agentId: agent.id,
+          signalWithOrigin(agent.id, 'user-purge', {
             agentName: agent.name,
             agentType: agent.type as import('@event-horizon/core').AgentType,
-            type: 'agent.terminate',
-            timestamp: Date.now(),
             payload: { reason: 'manual-purge', synthetic: true },
-          };
-          onAgentEvent(syntheticEvent);
-          heartbeatManager.remove(agent.id);
+          });
           purged++;
         }
       }
@@ -2068,6 +2125,7 @@ export function activate(context: vscode.ExtensionContext): void {
       unsubscribeEventBus();
       unsubscribeWatchdog();
       watchdog.stop();
+      lifecycleManager.dispose();
       stopEventServer();
       // Clean up all transcript watchers
       for (const w of transcriptWatchers.values()) w.destroy();

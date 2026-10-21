@@ -44,13 +44,34 @@ describe('MetricsEngine', () => {
     expect(loadAfterDecayAndEvent).toBeGreaterThan(0);
   });
 
-  it('agent.terminate removes metrics', () => {
+  it('agent.terminate keeps metrics but clears load', () => {
     engine.process(makeEvent({ type: 'agent.spawn', agentId: 'a1', timestamp: 1000 }));
-    expect(engine.getMetrics('a1')).not.toBeNull();
+    engine.setResolvedCost('a1', 0.5, false);
 
     engine.process(makeEvent({ type: 'agent.terminate', agentId: 'a1', timestamp: 2000 }));
+    const m = engine.getMetrics('a1');
+    expect(m).not.toBeNull();
+    expect(m!.load).toBe(0);
+    expect(m!.estimatedCostUsd).toBe(0.5);
+    expect(engine.getAllMetrics()).toHaveLength(1);
+  });
+
+  it('remove() explicitly deletes metrics', () => {
+    engine.process(makeEvent({ type: 'agent.spawn', agentId: 'a1', timestamp: 1000 }));
+    engine.remove('a1');
     expect(engine.getMetrics('a1')).toBeNull();
     expect(engine.getAllMetrics()).toHaveLength(0);
+  });
+
+  it('setResolvedCost sets value and estimated flag, creating the entry if absent', () => {
+    engine.setResolvedCost('a2', 1.23, true);
+    const m = engine.getMetrics('a2')!;
+    expect(m.estimatedCostUsd).toBe(1.23);
+    expect(m.estimated).toBe(true);
+
+    engine.setResolvedCost('a2', 2, false);
+    expect(engine.getMetrics('a2')!.estimatedCostUsd).toBe(2);
+    expect(engine.getMetrics('a2')!.estimated).toBe(false);
   });
 
   it('out-of-order timestamps do not cause negative decay', () => {
@@ -113,7 +134,9 @@ describe('MetricsEngine', () => {
     const m = engine.getMetrics('a1')!;
     expect(m.inputTokens).toBe(5000);
     expect(m.outputTokens).toBe(3000);
-    expect(m.estimatedCostUsd).toBe(0.42);
+    // payload costUsd is ignored; cost only enters via setResolvedCost
+    expect(m.estimatedCostUsd).toBe(-1);
+    expect(m.estimated).toBe(false);
   });
 
   it('replaces token data with latest values (not additive)', () => {
@@ -134,7 +157,6 @@ describe('MetricsEngine', () => {
     const m = engine.getMetrics('a1')!;
     expect(m.inputTokens).toBe(12000);
     expect(m.outputTokens).toBe(8000);
-    expect(m.estimatedCostUsd).toBe(1.05);
   });
 
   it('counter drift fallback prevents negative activeTasks', () => {

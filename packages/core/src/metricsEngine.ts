@@ -20,6 +20,8 @@ export interface AgentMetrics {
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
+  /** True when estimatedCostUsd is an estimate (transcript-derived or unpriced model). */
+  estimated: boolean;
   lastUpdated: number;
 }
 
@@ -52,23 +54,7 @@ export class MetricsEngine {
 
     let m = this.metrics.get(agentId);
     if (!m) {
-      m = {
-        agentId,
-        load: 0,
-        toolCalls: 0,
-        toolFailures: 0,
-        promptsSubmitted: 0,
-        subagentSpawns: 0,
-        activeSubagents: 0,
-        activeTasks: 0,
-        errorCount: 0,
-        sessionStartedAt: now,
-        toolBreakdown: {},
-        inputTokens: -1,  // -1 = no data yet
-        outputTokens: -1, // -1 = no data yet
-        estimatedCostUsd: -1, // -1 = no data yet
-        lastUpdated: now,
-      };
+      m = this.createMetrics(agentId, now);
       this.metrics.set(agentId, m);
       this.loadByAgent.set(agentId, 0);
     }
@@ -129,9 +115,10 @@ export class MetricsEngine {
         }
         break;
       case 'agent.terminate':
-        // Clean up — remove all metrics for terminated agent
-        this.metrics.delete(agentId);
+        // Clear only the decaying load; keep the entry so cost/tokens stay readable
         this.loadByAgent.delete(agentId);
+        m.load = 0;
+        this.metrics.set(agentId, { ...m });
         return;
       default:
         break;
@@ -142,10 +129,37 @@ export class MetricsEngine {
     if (payload) {
       if (typeof payload.inputTokens === 'number') m.inputTokens = payload.inputTokens;
       if (typeof payload.outputTokens === 'number') m.outputTokens = payload.outputTokens;
-      if (typeof payload.costUsd === 'number') m.estimatedCostUsd = payload.costUsd;
+      // Cost never comes from the payload — see setResolvedCost()
     }
 
     this.metrics.set(agentId, { ...m });
+  }
+
+  /** The only way cost enters the engine. Creates the metrics entry if absent. */
+  setResolvedCost(agentId: string, costUsd: number, estimated: boolean): void {
+    const m = this.metrics.get(agentId) ?? this.createMetrics(agentId, Date.now());
+    this.metrics.set(agentId, { ...m, estimatedCostUsd: costUsd, estimated });
+  }
+
+  private createMetrics(agentId: string, now: number): AgentMetrics {
+    return {
+      agentId,
+      load: 0,
+      toolCalls: 0,
+      toolFailures: 0,
+      promptsSubmitted: 0,
+      subagentSpawns: 0,
+      activeSubagents: 0,
+      activeTasks: 0,
+      errorCount: 0,
+      sessionStartedAt: now,
+      toolBreakdown: {},
+      inputTokens: -1,  // -1 = no data yet
+      outputTokens: -1, // -1 = no data yet
+      estimatedCostUsd: -1, // -1 = no data yet
+      estimated: false,
+      lastUpdated: now,
+    };
   }
 
   /** Remove all metrics for a terminated agent. */
