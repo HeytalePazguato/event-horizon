@@ -38,7 +38,8 @@ import { extractMarkdown } from './projectGraph/markdownExtractor';
 import { GraphQueryEngine } from './projectGraph/queryEngine';
 import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
 import { FileReadCache } from './fileReadCache';
-import { CostTracker, costSampleFromEvent } from './costTracker';
+import { CostTracker, costSampleFromEvent, type CostSample } from './costTracker';
+import { OtlpCostAccumulator, otlpLogToEvent, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver';
 import { mayCache as mayCacheFile, createGitignoreMatcher } from './secretScanner';
 import { readFileSync } from 'fs';
 
@@ -1058,33 +1059,33 @@ export function activate(context: vscode.ExtensionContext): void {
    * cumulative totals, so this records the delta from CostTracker, never the raw
    * payload value (which re-added the whole session cost on every event).
    */
-  function recordBudget(event: AgentEvent, deltaUsd: number, deltaTokens: number): void {
+  function recordBudget(agentId: string, agentName: string, deltaUsd: number, deltaTokens: number): void {
       const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
       for (const plan of activePlans) {
-        const isAgentInPlan = plan.tasks.some((t) => t.assignee === event.agentId);
+        const isAgentInPlan = plan.tasks.some((t) => t.assignee === agentId);
         if (isAgentInPlan) {
-          budgetManager.recordCost(plan.id, event.agentId, deltaUsd, deltaTokens);
+          budgetManager.recordCost(plan.id, agentId, deltaUsd, deltaTokens);
           void context.globalState.update('budgetState', budgetManager.serialize());
 
           // Check budget and halt (hard mode) or warn.
           if (budgetManager.shouldHalt(plan.id)) {
             // Hard enforcement + over budget — actually stop the offending agent,
             // using the same mechanism as eh_stop_agent (spawnRegistry.stop).
-            void spawnRegistry.stop(event.agentId).catch(() => { /* already gone */ });
+            void spawnRegistry.stop(agentId).catch(() => { /* already gone */ });
             // Notify the webview that this agent was paused for budget reasons.
             webviewRef.current?.postMessage({
               type: 'agent-paused',
-              agentId: event.agentId,
+              agentId: agentId,
               reason: 'budget',
             });
             // Keep the existing budget-exceeded signal for any listeners relying on it.
             webviewRef.current?.postMessage({
               type: 'budget-exceeded',
               planId: plan.id,
-              agentId: event.agentId,
+              agentId: agentId,
             });
             void vscode.window.showWarningMessage(
-              `Agent ${event.agentName} stopped — plan budget exceeded.`,
+              `Agent ${agentName} stopped — plan budget exceeded.`,
             );
           } else if (budgetManager.isExceeded(plan.id)) {
             // Warn mode (or off): budget is over but we do not force-stop agents.
@@ -1094,7 +1095,7 @@ export function activate(context: vscode.ExtensionContext): void {
             webviewRef.current?.postMessage({
               type: 'budget-exceeded',
               planId: plan.id,
-              agentId: event.agentId,
+              agentId: agentId,
             });
           } else if (budgetManager.isWarning(plan.id)) {
             const summary = budgetManager.getRemaining(plan.id);
@@ -1123,14 +1124,21 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   function applyCost(event: AgentEvent): void {
     const sample = costSampleFromEvent(event);
-    if (!sample) return;
+    if (sample) applyCostSample(sample, event.agentName);
+  }
+
+  /** Same as applyCost, for producers that report cost without an AgentEvent (OTLP, statusLine). */
+  function applyCostSample(sample: CostSample, agentName: string): void {
+    const agentId = sample.agentId;
     const update = costTracker.record(sample);
     if (!update) return;
-    metricsEngine.setResolvedCost(event.agentId, update.totalUsd, update.estimated);
+    metricsEngine.setResolvedCost(agentId, update.totalUsd, update.estimated);
+    // The webview's per-agent cost comes only from here, never from raw payloads.
+    webviewRef.current?.postMessage({ type: 'agent-cost', agentId, costUsd: update.totalUsd, estimated: update.estimated });
     const tokens = (sample.tokens?.input ?? 0) + (sample.tokens?.output ?? 0);
-    const deltaTokens = Math.max(0, tokens - (lastCostTokens.get(event.agentId) ?? 0));
-    if (tokens > 0) lastCostTokens.set(event.agentId, Math.max(tokens, lastCostTokens.get(event.agentId) ?? 0));
-    if (update.deltaUsd !== 0) recordBudget(event, update.deltaUsd, deltaTokens);
+    const deltaTokens = Math.max(0, tokens - (lastCostTokens.get(agentId) ?? 0));
+    if (tokens > 0) lastCostTokens.set(agentId, Math.max(tokens, lastCostTokens.get(agentId) ?? 0));
+    if (update.deltaUsd !== 0) recordBudget(agentId, agentName, update.deltaUsd, deltaTokens);
     broadcastCostTotals();
   }
 
@@ -1772,7 +1780,40 @@ export function activate(context: vscode.ExtensionContext): void {
     setAuthToken(savedToken);
   }
 
-  startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
+  // ── OTLP telemetry from Claude Code ───────────────────────────────────────
+  // Exports default to delta temporality; the accumulator turns them into the
+  // cumulative per-session total every cost source reports. It is never
+  // cleared on eviction: a late export would otherwise restart the total at 0.
+  const otlpCost = new OtlpCostAccumulator();
+
+  function onOtlpMetrics(samples: OtlpMetricSample[]): void {
+    for (const sessionId of otlpCost.ingest(samples)) {
+      const t = otlpCost.sessionTokens(sessionId);
+      applyCostSample({
+        agentId: sessionId,
+        sessionId,
+        source: 'otel',
+        costUsd: otlpCost.sessionCost(sessionId),
+        model: otlpCost.sessionModel(sessionId),
+        tokens: { input: t.input + t.cacheRead + t.cacheCreation, output: t.output, cacheRead: t.cacheRead, cacheCreation: t.cacheCreation },
+        timestamp: Date.now(),
+      }, agentStateManager.getAgent(sessionId)?.name ?? 'Claude Code');
+    }
+  }
+
+  function onOtlpLogs(records: OtlpLogRecord[]): void {
+    for (const record of records) {
+      const event = otlpLogToEvent(record);
+      // Telemetry enriches agents the hooks already reported; it never creates one.
+      if (event && agentStateManager.getAgent(event.agentId)) eventBus.emit(event);
+    }
+  }
+
+  startEventServer({
+    onEvent: (event) => eventBus.emit(event),
+    onOtlpMetrics: (samples) => onOtlpMetrics(samples),
+    onOtlpLogs: (records) => onOtlpLogs(records),
+  }, configuredPort)
     .then(async (actualPort) => {
       // Persist the auth token (may be restored or newly generated)
       void context.globalState.update('eventServerToken', getAuthToken());

@@ -95,6 +95,8 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
   // Ledger grand total from the host. Includes evicted agents, whose metrics this
   // webview drops on agent.terminate, so it is preferred over summing metrics.
   const hostCostTotalRef = useRef<number | null>(null);
+  // Resolved cost that arrived before the agent's first event created its metrics entry.
+  const pendingCostRef = useRef(new Map<string, { costUsd: number; estimated: boolean }>());
 
   useEffect(() => {
     const flushSingularityStats = () => {
@@ -130,6 +132,23 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       // ── Dispatch map for non-event messages ──
       if (msg?.type === 'toggle-view') {
         useCommandCenterStore.getState().toggleViewMode();
+        return;
+      }
+      if (msg?.type === 'agent-cost') {
+        const c = msg as unknown as { agentId?: string; costUsd?: number; estimated?: boolean };
+        if (typeof c.agentId !== 'string' || typeof c.costUsd !== 'number') return;
+        const agentId = c.agentId;
+        const costUsd = c.costUsd;
+        // Kept for when the agent's first event creates its metrics entry.
+        pendingCostRef.current.set(agentId, { costUsd, estimated: c.estimated === true });
+        setMetricsMap((prev) => {
+          const m = prev[agentId];
+          if (!m) return prev;
+          return { ...prev, [agentId]: { ...m, estimatedCostUsd: costUsd, estimated: c.estimated === true } };
+        });
+        if (singularityDebounceTimerRef.current === null) {
+          singularityDebounceTimerRef.current = setTimeout(flushSingularityStats, 1000) as unknown as number;
+        }
         return;
       }
       if (msg?.type === 'cost-totals') {
@@ -652,7 +671,10 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (type === 'tool.call' && toolName) tb[toolName] = (tb[toolName] ?? 0) + 1;
         const inputTokens = typeof raw.payload?.inputTokens === 'number' ? raw.payload.inputTokens as number : (m?.inputTokens ?? -1);
         const outputTokens = typeof raw.payload?.outputTokens === 'number' ? raw.payload.outputTokens as number : (m?.outputTokens ?? -1);
-        const estimatedCostUsd = typeof raw.payload?.costUsd === 'number' ? raw.payload.costUsd as number : (m?.estimatedCostUsd ?? -1);
+        // Cost is resolved host-side (source precedence + ledger) and arrives as
+        // 'agent-cost'; raw payload costUsd is per-source and would race it.
+        const pendingCost = m ? undefined : pendingCostRef.current.get(agentId);
+        const estimatedCostUsd = m?.estimatedCostUsd ?? pendingCost?.costUsd ?? -1;
         return {
           ...prev,
           [agentId]: {
@@ -664,7 +686,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
             activeSubagents, activeTasks,
             errorCount: type === 'agent.error' ? (m?.errorCount ?? 0) + 1 : (m?.errorCount ?? 0),
             sessionStartedAt: m?.sessionStartedAt ?? Date.now(),
-            toolBreakdown: tb, inputTokens, outputTokens, estimatedCostUsd, lastUpdated: Date.now(),
+            toolBreakdown: tb, inputTokens, outputTokens, estimatedCostUsd, estimated: m?.estimated ?? pendingCost?.estimated ?? false, lastUpdated: Date.now(),
           },
         };
       });

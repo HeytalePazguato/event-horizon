@@ -24,12 +24,15 @@ export interface CostUpdate {
   deltaUsd: number;
 }
 
+/** A cost sample as producers report it: cumulative for its (agent, session, source). */
+export type CostSample = CostEntry & { unpriced?: boolean };
+
 export class CostTracker {
   readonly resolver = new CostResolver();
 
   constructor(readonly ledger: CostLedger = new CostLedger(null)) {}
 
-  record(entry: CostEntry & { unpriced?: boolean }): CostUpdate | null {
+  record(entry: CostSample): CostUpdate | null {
     if (!Number.isFinite(entry.costUsd) || entry.costUsd < 0) return null;
     const before = this.ledger.totalForAgent(entry.agentId);
     this.resolver.submit(entry.agentId, entry.source, entry.costUsd, { model: entry.model, unpriced: entry.unpriced });
@@ -60,7 +63,7 @@ const KNOWN_SOURCES = new Set<string>(COST_SOURCE_PRECEDENCE);
  * Producers that predate source tagging default to `agent-reported`, except the
  * transcript watcher, which always tags `transcript-estimated`.
  */
-export function costSampleFromEvent(event: AgentEvent): (CostEntry & { unpriced?: boolean }) | null {
+export function costSampleFromEvent(event: AgentEvent): CostSample | null {
   const p = event.payload as Record<string, unknown> | undefined;
   if (!p || typeof p.costUsd !== 'number') return null;
   const source = typeof p.costSource === 'string' && KNOWN_SOURCES.has(p.costSource)

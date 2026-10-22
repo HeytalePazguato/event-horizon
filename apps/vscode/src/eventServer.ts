@@ -33,7 +33,16 @@ export const MAX_PAYLOAD_SIZE = 65_536;
 
 export interface EventServerCallbacks {
   onEvent: (event: AgentEvent) => void;
+  /**
+   * OTLP/HTTP JSON exports from Claude Code (`/otlp/v1/metrics`, `/otlp/v1/logs`).
+   * `rawBody` is the request text exactly as received, for verbatim forwarding.
+   */
+  onOtlpMetrics?: (samples: OtlpMetricSample[], rawBody: string, contentType: string) => void;
+  onOtlpLogs?: (records: OtlpLogRecord[], rawBody: string, contentType: string) => void;
 }
+
+/** Raw request text per request, kept so OTLP payloads can be forwarded byte-for-byte. */
+const rawBodies = new WeakMap<http.IncomingMessage, string>();
 
 let server: http.Server | null = null;
 let callbacks: EventServerCallbacks | null = null;
@@ -129,6 +138,7 @@ import { MessageQueue } from './messageQueue.js';
 import { RoleManager } from './roleManager.js';
 import { AgentProfiler } from './agentProfiler.js';
 import { SharedKnowledgeStore } from './sharedKnowledge.js';
+import { parseOtlpMetrics, parseOtlpLogs, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver.js';
 import { SpawnRegistry, ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner } from './spawnRegistry.js';
 import { SessionStore } from './sessionStore.js';
 import { syncSkillsForAgent } from './skillSync.js';
@@ -457,6 +467,7 @@ export function parseBody(req: http.IncomingMessage): Promise<unknown> {
       settled = true;
       try {
         const body = Buffer.concat(chunks).toString('utf8');
+        rawBodies.set(req, body);
         if (!body) { resolve({}); return; }
         const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
         if (contentType.includes('application/x-www-form-urlencoded')) {
@@ -625,6 +636,20 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
       const cb = callbacks;
       if (!cb) {
         send(503, JSON.stringify({ error: 'Not ready' }));
+        return;
+      }
+
+      // ── OTLP/HTTP JSON (Claude Code telemetry) ─────────────────────────
+      // Answer with the empty Export*ServiceResponse an OTLP exporter expects.
+      // Handlers run after the response so telemetry never delays the exporter.
+      if (route === '/otlp/v1/metrics' || route === '/otlp/v1/logs') {
+        const raw = rawBodies.get(req) ?? '';
+        const contentType = String(req.headers['content-type'] ?? 'application/json');
+        send(200, '{}');
+        try {
+          if (route === '/otlp/v1/metrics') cb.onOtlpMetrics?.(parseOtlpMetrics(body), raw, contentType);
+          else cb.onOtlpLogs?.(parseOtlpLogs(body), raw, contentType);
+        } catch { /* telemetry must never affect the event path */ }
         return;
       }
 
