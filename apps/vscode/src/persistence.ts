@@ -24,7 +24,7 @@ import * as fs from 'fs';
  * because sql.js looks next to its own JS file, which gets inlined into
  * `out/extension.js` by esbuild and leaves the WASM orphaned.
  */
-function locateSqlWasm(file: string): string {
+export function locateSqlWasm(file: string): string {
   const nearby = path.join(__dirname, file);
   if (fs.existsSync(nearby)) return nearby;
   try {

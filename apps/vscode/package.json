@@ -79,6 +79,10 @@
         "title": "Event Horizon: Clear Stale Agents"
       },
       {
+        "command": "eventHorizon.purgeTelemetry",
+        "title": "Event Horizon: Delete Stored Claude Code Telemetry"
+      },
+      {
         "command": "eventHorizon.exportData",
         "title": "Event Horizon: Export Data...",
         "icon": "$(export)"
@@ -342,6 +346,12 @@
           "maximum": 1,
           "description": "Budget warning threshold (0.1 to 1.0). A warning is shown when spending reaches this percentage of the plan budget.",
           "order": 7
+        },
+        "eventHorizon.telemetry.retentionDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "markdownDescription": "Days of Claude Code telemetry rollups and log records to keep in `telemetry.sqlite`. Older data is removed at startup. Use **Event Horizon: Delete Stored Claude Code Telemetry** to remove it all."
         },
         "eventHorizon.claudeTelemetry.enabled": {
           "type": "boolean",

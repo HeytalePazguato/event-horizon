@@ -41,9 +41,10 @@ import { FileReadCache } from './fileReadCache';
 import { CostTracker, costSampleFromEvent, type CostSample } from './costTracker';
 import { OtlpCostAccumulator, otlpLogToEvent, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver';
 import { OtlpForwarder } from './otlp/otlpForwarder';
+import { TelemetryStore } from './otlp/telemetryStore';
 import { readTelemetryBackup } from './setupTelemetryEnv';
 import { mayCache as mayCacheFile, createGitignoreMatcher } from './secretScanner';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -195,6 +196,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const metricsEngine = new MetricsEngine();
   // Starts in memory; switches to SQLite once the DB opens (see ledger.attach below).
   const costTracker = new CostTracker();
+  // Separate file and cadence; null when persistence is disabled or it failed to open.
+  let telemetryStore: TelemetryStore | null = null;
   const agentStateManager = new AgentStateManager();
   let ratingPromptShown = context.globalState.get<boolean>('ratingPromptShown') ?? false;
 
@@ -348,6 +351,30 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         }, 60_000);
         context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
+
+        // Telemetry gets its own file so its volume never slows main-DB saves
+        // (sql.js rewrites the whole file on every save). Lowest priority: drained
+        // every 5 s, saved every 2 min, and a failure here never affects the rest.
+        const telemetryPath = path.join(dbDir, 'telemetry.sqlite');
+        try {
+          let telemetryData: Uint8Array | undefined;
+          try { telemetryData = await vscode.workspace.fs.readFile(vscode.Uri.file(telemetryPath)); } catch { /* none yet */ }
+          const store = await TelemetryStore.create(telemetryData);
+          const retentionDays = vscode.workspace.getConfiguration('eventHorizon').get<number>('telemetry.retentionDays', 7);
+          store.prune(retentionDays * 24 * 60 * 60 * 1000);
+          telemetryStore = store;
+          const drainTimer = setInterval(() => { try { store.flush(); } catch { /* drop this batch */ } }, 5_000);
+          const saveTimer = setInterval(() => {
+            if (!store.isDirty()) return;
+            try { void vscode.workspace.fs.writeFile(vscode.Uri.file(telemetryPath), store.save()); } catch { /* retry next interval */ }
+          }, 120_000);
+          context.subscriptions.push({ dispose: () => {
+            clearInterval(drainTimer);
+            clearInterval(saveTimer);
+            try { store.flush(); if (store.isDirty()) writeFileSync(telemetryPath, store.save()); store.close(); } catch { /* best effort */ }
+            telemetryStore = null;
+          } });
+        } catch { telemetryStore = null; }
 
         // SQLite becomes the system of record for shared knowledge: import the legacy
         // globalState blob once, then hydrate the in-memory read cache from the DB.
@@ -1798,6 +1825,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function onOtlpMetrics(samples: OtlpMetricSample[]): void {
+    telemetryStore?.enqueueMetrics(samples);
     for (const sessionId of otlpCost.ingest(samples)) {
       const t = otlpCost.sessionTokens(sessionId);
       applyCostSample({
@@ -1813,6 +1841,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function onOtlpLogs(records: OtlpLogRecord[]): void {
+    telemetryStore?.enqueueLogs(records);
     for (const record of records) {
       const event = otlpLogToEvent(record);
       // Telemetry enriches agents the hooks already reported; it never creates one.
@@ -2139,6 +2168,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── Purge stale agents ──────────────────────────────────────────────────
   context.subscriptions.push(
+    vscode.commands.registerCommand('eventHorizon.purgeTelemetry', () => {
+      if (!telemetryStore) {
+        void vscode.window.showInformationMessage('Event Horizon: no telemetry is stored (persistence is off or telemetry has not started).');
+        return;
+      }
+      telemetryStore.purge();
+      void vscode.window.showInformationMessage('Event Horizon: stored Claude Code telemetry was deleted.');
+    }),
     vscode.commands.registerCommand('eventHorizon.purgeStaleAgents', () => {
       const purged = purgeStaleAgents().length;
       if (purged > 0) {
