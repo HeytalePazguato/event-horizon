@@ -123,6 +123,44 @@ function pressureColor(avgIntervalMs: number): string {
   return '#cc4444';                                // red — critical (<5min)
 }
 
+// ── Recommendation row ─────────────────────────────────────────────────────
+
+/** One recommendation: its text, a button for its action, and the result of the last click. No state of its own. */
+export const RecommendationRow: FC<{
+  rec: Recommendation;
+  knowledgeKeys?: ReadonlySet<string>;
+  status?: RecommendationActionStatus;
+  onAction?: (rec: Recommendation) => void;
+}> = ({ rec, knowledgeKeys, status, onAction }) => {
+  const added = rec.action?.kind === 'add-to-knowledge' && isInKnowledge(rec.action.filePath, knowledgeKeys);
+  const warn = rec.severity === 'warn';
+  return (
+    <div data-testid="recommendation" style={{
+      padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
+      background: warn ? 'rgba(204,68,68,0.08)' : 'rgba(204,136,51,0.08)',
+      border: `1px solid ${warn ? 'rgba(204,68,68,0.3)' : 'rgba(204,136,51,0.25)'}`,
+      borderRadius: sizes.radius.sm,
+      fontSize: sizes.text.sm, color: warn ? '#cc6666' : '#cc8833',
+      lineHeight: 1.4,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: sizes.spacing.sm }}>
+        <span style={{ flex: 1 }}>{rec.text}</span>
+        {added ? <InKnowledgeBadge /> : rec.action && onAction && (
+          <button
+            type="button"
+            disabled={status?.state === 'pending'}
+            onClick={() => onAction(rec)}
+            style={actionButtonStyle}
+          >
+            {ACTION_LABEL[rec.action.kind]}
+          </button>
+        )}
+      </div>
+      <StatusLine status={status} />
+    </div>
+  );
+};
+
 // ── Section wrapper ────────────────────────────────────────────────────────
 
 const Section: FC<{ title: string; children: React.ReactNode; count?: number }> = ({ title, children, count }) => (
@@ -230,36 +268,15 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
       {recommendations.length > 0 && (
         <Section title="Recommendations" count={recommendations.length}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
-            {recommendations.map((rec) => {
-              const added = rec.action?.kind === 'add-to-knowledge' && isInKnowledge(rec.action.filePath, knowledgeKeys);
-              const status = actionStatus?.[rec.id];
-              const warn = rec.severity === 'warn';
-              return (
-                <div key={rec.id} data-testid="recommendation" style={{
-                  padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
-                  background: warn ? 'rgba(204,68,68,0.08)' : 'rgba(204,136,51,0.08)',
-                  border: `1px solid ${warn ? 'rgba(204,68,68,0.3)' : 'rgba(204,136,51,0.25)'}`,
-                  borderRadius: sizes.radius.sm,
-                  fontSize: sizes.text.sm, color: warn ? '#cc6666' : '#cc8833',
-                  lineHeight: 1.4,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: sizes.spacing.sm }}>
-                    <span style={{ flex: 1 }}>{rec.text}</span>
-                    {added ? <InKnowledgeBadge /> : rec.action && onRecommendationAction && (
-                      <button
-                        type="button"
-                        disabled={status?.state === 'pending'}
-                        onClick={() => onRecommendationAction(rec)}
-                        style={actionButtonStyle}
-                      >
-                        {ACTION_LABEL[rec.action.kind]}
-                      </button>
-                    )}
-                  </div>
-                  <StatusLine status={status} />
-                </div>
-              );
-            })}
+            {recommendations.map((rec) => (
+              <RecommendationRow
+                key={rec.id}
+                rec={rec}
+                knowledgeKeys={knowledgeKeys}
+                status={actionStatus?.[rec.id]}
+                onAction={onRecommendationAction}
+              />
+            ))}
           </div>
         </Section>
       )}

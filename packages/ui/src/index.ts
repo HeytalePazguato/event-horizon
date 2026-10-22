@@ -26,7 +26,7 @@ export type { TraceSpanView, TracesPanelProps } from './panels/TracesPanel.js';
 export type { OperationsViewProps, OpsTab } from './OperationsView.js';
 export { CostInsightsPanel } from './panels/CostInsightsPanel.js';
 export type { CostInsightsData, CostInsightsPanelProps, ContextLayerBreakdown, RecommendationActionStatus } from './panels/CostInsightsPanel.js';
-export { isInKnowledge, samePath, duplicateReadRecommendation } from './panels/CostInsightsPanel.js';
+export { isInKnowledge, samePath, duplicateReadRecommendation, RecommendationRow } from './panels/CostInsightsPanel.js';
 export type { LogsPanelProps, PersistedSearchResult } from './panels/LogsPanel.js';
 export { ProjectGraphSection, ProjectGraphCanvas, ProjectGraphControls, ProjectGraphDetailDrawer } from './panels/index.js';
 export type {
