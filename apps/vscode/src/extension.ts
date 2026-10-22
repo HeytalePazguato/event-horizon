@@ -42,6 +42,7 @@ import { CostTracker, costSampleFromEvent, type CostSample } from './costTracker
 import { OtlpCostAccumulator, otlpLogToEvent, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver';
 import { OtlpForwarder } from './otlp/otlpForwarder';
 import { TelemetryStore } from './otlp/telemetryStore';
+import type { StatusLineSnapshot } from './statusLine';
 import { readTelemetryBackup } from './setupTelemetryEnv';
 import { mayCache as mayCacheFile, createGitignoreMatcher } from './secretScanner';
 import { readFileSync, writeFileSync } from 'fs';
@@ -1840,6 +1841,27 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  /** Claude Code's own cost and measured cache/context figures, via the statusLine bridge. */
+  function onStatusLine(snapshot: StatusLineSnapshot): void {
+    if (snapshot.costUsd !== undefined) {
+      applyCostSample({
+        agentId: snapshot.sessionId,
+        sessionId: snapshot.sessionId,
+        source: 'statusline',
+        costUsd: snapshot.costUsd,
+        model: snapshot.model,
+        tokens: { input: snapshot.totalInputTokens, output: snapshot.totalOutputTokens },
+        timestamp: Date.now(),
+      }, agentStateManager.getAgent(snapshot.sessionId)?.name ?? 'Claude Code');
+    }
+    tokenAnalyzer.recordMeasuredCache(snapshot.sessionId, {
+      hitRatio: snapshot.cacheHitRatio,
+      missCauses: snapshot.cacheMissCauses,
+      contextUsedPercentage: snapshot.contextUsedPercentage,
+      contextWindowSize: snapshot.contextWindowSize,
+    });
+  }
+
   function onOtlpLogs(records: OtlpLogRecord[]): void {
     telemetryStore?.enqueueLogs(records);
     for (const record of records) {
@@ -1853,6 +1875,7 @@ export function activate(context: vscode.ExtensionContext): void {
     onEvent: (event) => eventBus.emit(event),
     onOtlpMetrics: (samples, rawBody, contentType) => { forwardOtlp('metrics', rawBody, contentType); onOtlpMetrics(samples); },
     onOtlpLogs: (records, rawBody, contentType) => { forwardOtlp('logs', rawBody, contentType); onOtlpLogs(records); },
+    onStatusLine: (snapshot) => onStatusLine(snapshot),
   }, configuredPort)
     .then(async (actualPort) => {
       // Persist the auth token (may be restored or newly generated)

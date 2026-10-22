@@ -39,6 +39,8 @@ export interface EventServerCallbacks {
    */
   onOtlpMetrics?: (samples: OtlpMetricSample[], rawBody: string, contentType: string) => void;
   onOtlpLogs?: (records: OtlpLogRecord[], rawBody: string, contentType: string) => void;
+  /** Claude Code statusLine snapshots posted by the statusLine bridge (`/claude/status`). */
+  onStatusLine?: (snapshot: StatusLineSnapshot) => void;
 }
 
 /** Raw request text per request, kept so OTLP payloads can be forwarded byte-for-byte. */
@@ -139,6 +141,7 @@ import { RoleManager } from './roleManager.js';
 import { AgentProfiler } from './agentProfiler.js';
 import { SharedKnowledgeStore } from './sharedKnowledge.js';
 import { parseOtlpMetrics, parseOtlpLogs, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver.js';
+import { parseStatusLinePayload, type StatusLineSnapshot } from './statusLine.js';
 import { SpawnRegistry, ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner } from './spawnRegistry.js';
 import { SessionStore } from './sessionStore.js';
 import { syncSkillsForAgent } from './skillSync.js';
@@ -636,6 +639,16 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
       const cb = callbacks;
       if (!cb) {
         send(503, JSON.stringify({ error: 'Not ready' }));
+        return;
+      }
+
+      // ── Claude Code statusLine bridge ──────────────────────────────────
+      // The bridge discards our reply; answer first so the statusline never waits.
+      if (route === '/claude/status') {
+        const snapshot = parseStatusLinePayload(body);
+        if (!snapshot) { send(400, JSON.stringify({ error: 'Missing session_id' })); return; }
+        send(200, '');
+        try { cb.onStatusLine?.(snapshot); } catch { /* never affect the event path */ }
         return;
       }
 

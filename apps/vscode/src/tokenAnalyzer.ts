@@ -45,6 +45,21 @@ export interface CostInsights {
 
   /** Model efficiency: success rate and avg cost per model. */
   modelEfficiency: Record<string, { successRate: number; avgCost: number; attempts: number }>;
+
+  /** Agents whose cache ratio is measured by Claude Code (statusLine) rather than estimated from tokens. */
+  measuredCacheAgents?: string[];
+  /** Prompt-cache miss causes reported by Claude Code, per agent (e.g. tools_changed). */
+  cacheMissCauses?: Record<string, Record<string, number>>;
+  /** Context window usage reported by Claude Code, per agent. */
+  contextUsage?: Record<string, { usedPercentage: number; windowSize: number }>;
+}
+
+/** Prompt-cache and context figures Claude Code measures itself (statusLine input). */
+export interface MeasuredCacheStats {
+  hitRatio?: number;
+  missCauses?: Record<string, number>;
+  contextUsedPercentage?: number;
+  contextWindowSize?: number;
 }
 
 // ── Internal tracking ──────────────────────────────────────────────────────
@@ -97,6 +112,7 @@ export class TokenAnalyzer {
   private contextTracking = new Map<string, ContextLayerTracking>();
   private contextWindowSize = DEFAULT_CONTEXT_WINDOW;
   private fileReadCache?: FileReadCache;
+  private measured = new Map<string, MeasuredCacheStats>();
 
   /** Attach a shared file-read cache so duplicate-read waste reflects real token sizes. */
   setFileReadCache(cache: FileReadCache): void {
@@ -104,6 +120,11 @@ export class TokenAnalyzer {
   }
 
   /** Process an incoming agent event. */
+  /** Record cache/context figures Claude Code measured for an agent (latest wins). */
+  recordMeasuredCache(agentId: string, stats: MeasuredCacheStats): void {
+    this.measured.set(agentId, { ...this.measured.get(agentId), ...stats });
+  }
+
   onEvent(event: AgentEvent): void {
     const { agentId, type, payload, timestamp } = event;
 
@@ -205,6 +226,11 @@ export class TokenAnalyzer {
       duplicateReads: this.computeDuplicateReads(),
       anomalies: this.computeAnomalies(),
       modelEfficiency: {},  // Populated externally from ModelTierManager
+      measuredCacheAgents: [...this.measured.entries()].filter(([, m]) => typeof m.hitRatio === 'number').map(([id]) => id),
+      cacheMissCauses: Object.fromEntries([...this.measured.entries()].filter(([, m]) => m.missCauses).map(([id, m]) => [id, m.missCauses!])),
+      contextUsage: Object.fromEntries([...this.measured.entries()]
+        .filter(([, m]) => typeof m.contextUsedPercentage === 'number')
+        .map(([id, m]) => [id, { usedPercentage: m.contextUsedPercentage!, windowSize: m.contextWindowSize ?? this.contextWindowSize }])),
     };
   }
 
@@ -341,11 +367,15 @@ export class TokenAnalyzer {
 
   private computePerAgentCacheRatios(): Record<string, number> {
     const result: Record<string, number> = {};
+    // A ratio Claude Code measured beats one estimated from token counts.
+    for (const [agentId, m] of this.measured) {
+      if (typeof m.hitRatio === 'number') result[agentId] = m.hitRatio;
+    }
     for (const [agentId, t] of this.agentTokens) {
       const total = t.cacheRead + t.cacheCreation + t.input;
       // Skip agents with no actual token activity — otherwise the Costs panel
       // shows 0% forever for every agent that only fired non-token events.
-      if (total === 0) continue;
+      if (total === 0 || agentId in result) continue;
       result[agentId] = t.cacheRead / total;
     }
     return result;
