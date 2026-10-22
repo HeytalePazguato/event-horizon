@@ -40,6 +40,8 @@ import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
 import { FileReadCache } from './fileReadCache';
 import { CostTracker, costSampleFromEvent, type CostSample } from './costTracker';
 import { OtlpCostAccumulator, otlpLogToEvent, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver';
+import { OtlpForwarder } from './otlp/otlpForwarder';
+import { readTelemetryBackup } from './setupTelemetryEnv';
 import { mayCache as mayCacheFile, createGitignoreMatcher } from './secretScanner';
 import { readFileSync } from 'fs';
 
@@ -1786,6 +1788,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // cleared on eviction: a late export would otherwise restart the total at 0.
   const otlpCost = new OtlpCostAccumulator();
 
+  // Re-exports to the collector the user had before Event Horizon took the OTel
+  // endpoint (recorded in the telemetry env backup). Loaded on first use.
+  const otlpForwarder = new OtlpForwarder(undefined, (message) => { void vscode.window.showWarningMessage(message); });
+  let forwardTargetsLoaded: Promise<void> | null = null;
+  function forwardOtlp(signal: 'metrics' | 'logs', rawBody: string, contentType: string): void {
+    forwardTargetsLoaded ??= readTelemetryBackup().then((b) => otlpForwarder.setTargets(b?.forward)).catch(() => {});
+    void forwardTargetsLoaded.then(() => otlpForwarder.forward(signal, rawBody, contentType));
+  }
+
   function onOtlpMetrics(samples: OtlpMetricSample[]): void {
     for (const sessionId of otlpCost.ingest(samples)) {
       const t = otlpCost.sessionTokens(sessionId);
@@ -1811,8 +1822,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   startEventServer({
     onEvent: (event) => eventBus.emit(event),
-    onOtlpMetrics: (samples) => onOtlpMetrics(samples),
-    onOtlpLogs: (records) => onOtlpLogs(records),
+    onOtlpMetrics: (samples, rawBody, contentType) => { forwardOtlp('metrics', rawBody, contentType); onOtlpMetrics(samples); },
+    onOtlpLogs: (records, rawBody, contentType) => { forwardOtlp('logs', rawBody, contentType); onOtlpLogs(records); },
   }, configuredPort)
     .then(async (actualPort) => {
       // Persist the auth token (may be restored or newly generated)
