@@ -8,6 +8,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { getAuthToken } from './eventServer.js';
+import { setupTelemetryEnv, removeTelemetryEnv } from './setupTelemetryEnv.js';
 
 const PORT = 28765;
 
@@ -258,6 +259,7 @@ export async function removeClaudeCodeHooks(): Promise<void> {
       );
     }
   }
+  await removeTelemetryEnv();
 }
 
 // 4.7 — converted to async file I/O
@@ -311,6 +313,11 @@ export async function setupClaudeCodeHooks(): Promise<void> {
   const dir = path.dirname(settingsPath);
   await fsp.mkdir(dir, { recursive: true });
   await fsp.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+
+  // OTel export to Event Horizon lives in the same file; keep it in step with the hooks.
+  const telemetryEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('claudeTelemetry.enabled', true);
+  if (telemetryEnabled) await setupTelemetryEnv(PORT, getAuthToken());
+  else await removeTelemetryEnv();
 }
 
 /**

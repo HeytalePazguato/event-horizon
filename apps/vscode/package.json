@@ -343,6 +343,11 @@
           "description": "Budget warning threshold (0.1 to 1.0). A warning is shown when spending reaches this percentage of the plan budget.",
           "order": 7
         },
+        "eventHorizon.claudeTelemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Send Claude Code's OpenTelemetry cost and usage data to Event Horizon so agent cost is measured rather than estimated. Writes per-signal `OTEL_*` variables into the `env` block of `~/.claude/settings.json` (prompts, responses and tool contents stay off) and restores the previous values when turned off. Takes effect for Claude Code sessions started afterwards."
+        },
         "eventHorizon.persistence.enabled": {
           "type": "boolean",
           "default": true,
