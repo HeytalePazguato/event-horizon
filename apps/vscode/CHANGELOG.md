@@ -4,6 +4,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-10-21
+
 ### Added
 - **Measured Claude Code cost through OpenTelemetry.** Claude Code transcripts carry no cost field, so Event Horizon has been estimating Claude cost from token counts at a single assumed rate. Event Horizon now receives Claude Code's own `claude_code.cost.usage` and `claude_code.token.usage` metrics on new `/otlp/v1/metrics` and `/otlp/v1/logs` routes (OTLP over HTTP with JSON, so no protobuf dependency). Claude Code exports these counters as deltas by default; they are accumulated per series into a running session total, and exporter retries are not counted twice. User email, account and organization ids attached to every record are dropped on arrival.
 - **Telemetry is turned on for you.** Setting up Claude Code hooks now also writes an OTel `env` block into `~/.claude/settings.json`, the only settings file where Claude Code honours these variables. Only per-signal `OTEL_EXPORTER_OTLP_METRICS_*` and `_LOGS_*` variables are written, never the generic ones, which may serve your trace pipeline. Capture of prompts, responses and tool contents stays off unless you set it yourself. Previous values are saved to `~/.event-horizon/telemetry-env-backup.json` and restored exactly by turning off the new `eventHorizon.claudeTelemetry.enabled` setting or removing the hooks. An explicit `CLAUDE_CODE_ENABLE_TELEMETRY=0` or a non-OTLP exporter is left alone.
@@ -46,6 +48,11 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ### Code quality
 - **The extension type-checks cleanly again.** `projectGraph/resolution.ts` imported its graph types from a `./types.js` that has not existed since 3.0.1. The build strips type-only imports, so nothing broke at runtime, but `tsc` rejected it.
+
+### Dependencies
+- pixi.js 8.21, zustand 5.0.15, sql.js 1.14.2, web-tree-sitter 0.27, ws 8.22.
+- vitest 5 (security fix in `@vitest/mocker`), eslint 10.10, typescript-eslint 8.70, turbo 2.10.12, react 19.3, tsx 4.23.13, ovsx 1.1.1, @types/node 26.2, mkdocs-material 9.7.7.
+- `@types/vscode` stays at `^1.100.0`. A newer version than `engines.vscode` makes `vsce` refuse to package, and raising the engine would drop older VS Code builds and Cursor. Dependabot now leaves it alone.
 
 ### Removed
 - **`eventHorizon.autoEvictLostAgents`.** Heartbeat silence alone never removes an agent now; the lifecycle manager above handles finished workers.
