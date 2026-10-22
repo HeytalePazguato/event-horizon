@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { getAuthToken } from './eventServer.js';
 import { setupTelemetryEnv, removeTelemetryEnv } from './setupTelemetryEnv.js';
+import { setupStatusLine, removeStatusLine, type StatusLineMode } from './setupStatusLine.js';
 
 const PORT = 28765;
 
@@ -260,6 +261,7 @@ export async function removeClaudeCodeHooks(): Promise<void> {
     }
   }
   await removeTelemetryEnv();
+  await removeStatusLine();
 }
 
 // 4.7 — converted to async file I/O
@@ -318,6 +320,10 @@ export async function setupClaudeCodeHooks(): Promise<void> {
   const telemetryEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('claudeTelemetry.enabled', true);
   if (telemetryEnabled) await setupTelemetryEnv(PORT, getAuthToken());
   else await removeTelemetryEnv();
+
+  // statusLine bridge: wraps an existing statusLine by default (see setupStatusLine.ts).
+  const statusLineMode = vscode.workspace.getConfiguration('eventHorizon').get<StatusLineMode>('claudeStatusLine.mode', 'chain');
+  await setupStatusLine({ port: PORT, token: getAuthToken(), mode: statusLineMode });
 }
 
 /**

@@ -353,6 +353,17 @@
           "minimum": 1,
           "markdownDescription": "Days of Claude Code telemetry rollups and log records to keep in `telemetry.sqlite`. Older data is removed at startup. Use **Event Horizon: Delete Stored Claude Code Telemetry** to remove it all."
         },
+        "eventHorizon.claudeStatusLine.mode": {
+          "type": "string",
+          "enum": ["chain", "always", "off"],
+          "enumDescriptions": [
+            "Wrap your existing Claude Code statusLine so Event Horizon also receives its data. Installs nothing if you have no statusLine.",
+            "Also install one when you have none, showing a compact [model] ctx % · $cost line. A custom statusLine hides Claude Code's footer keyboard hints.",
+            "Remove the bridge and restore your original statusLine."
+          ],
+          "default": "chain",
+          "markdownDescription": "How Event Horizon reads Claude Code's statusLine data (its own session cost, prompt-cache hit ratio, cache-miss causes and context usage). Your original statusLine is saved and runs unchanged; it is restored when this is `off` or hooks are removed."
+        },
         "eventHorizon.claudeTelemetry.enabled": {
           "type": "boolean",
           "default": true,
