@@ -38,6 +38,8 @@ import { extractMarkdown } from './projectGraph/markdownExtractor';
 import { GraphQueryEngine } from './projectGraph/queryEngine';
 import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
 import { FileReadCache } from './fileReadCache';
+import { mayCache as mayCacheFile, createGitignoreMatcher } from './secretScanner';
+import { readFileSync } from 'fs';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -195,7 +197,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Shared file-read cache (dedup layer consumed by McpServer + ContextCurator).
   // Created before the MCP server so its deps can reference this single instance.
-  const fileReadCache = new FileReadCache();
+  // Secret gate: .env / key files / gitignored paths / token-looking content are counted but never retained.
+  // .gitignore is read once at activation (no watcher yet; edits apply after reload).
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  let isIgnored: (p: string) => boolean = () => false;
+  if (wsRoot) {
+    try {
+      isIgnored = createGitignoreMatcher(readFileSync(path.join(wsRoot, '.gitignore'), 'utf8'), wsRoot);
+    } catch { /* no .gitignore */ }
+  }
+  const fileReadCache = new FileReadCache((p, c) => mayCacheFile(p, c, { isIgnored }));
   // Let the analyzer report actual cache-backed savings for duplicate reads.
   tokenAnalyzer.setFileReadCache(fileReadCache);
 

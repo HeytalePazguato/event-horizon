@@ -210,4 +210,13 @@ describe('mayCache', () => {
   it('rejects gitignored files via opts', () => {
     expect(mayCache('/repo/out/a.js', 'x', { isIgnored: () => true })).toBe(false);
   });
+
+  it('gates FileReadCache: .env withheld, normal file kept', async () => {
+    const { FileReadCache } = await import('../fileReadCache');
+    const c = new FileReadCache((p, t) => mayCache(p, t));
+    c.record('/repo/.env', 'A=1', 1, 'x', 1);
+    c.record('/repo/ok.ts', 'let a = 1;', 1, 'x', 2);
+    expect(c.get('/repo/.env')).toBeUndefined();
+    expect(c.getDigest(100).map((e) => e.path)).toEqual(['/repo/ok.ts']);
+  });
 });
