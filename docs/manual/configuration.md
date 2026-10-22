@@ -167,6 +167,12 @@ Estimated context window size in tokens, used to compute the fuel gauge. Default
 
 Scan workspace instruction files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `copilot-instructions.md`, `.claude/rules/*.md`) on activation and on change, and surface them in the [Knowledge tab](knowledge-graph.md#auto-discovered-knowledge) tagged `source: auto`. Auto entries get a tier (L1 for root instructions, L2 for rules) and never overwrite user- or agent-authored entries.
 
+### eventHorizon.knowledge.interceptReads
+
+**Type:** boolean &middot; **Default:** `true`
+
+When a Claude Code agent reads a file that is in shared knowledge and has not changed on disk since the entry was written, answer the first read with the stored summary instead of the full file. Running Read again on the same path returns the full contents, so the file stays editable. Each agent is intercepted at most once per file until the entry changes. Secret files are never intercepted.
+
 ---
 
 ## Persistence
@@ -182,6 +188,28 @@ Enable SQLite persistence for events and knowledge. Disable to run ephemerally �
 **Type:** number &middot; **Default:** `30` &middot; **Range:** 1–365
 
 How many days to retain persisted events before auto-pruning on startup.
+
+---
+
+## Claude Code telemetry
+
+### eventHorizon.claudeTelemetry.enabled
+
+**Type:** boolean &middot; **Default:** `true`
+
+Have Claude Code send its own cost and usage through OpenTelemetry, so agent cost is measured rather than estimated. Writes per-signal `OTEL_*` variables into the `env` block of `~/.claude/settings.json` with prompt and tool-content capture off, and restores the previous values when turned off. See [Measured cost](setup/claude-code.md#measured-cost-opentelemetry).
+
+### eventHorizon.telemetry.retentionDays
+
+**Type:** number &middot; **Default:** `7`
+
+Days of Claude Code telemetry rollups and log records to keep in `telemetry.sqlite`. Older data is removed at startup. **Event Horizon: Delete Stored Claude Code Telemetry** removes all of it.
+
+### eventHorizon.claudeStatusLine.mode
+
+**Type:** `chain` | `always` | `off` &middot; **Default:** `chain`
+
+How Event Horizon reads Claude Code's statusLine data (its session cost, prompt-cache hit ratio and context usage). `chain` wraps your existing statusLine and installs nothing if you have none, because a custom statusLine hides Claude Code's footer keyboard hints. `always` also installs a compact `[model] ctx % · $cost` line. `off` removes the bridge and restores your original. See [statusLine bridge](setup/claude-code.md#statusline-bridge).
 
 ---
 
