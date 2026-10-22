@@ -48,6 +48,9 @@ export interface SpawnBackend {
   isAvailable(): Promise<boolean>;
 }
 
+/** Why a spawned agent left the registry. */
+export type SpawnExitReason = 'process-exit' | 'terminal-closed';
+
 export interface SpawnedAgentInfo {
   type: string;
   terminalName: string;

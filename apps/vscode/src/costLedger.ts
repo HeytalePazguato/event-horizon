@@ -9,7 +9,7 @@
  *
  * An agent's total is then:
  *   sum over its sessions of the value from the highest-precedence source present
- *   for that session (otel > statusline > transcript-estimated, same as CostResolver).
+ *   for that session (COST_SOURCE_PRECEDENCE, same as CostResolver).
  * A lower-precedence sample can never override or add to a higher-precedence one.
  *
  * There is deliberately no terminate/clear API: cost outlives the agent. Only
@@ -49,8 +49,24 @@ export class CostLedger {
   private readonly agentTotals = new Map<string, number>();
   private readonly sessionTotals = new Map<string, number>();
 
-  constructor(private readonly db: LedgerDb | null) {
+  constructor(private db: LedgerDb | null) {
     if (db) this.hydrate(db);
+  }
+
+  /**
+   * Switch an in-memory ledger onto SQLite once the database opens. The DB opens
+   * asynchronously after activation, so samples can arrive first: persisted rows
+   * are loaded (an in-memory sample wins only when it is newer) and everything
+   * held in memory is written through.
+   */
+  attach(db: LedgerDb): void {
+    if (this.db) return;
+    const pending = [...this.rows.values()];
+    this.rows.clear();
+    this.db = db;
+    this.hydrate(db);
+    for (const entry of pending) this.record(entry);
+    for (const agentId of new Set(pending.map((e) => e.agentId))) this.recompute(agentId);
   }
 
   record(entry: CostEntry): void {

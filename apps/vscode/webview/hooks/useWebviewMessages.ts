@@ -92,6 +92,9 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
   // Debounce refs for singularity stats: max 1 update/sec, skip if values unchanged
   const singularityDebounceTimerRef = useRef<number | null>(null);
   const lastSingularityStatsRef = useRef<{ totalTokens: number; totalCostUsd: number } | null>(null);
+  // Ledger grand total from the host. Includes evicted agents, whose metrics this
+  // webview drops on agent.terminate, so it is preferred over summing metrics.
+  const hostCostTotalRef = useRef<number | null>(null);
 
   useEffect(() => {
     const flushSingularityStats = () => {
@@ -110,6 +113,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       }
       if (!hasTokenData) totalTokens = -1;
       if (!hasCostData) totalCost = -1;
+      if (hostCostTotalRef.current !== null && hostCostTotalRef.current > 0) totalCost = hostCostTotalRef.current;
 
       const newStats = { totalTokens, totalCostUsd: totalCost };
       const oldStats = lastSingularityStatsRef.current;
@@ -126,6 +130,12 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       // ── Dispatch map for non-event messages ──
       if (msg?.type === 'toggle-view') {
         useCommandCenterStore.getState().toggleViewMode();
+        return;
+      }
+      if (msg?.type === 'cost-totals') {
+        const totals = msg as unknown as { totalUsd?: number };
+        if (typeof totals.totalUsd === 'number') hostCostTotalRef.current = totals.totalUsd;
+        flushSingularityStats();
         return;
       }
       if (msg?.type === 'connected-agents') {

@@ -285,6 +285,9 @@ async function writeVscodeConfig(msg: {
   }
 }
 
+/** Spend per agent from the cost ledger, including agents that have been evicted. */
+export type CostTotals = { totalUsd: number; byAgent: Record<string, number> };
+
 /** Set up hydration + message handling for the full universe webview. */
 function wireUniverseWebview(
   webview: vscode.Webview,
@@ -293,6 +296,7 @@ function wireUniverseWebview(
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
+  getCostTotals?: () => CostTotals,
 ): void {
   // Guard to suppress config-change echoes when the webview writes back to VS Code settings
   let suppressConfigEcho = false;
@@ -386,6 +390,8 @@ function wireUniverseWebview(
     if (agents.length > 0) {
       void webview.postMessage({ type: 'init-state', agents, metrics });
     }
+    // Ledger totals include evicted agents, which the per-agent metrics no longer carry.
+    if (getCostTotals) void webview.postMessage({ type: 'cost-totals', ...getCostTotals() });
 
     // Push the current graph state on connect — the lifecycle may have
     // already attached to a pre-existing `<folder>/.eh/graph.db` before
@@ -1086,6 +1092,7 @@ export async function openUniversePanel(
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
+  getCostTotals?: () => CostTotals,
 ): Promise<void> {
   // If already open, just reveal it
   if (universePanel) {
@@ -1117,7 +1124,7 @@ export async function openUniversePanel(
   const connectedAgents = await getConnectedAgentTypes();
   panel.webview.html = getUniverseHtml(panel.webview, scriptUri, version, connectedAgents);
 
-  wireUniverseWebview(panel.webview, context, agentStateManager, metricsEngine, getSkills, rescanSkills);
+  wireUniverseWebview(panel.webview, context, agentStateManager, metricsEngine, getSkills, rescanSkills, getCostTotals);
 
   panel.onDidDispose(() => {
     universePanel = null;

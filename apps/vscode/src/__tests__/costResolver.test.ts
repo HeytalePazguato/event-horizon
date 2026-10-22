@@ -3,8 +3,32 @@ import { CostResolver, COST_SOURCE_PRECEDENCE } from '../costResolver';
 
 describe('CostResolver', () => {
   describe('precedence', () => {
-    it('exports precedence otel > statusline > transcript-estimated', () => {
-      expect([...COST_SOURCE_PRECEDENCE]).toEqual(['otel', 'statusline', 'transcript-estimated']);
+    it('exports precedence otel > statusline > agent-reported > transcript-estimated', () => {
+      expect([...COST_SOURCE_PRECEDENCE]).toEqual(['otel', 'statusline', 'agent-reported', 'transcript-estimated']);
+    });
+
+    it('treats agent-reported cost as measured and above the transcript estimate', () => {
+      const r = new CostResolver();
+      r.submit('a', 'transcript-estimated', 9.99);
+      r.submit('a', 'agent-reported', 2.5);
+      expect(r.resolve('a')).toEqual({ costUsd: 2.5, source: 'agent-reported', estimated: false });
+    });
+
+    it('resolves to otel for all six arrival orders of the three sources', () => {
+      const values = { otel: 1.23, statusline: 4.56, 'transcript-estimated': 9.99 } as const;
+      const orders: Array<Array<keyof typeof values>> = [
+        ['otel', 'statusline', 'transcript-estimated'],
+        ['otel', 'transcript-estimated', 'statusline'],
+        ['statusline', 'otel', 'transcript-estimated'],
+        ['statusline', 'transcript-estimated', 'otel'],
+        ['transcript-estimated', 'otel', 'statusline'],
+        ['transcript-estimated', 'statusline', 'otel'],
+      ];
+      for (const order of orders) {
+        const r = new CostResolver();
+        for (const source of order) r.submit('a', source, values[source]);
+        expect(r.resolve('a'), order.join(' → ')).toEqual({ costUsd: 1.23, source: 'otel', estimated: false });
+      }
     });
 
     it('later transcript submission never overwrites earlier otel', () => {

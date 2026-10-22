@@ -11,9 +11,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { pathToFileURL, fileURLToPath } from 'url';
+import { pathToFileURL } from 'url';
 
-const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const pkgRoot = path.resolve(__dirname, '..', '..');
 const generatedFile = path.join(pkgRoot, 'src', 'generated', 'pluginSources.ts');
 
 let V1 = '';

@@ -1,13 +1,17 @@
 /**
  * CostResolver — holds cost per agent per source and resolves by precedence
- * (otel > statusline > transcript-estimated), carrying provenance with every figure.
- * Replaces last-writer-wins, which is an arrival-order race once a second source exists.
+ * (otel > statusline > agent-reported > transcript-estimated), carrying provenance
+ * with every figure. Replaces last-writer-wins, which is an arrival-order race once a
+ * second source exists.
+ *
+ * `agent-reported` is cost the agent runtime itself computed and exposed (OpenCode's
+ * per-message cost via the session backfill). It is measured, not estimated.
  */
 
-export type CostSource = 'otel' | 'statusline' | 'transcript-estimated';
+export type CostSource = 'otel' | 'statusline' | 'agent-reported' | 'transcript-estimated';
 
 /** Highest precedence first. */
-export const COST_SOURCE_PRECEDENCE: readonly CostSource[] = ['otel', 'statusline', 'transcript-estimated'];
+export const COST_SOURCE_PRECEDENCE: readonly CostSource[] = ['otel', 'statusline', 'agent-reported', 'transcript-estimated'];
 
 export interface CostMeta {
   model?: string;

@@ -38,6 +38,7 @@ import { extractMarkdown } from './projectGraph/markdownExtractor';
 import { GraphQueryEngine } from './projectGraph/queryEngine';
 import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
 import { FileReadCache } from './fileReadCache';
+import { CostTracker, costSampleFromEvent } from './costTracker';
 import { mayCache as mayCacheFile, createGitignoreMatcher } from './secretScanner';
 import { readFileSync } from 'fs';
 
@@ -189,6 +190,8 @@ function areAgentsCooperating(cwdA: string, cwdB: string): boolean {
 export function activate(context: vscode.ExtensionContext): void {
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
+  // Starts in memory; switches to SQLite once the DB opens (see ledger.attach below).
+  const costTracker = new CostTracker();
   const agentStateManager = new AgentStateManager();
   let ratingPromptShown = context.globalState.get<boolean>('ratingPromptShown') ?? false;
 
@@ -322,6 +325,8 @@ export function activate(context: vscode.ExtensionContext): void {
           dbData = await vscode.workspace.fs.readFile(vscode.Uri.file(dbPath));
         } catch { /* no existing DB — will create new */ }
         ehDatabase = await EventHorizonDB.create(dbData);
+        costTracker.ledger.attach(ehDatabase);
+        broadcastCostTotals();
 
         // Prune old events on startup
         const retentionDays = vscode.workspace.getConfiguration('eventHorizon').get<number>('persistence.retentionDays', 30);
@@ -831,6 +836,8 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   lifecycleManager.onTerminate((agentId, reason) => {
+    costTracker.evict(agentId);
+    lastCostTokens.delete(agentId);
     const origin = terminateOrigins.get(agentId);
     const agent = agentStateManager.getAgent(agentId);
     const payload: Record<string, unknown> = origin?.payload ? { ...origin.payload } : { synthetic: true };
@@ -1046,6 +1053,87 @@ export function activate(context: vscode.ExtensionContext): void {
   // a DIFFERENT file, release the previous lock automatically.
   const lastLockedFileByAgent = new Map<string, string>();
 
+  /**
+   * Charge a cost change to every active plan the agent works in. Sources report
+   * cumulative totals, so this records the delta from CostTracker, never the raw
+   * payload value (which re-added the whole session cost on every event).
+   */
+  function recordBudget(event: AgentEvent, deltaUsd: number, deltaTokens: number): void {
+      const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
+      for (const plan of activePlans) {
+        const isAgentInPlan = plan.tasks.some((t) => t.assignee === event.agentId);
+        if (isAgentInPlan) {
+          budgetManager.recordCost(plan.id, event.agentId, deltaUsd, deltaTokens);
+          void context.globalState.update('budgetState', budgetManager.serialize());
+
+          // Check budget and halt (hard mode) or warn.
+          if (budgetManager.shouldHalt(plan.id)) {
+            // Hard enforcement + over budget — actually stop the offending agent,
+            // using the same mechanism as eh_stop_agent (spawnRegistry.stop).
+            void spawnRegistry.stop(event.agentId).catch(() => { /* already gone */ });
+            // Notify the webview that this agent was paused for budget reasons.
+            webviewRef.current?.postMessage({
+              type: 'agent-paused',
+              agentId: event.agentId,
+              reason: 'budget',
+            });
+            // Keep the existing budget-exceeded signal for any listeners relying on it.
+            webviewRef.current?.postMessage({
+              type: 'budget-exceeded',
+              planId: plan.id,
+              agentId: event.agentId,
+            });
+            void vscode.window.showWarningMessage(
+              `Agent ${event.agentName} stopped — plan budget exceeded.`,
+            );
+          } else if (budgetManager.isExceeded(plan.id)) {
+            // Warn mode (or off): budget is over but we do not force-stop agents.
+            void vscode.window.showWarningMessage(
+              `Budget exceeded for plan "${plan.name}" — consider pausing agents.`,
+            );
+            webviewRef.current?.postMessage({
+              type: 'budget-exceeded',
+              planId: plan.id,
+              agentId: event.agentId,
+            });
+          } else if (budgetManager.isWarning(plan.id)) {
+            const summary = budgetManager.getRemaining(plan.id);
+            void vscode.window.showWarningMessage(
+              `Budget warning for plan "${plan.name}": ${Math.round(summary.percentUsed * 100)}% used ($${summary.spent.toFixed(2)} of $${summary.limit.toFixed(2)}).`,
+            );
+          }
+        }
+      }
+  }
+
+  /** Last cumulative token count seen per agent, for budget token deltas. */
+  const lastCostTokens = new Map<string, number>();
+
+  function broadcastCostTotals(): void {
+    webviewRef.current?.postMessage({
+      type: 'cost-totals',
+      totalUsd: costTracker.grandTotal(),
+      byAgent: Object.fromEntries(costTracker.ledger.allTotals()),
+    });
+  }
+
+  /**
+   * The single path for cost: resolve by source precedence, persist to the ledger,
+   * show the agent total, and charge only the change to plan budgets.
+   */
+  function applyCost(event: AgentEvent): void {
+    const sample = costSampleFromEvent(event);
+    if (!sample) return;
+    const update = costTracker.record(sample);
+    if (!update) return;
+    metricsEngine.setResolvedCost(event.agentId, update.totalUsd, update.estimated);
+    const tokens = (sample.tokens?.input ?? 0) + (sample.tokens?.output ?? 0);
+    const deltaTokens = Math.max(0, tokens - (lastCostTokens.get(event.agentId) ?? 0));
+    if (tokens > 0) lastCostTokens.set(event.agentId, Math.max(tokens, lastCostTokens.get(event.agentId) ?? 0));
+    if (update.deltaUsd !== 0) recordBudget(event, update.deltaUsd, deltaTokens);
+    broadcastCostTotals();
+  }
+
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
     applyLifecycleClassification(lifecycleManager, event);
@@ -1061,10 +1149,7 @@ export function activate(context: vscode.ExtensionContext): void {
       } catch { /* persistence failure should never block event processing */ }
     }
     metricsEngine.process(event);
-    // TODO(2.6): replace with CostResolver
-    if (typeof event.payload?.costUsd === 'number') {
-      metricsEngine.setResolvedCost(event.agentId, event.payload.costUsd, event.payload.costSource === 'transcript-estimated' || event.payload.costUnpriced === true);
-    }
+    applyCost(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
@@ -1162,7 +1247,8 @@ export function activate(context: vscode.ExtensionContext): void {
               sessionEnd: event.type === 'agent.terminate' ? event.timestamp : undefined,
               totalTokensIn: session.totalTokensIn + ((event.payload?.inputTokens as number) ?? 0),
               totalTokensOut: session.totalTokensOut + ((event.payload?.outputTokens as number) ?? 0),
-              totalCostUsd: session.totalCostUsd + ((event.payload?.costUsd as number) ?? 0),
+              // Cost is cumulative per session — take the ledger total, don't re-add it.
+              totalCostUsd: Math.max(session.totalCostUsd, costTracker.ledger.totalForSession(event.agentId)),
               eventCount: session.eventCount + 1,
             });
           }
@@ -1249,10 +1335,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     metricsEngine.process(event);
-    // TODO(2.6): replace with CostResolver
-    if (typeof event.payload?.costUsd === 'number') {
-      metricsEngine.setResolvedCost(event.agentId, event.payload.costUsd, event.payload.costSource === 'transcript-estimated' || event.payload.costUnpriced === true);
-    }
+    applyCost(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
     wsBroadcast(event);
@@ -1452,55 +1535,6 @@ export function activate(context: vscode.ExtensionContext): void {
     // Record heartbeat on any event (agent is clearly alive if sending events)
     heartbeatManager.beat(event.agentId);
 
-    // Track cost events for budget management
-    if (event.payload?.costUsd && typeof event.payload.costUsd === 'number') {
-      const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
-      for (const plan of activePlans) {
-        const isAgentInPlan = plan.tasks.some((t) => t.assignee === event.agentId);
-        if (isAgentInPlan) {
-          const tokens = ((event.payload.inputTokens as number) ?? 0) + ((event.payload.outputTokens as number) ?? 0);
-          budgetManager.recordCost(plan.id, event.agentId, event.payload.costUsd as number, tokens);
-          void context.globalState.update('budgetState', budgetManager.serialize());
-
-          // Check budget and halt (hard mode) or warn.
-          if (budgetManager.shouldHalt(plan.id)) {
-            // Hard enforcement + over budget — actually stop the offending agent,
-            // using the same mechanism as eh_stop_agent (spawnRegistry.stop).
-            void spawnRegistry.stop(event.agentId).catch(() => { /* already gone */ });
-            // Notify the webview that this agent was paused for budget reasons.
-            webviewRef.current?.postMessage({
-              type: 'agent-paused',
-              agentId: event.agentId,
-              reason: 'budget',
-            });
-            // Keep the existing budget-exceeded signal for any listeners relying on it.
-            webviewRef.current?.postMessage({
-              type: 'budget-exceeded',
-              planId: plan.id,
-              agentId: event.agentId,
-            });
-            void vscode.window.showWarningMessage(
-              `Agent ${event.agentName} stopped — plan budget exceeded.`,
-            );
-          } else if (budgetManager.isExceeded(plan.id)) {
-            // Warn mode (or off): budget is over but we do not force-stop agents.
-            void vscode.window.showWarningMessage(
-              `Budget exceeded for plan "${plan.name}" — consider pausing agents.`,
-            );
-            webviewRef.current?.postMessage({
-              type: 'budget-exceeded',
-              planId: plan.id,
-              agentId: event.agentId,
-            });
-          } else if (budgetManager.isWarning(plan.id)) {
-            const summary = budgetManager.getRemaining(plan.id);
-            void vscode.window.showWarningMessage(
-              `Budget warning for plan "${plan.name}": ${Math.round(summary.percentUsed * 100)}% used ($${summary.spent.toFixed(2)} of $${summary.limit.toFixed(2)}).`,
-            );
-          }
-        }
-      }
-    }
 
     // Parse Copilot transcript on Stop events for richer metrics (tokens, cost)
     if (event.agentType === 'copilot' && event.type === 'agent.idle') {
@@ -1911,6 +1945,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // ── Main universe panel (editor area) ──────────────────────────────────────
   const openUniverse = () => openUniversePanel(
     context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills,
+    () => ({ totalUsd: costTracker.grandTotal(), byAgent: Object.fromEntries(costTracker.ledger.allTotals()) }),
   );
 
   context.subscriptions.push(

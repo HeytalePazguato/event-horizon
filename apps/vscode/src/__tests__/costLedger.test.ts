@@ -86,6 +86,18 @@ describe('CostLedger', () => {
     expect(ledger.totalForAgent('a1')).toBeCloseTo(1.25);
   });
 
+  it('cost survives agent eviction', () => {
+    // Regression for the #4/#5 collision: auto-eviction calls the resolver's
+    // clear() and removes the planet, but the ledger is never told, so the
+    // agent's spend stays in its totals and in allTotals().
+    ledger.record(entry({ agentId: 'evicted', sessionId: 'sx', source: 'otel', costUsd: 3.21 }));
+    ledger.record(entry({ agentId: 'live', sessionId: 'sy', source: 'otel', costUsd: 1 }));
+    expect(ledger.totalForAgent('evicted')).toBeCloseTo(3.21);
+    expect(ledger.allTotals().get('evicted')).toBeCloseTo(3.21);
+    const grand = [...ledger.allTotals().values()].reduce((a, b) => a + b, 0);
+    expect(grand).toBeCloseTo(4.21);
+  });
+
   it('survives reload from the serialized DB', async () => {
     ledger.record(entry({ agentId: 'a1', sessionId: 's1', source: 'statusline', costUsd: 1.5, tokens: { input: 10, output: 5 } }));
     ledger.record(entry({ agentId: 'a1', sessionId: 's1', source: 'otel', costUsd: 1.2 }));
