@@ -31,6 +31,11 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 - **Measuring the database size could drop a pending save.** `getDbSizeBytes()` exported the database through `save()`, which marked it clean, so changes made just before could be skipped by the next save.
 - **An agent's cost no longer disappears when it is removed.** Removing an agent deleted its metrics, so its spend vanished from the overview as soon as it finished.
 
+- **Claude Code hooks work on Windows without Git Bash.** Every hook command used bash syntax (`|| true`, `/dev/null`), and in Windows PowerShell `curl` is a different command, so when Claude Code fell back to PowerShell no Event Horizon hook worked, including the file-lock check. Hooks now match the shell Claude Code will use: on Windows without Git Bash they run PowerShell scripts; with Git Bash, and on macOS and Linux, they keep the fast `curl` commands and the lock check runs with `sh` instead of `bash`. Hooks are rewritten on activation, so adding or removing Git Bash is picked up automatically.
+- **A stalled Event Horizon can no longer hang tool calls.** Hook requests had a connect timeout but no overall timeout, so a server that accepted the connection and never answered held every tool call until Claude Code's own hook timeout. Requests now give up after 3 seconds.
+- **The lock check passes payloads through intact on Debian and Ubuntu.** It piped the payload with `echo`, which under `dash` turns escaped `
+` sequences in the JSON into real line breaks.
+
 ### Security
 - **The auth token is no longer exposed in the process list.** The OpenCode plugin's shutdown path ran `node -e` with the bearer token in its command line, where any local process can read it. That path is gone; the plugin sends its final event with a `keepalive` request instead.
 
