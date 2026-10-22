@@ -39,8 +39,32 @@ const TIER_REPRESENTATIVE_ID: Record<ModelTier, string> = {
   haiku: 'claude-haiku-4-5',
 };
 
-/** Suffixes a real model ID may carry after the base ID: date stamp, alias, context tag. */
-const ID_SUFFIX = /^(-\d{8}|-latest|@[\w.-]+|\[[^\]]*\])*$/;
+/** Longest suffix considered; model ids are short, and this bounds the scan. */
+const MAX_SUFFIX_LENGTH = 64;
+
+/**
+ * True if `suffix` is made only of tokens a real model ID may carry after its
+ * base ID: a date stamp (`-20261001`), `-latest`, a version tag (`@...`) or a
+ * context tag (`[1m]`). Scans token by token in linear time: model ids come
+ * from untrusted payloads, and a single regex with overlapping alternatives
+ * under `*` backtracks exponentially on crafted input.
+ */
+function isIdSuffix(suffix: string): boolean {
+  if (suffix.length > MAX_SUFFIX_LENGTH) return false;
+  let i = 0;
+  while (i < suffix.length) {
+    const rest = suffix.slice(i);
+    const token =
+      /^-\d{8}/.exec(rest)?.[0]
+      ?? /^-latest/.exec(rest)?.[0]
+      ?? /^\[[^\]]*\]/.exec(rest)?.[0]
+      // A version tag runs to the next context tag or the end.
+      ?? (/^@[\w.-]+/.exec(rest.split('[', 1)[0])?.[0]);
+    if (!token) return false;
+    i += token.length;
+  }
+  return true;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,7 +79,7 @@ export function priceForModel(modelId: string): ModelPriceRow | null {
   if (Object.prototype.hasOwnProperty.call(MODEL_PRICES_BY_ID, id)) return MODEL_PRICES_BY_ID[id];
   let best: string | null = null;
   for (const key of Object.keys(MODEL_PRICES_BY_ID)) {
-    if (id.startsWith(key) && ID_SUFFIX.test(id.slice(key.length)) && (!best || key.length > best.length)) {
+    if (id.startsWith(key) && isIdSuffix(id.slice(key.length)) && (!best || key.length > best.length)) {
       best = key;
     }
   }

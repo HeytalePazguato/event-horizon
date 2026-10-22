@@ -2,7 +2,7 @@
 // v2 loads a plain `{ id, setup }` default export; `setup` may return a cleanup
 // function, which v2 calls when the plugin's scope closes (quit, reload).
 // No import of OpenCode's plugin package: the literal shape is all the loader checks.
-import { send, sendFinal, checkLock } from '../shared/transport';
+import { send, sendFinal, checkLock, randomSuffix } from '../shared/transport';
 
 interface Disposable {
   dispose?: () => unknown;
@@ -64,7 +64,7 @@ export default {
     // multiple OpenCode instances in the same project get separate planets.
     const project = ctx?.location?.project;
     const base = project?.id ? String(project.id) : 'opencode';
-    const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const uid = Date.now().toString(36) + randomSuffix();
     const sessionId = base + '-' + uid;
 
     const cwd = ctx?.location?.directory

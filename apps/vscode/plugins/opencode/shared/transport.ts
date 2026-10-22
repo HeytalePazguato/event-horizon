@@ -69,3 +69,14 @@ export async function releaseLock(filePath: string, agentId: string): Promise<vo
     // ignore
   }
 }
+
+/**
+ * Six random hex characters for a session id. Uniqueness only, not a secret,
+ * but the runtime's crypto generator is the right primitive (Node and Bun both
+ * provide it); the clock is a fallback for an environment without it.
+ */
+export function randomSuffix(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  const uuid = c?.randomUUID?.();
+  return uuid ? uuid.replace(/-/g, '').slice(0, 6) : (Date.now() % 1_000_000).toString(36);
+}

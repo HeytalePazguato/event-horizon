@@ -113,3 +113,23 @@ describe('costOfTokens', () => {
     expect(cost).toBeCloseTo(5 + 25 + 0.5 + 6.25);
   });
 });
+
+describe('model id suffix matching', () => {
+  it('accepts date, alias, version and context suffixes', () => {
+    for (const id of ['claude-opus-5-20261001', 'claude-opus-5-latest', 'claude-opus-5@20261001', 'claude-opus-5[1m]', 'claude-opus-5-20261001[1m]', 'claude-opus-5@v2[1m]']) {
+      expect(priceForModel(id), id).toMatchObject({ input: 5, output: 25 });
+    }
+  });
+
+  it('rejects ids that only share a prefix', () => {
+    expect(priceForModel('claude-opus-5x')).toBeNull();
+    expect(priceForModel('claude-opus-5-garbage')).toBeNull();
+  });
+
+  it('stays fast on crafted input that made the old pattern backtrack exponentially', () => {
+    const evil = 'claude-opus-5@' + '--latest@'.repeat(40) + '!';
+    const started = Date.now();
+    expect(priceForModel(evil)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(50);
+  });
+});
