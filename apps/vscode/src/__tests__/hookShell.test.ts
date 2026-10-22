@@ -16,6 +16,16 @@ const { expectedCommandFor, isCurrentEhHook, isEhHook, setHookShell } = __hookTe
 
 afterAll(() => setHookShell(null));
 
+describe('registered hook events', () => {
+  it('includes the events adopted in 3.3.0', () => {
+    const events = __hookTestables.hookEvents as readonly string[];
+    for (const e of ['StopFailure', 'PostCompact', 'PermissionDenied', 'PostModelSwitch']) expect(events).toContain(e);
+    expect(events).toHaveLength(22);
+    // High-volume or consumer-less events stay out.
+    for (const e of ['MessageDisplay', 'FileChanged', 'Elicitation', 'ElicitationResult']) expect(events).not.toContain(e);
+  });
+});
+
 describe('detectHookShell', () => {
   it('uses PowerShell only on Windows without Git Bash', () => {
     expect(detectHookShell('win32', () => null)).toBe('powershell');

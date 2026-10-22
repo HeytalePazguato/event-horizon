@@ -57,6 +57,14 @@ const EH_HOOK_EVENTS = [
   'PreCompact',
   'WorktreeCreate',
   'WorktreeRemove',
+  // Turn ended on an API error; otherwise indistinguishable from a normal Stop.
+  'StopFailure',
+  // Outcome of the compaction PreCompact announces (tokens before/after).
+  'PostCompact',
+  // Auto-mode classifier refused a tool: the agent is blocked, not idle.
+  'PermissionDenied',
+  // Live model id without waiting for a transcript entry.
+  'PostModelSwitch',
 ] as const;
 
 function buildEhUrl(): string {
@@ -525,4 +533,5 @@ export const __hookTestables = {
   isCurrentEhHook,
   isEhHook,
   setHookShell: (shell: HookShell | null): void => { hookShellOverride = shell; },
+  hookEvents: EH_HOOK_EVENTS,
 };
