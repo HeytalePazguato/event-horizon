@@ -41,6 +41,9 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Security
 - **The auth token is no longer exposed in the process list.** The OpenCode plugin's shutdown path ran `node -e` with the bearer token in its command line, where any local process can read it. That path is gone; the plugin sends its final event with a `keepalive` request instead.
 
+### Code quality
+- **The extension type-checks cleanly again.** `projectGraph/resolution.ts` imported its graph types from a `./types.js` that has not existed since 3.0.1. The build strips type-only imports, so nothing broke at runtime, but `tsc` rejected it.
+
 ### Removed
 - **`eventHorizon.autoEvictLostAgents`.** Heartbeat silence alone never removes an agent now; the lifecycle manager above handles finished workers.
 
