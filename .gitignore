@@ -29,3 +29,5 @@ docs/articles/
 # into website/manual/ so it deploys alongside the landing page.
 website/manual/
 .cache/
+# Generated plugin sources (apps/vscode/scripts/build-plugins.mjs)
+apps/vscode/src/generated/

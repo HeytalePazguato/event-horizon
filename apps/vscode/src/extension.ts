@@ -8,10 +8,13 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, setReadInterception, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setMcpPurgeStaleAgents, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
+import { AgentLifecycleManager } from './agentLifecycle';
+import type { DeathSignal } from './agentLifecycle';
+import { applyLifecycleClassification } from './lifecycleSignals';
 import { backfillSessionCost, forgetBackfill } from './openCodeCostBackfill';
 import type { PlanBoard } from './planBoard';
 import { setupCopilotOutputChannel } from './copilotChannel';
@@ -25,6 +28,7 @@ import { TranscriptWatcher } from './transcriptWatcher';
 import { OpenCodeSSEWatcher } from './openCodeSSEWatcher';
 import { ensureBundledSkills } from './bundledSkills';
 import { EventHorizonDB } from './persistence';
+import { KnowledgeStore, migrateLegacyKnowledgeOnce, LEGACY_KNOWLEDGE_KEY, KNOWLEDGE_MIGRATED_FLAG } from './knowledgeStore';
 import { deriveEventCategory } from '@event-horizon/core';
 import { CrossAgentCorrelator } from './crossAgentCorrelator';
 import { EventBridge } from './projectGraph/eventBridge';
@@ -34,6 +38,14 @@ import { extractMarkdown } from './projectGraph/markdownExtractor';
 import { GraphQueryEngine } from './projectGraph/queryEngine';
 import { ProjectGraphLifecycle } from './projectGraph/lifecycle';
 import { FileReadCache } from './fileReadCache';
+import { CostTracker, costSampleFromEvent, type CostSample } from './costTracker';
+import { OtlpCostAccumulator, otlpLogToEvent, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver';
+import { OtlpForwarder } from './otlp/otlpForwarder';
+import { TelemetryStore } from './otlp/telemetryStore';
+import type { StatusLineSnapshot } from './statusLine';
+import { readTelemetryBackup } from './setupTelemetryEnv';
+import { mayCache as mayCacheFile, createGitignoreMatcher } from './secretScanner';
+import { readFileSync, writeFileSync } from 'fs';
 
 const webviewRef: { current: vscode.Webview | null } = { current: null };
 let cachedSkills: SkillInfo[] = [];
@@ -183,6 +195,10 @@ function areAgentsCooperating(cwdA: string, cwdB: string): boolean {
 export function activate(context: vscode.ExtensionContext): void {
   const eventBus = new EventBus();
   const metricsEngine = new MetricsEngine();
+  // Starts in memory; switches to SQLite once the DB opens (see ledger.attach below).
+  const costTracker = new CostTracker();
+  // Separate file and cadence; null when persistence is disabled or it failed to open.
+  let telemetryStore: TelemetryStore | null = null;
   const agentStateManager = new AgentStateManager();
   let ratingPromptShown = context.globalState.get<boolean>('ratingPromptShown') ?? false;
 
@@ -191,7 +207,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Shared file-read cache (dedup layer consumed by McpServer + ContextCurator).
   // Created before the MCP server so its deps can reference this single instance.
-  const fileReadCache = new FileReadCache();
+  // Secret gate: .env / key files / gitignored paths / token-looking content are counted but never retained.
+  // .gitignore is read once at activation (no watcher yet; edits apply after reload).
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  let isIgnored: (p: string) => boolean = () => false;
+  if (wsRoot) {
+    try {
+      isIgnored = createGitignoreMatcher(readFileSync(path.join(wsRoot, '.gitignore'), 'utf8'), wsRoot);
+    } catch { /* no .gitignore */ }
+  }
+  const fileReadCache = new FileReadCache((p, c) => mayCacheFile(p, c, { isIgnored }));
   // Let the analyzer report actual cache-backed savings for duplicate reads.
   tokenAnalyzer.setFileReadCache(fileReadCache);
 
@@ -283,12 +308,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const savedModelTiers = context.globalState.get<ReturnType<typeof modelTierManager.serialize>>('modelTierStats');
   if (savedModelTiers) modelTierManager.restore(savedModelTiers);
 
-  // Restore shared knowledge from globalState
-  const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>('sharedKnowledge');
-  if (savedKnowledge) sharedKnowledge.restoreWorkspace(savedKnowledge);
+  // Shared knowledge lives in SQLite once the DB is up (see KnowledgeStore). The
+  // legacy globalState blob is only read before the one-time migration has run, or
+  // as the fallback copy when persistence is disabled/unavailable.
+  const persistenceEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('persistence.enabled', true);
+  const savedKnowledge = context.globalState.get<ReturnType<typeof sharedKnowledge.serializeWorkspace>>(LEGACY_KNOWLEDGE_KEY);
+  const knowledgeMigrated = context.globalState.get<boolean>(KNOWLEDGE_MIGRATED_FLAG) ?? false;
+  // While true, knowledge changes are mirrored to globalState (DB disabled, or not yet migrated).
+  let knowledgeUsesGlobalState = !persistenceEnabled || !knowledgeMigrated;
+  if (savedKnowledge && knowledgeUsesGlobalState) sharedKnowledge.restoreWorkspace(savedKnowledge);
+  let scheduleKnowledgeDbSave: (() => void) | null = null;
 
   // ── Initialize SQLite persistence ──
-  const persistenceEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('persistence.enabled', true);
   if (persistenceEnabled) {
     const dbDir = context.globalStorageUri.fsPath;
     const dbPath = path.join(dbDir, 'event-horizon.db');
@@ -301,6 +332,8 @@ export function activate(context: vscode.ExtensionContext): void {
           dbData = await vscode.workspace.fs.readFile(vscode.Uri.file(dbPath));
         } catch { /* no existing DB — will create new */ }
         ehDatabase = await EventHorizonDB.create(dbData);
+        costTracker.ledger.attach(ehDatabase);
+        broadcastCostTotals();
 
         // Prune old events on startup
         const retentionDays = vscode.workspace.getConfiguration('eventHorizon').get<number>('persistence.retentionDays', 30);
@@ -319,6 +352,52 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         }, 60_000);
         context.subscriptions.push({ dispose: () => clearInterval(dbSaveInterval) });
+
+        // Telemetry gets its own file so its volume never slows main-DB saves
+        // (sql.js rewrites the whole file on every save). Lowest priority: drained
+        // every 5 s, saved every 2 min, and a failure here never affects the rest.
+        const telemetryPath = path.join(dbDir, 'telemetry.sqlite');
+        try {
+          let telemetryData: Uint8Array | undefined;
+          try { telemetryData = await vscode.workspace.fs.readFile(vscode.Uri.file(telemetryPath)); } catch { /* none yet */ }
+          const store = await TelemetryStore.create(telemetryData);
+          const retentionDays = vscode.workspace.getConfiguration('eventHorizon').get<number>('telemetry.retentionDays', 7);
+          store.prune(retentionDays * 24 * 60 * 60 * 1000);
+          telemetryStore = store;
+          const drainTimer = setInterval(() => { try { store.flush(); } catch { /* drop this batch */ } }, 5_000);
+          const saveTimer = setInterval(() => {
+            if (!store.isDirty()) return;
+            try { void vscode.workspace.fs.writeFile(vscode.Uri.file(telemetryPath), store.save()); } catch { /* retry next interval */ }
+          }, 120_000);
+          context.subscriptions.push({ dispose: () => {
+            clearInterval(drainTimer);
+            clearInterval(saveTimer);
+            try { store.flush(); if (store.isDirty()) writeFileSync(telemetryPath, store.save()); store.close(); } catch { /* best effort */ }
+            telemetryStore = null;
+          } });
+        } catch { telemetryStore = null; }
+
+        // SQLite becomes the system of record for shared knowledge: import the legacy
+        // globalState blob once, then hydrate the in-memory read cache from the DB.
+        const knowledgeStore = new KnowledgeStore(ehDatabase);
+        const importedKnowledge = migrateLegacyKnowledgeOnce(knowledgeStore, context.globalState);
+        if (importedKnowledge) console.log(`[Event Horizon] Migrated ${importedKnowledge} shared knowledge entries to SQLite`);
+        knowledgeUsesGlobalState = false;
+        // Knowledge writes are rare and must survive a reload, so save shortly after
+        // each change instead of waiting for the 60s interval.
+        let knowledgeSaveTimer: ReturnType<typeof setTimeout> | null = null;
+        scheduleKnowledgeDbSave = () => {
+          if (knowledgeSaveTimer) return;
+          knowledgeSaveTimer = setTimeout(() => {
+            knowledgeSaveTimer = null;
+            if (!ehDatabase || !ehDatabase.isDirty()) return;
+            try {
+              void vscode.workspace.fs.writeFile(vscode.Uri.file(dbPath), ehDatabase.save());
+            } catch { /* save failed — the 60s interval will retry */ }
+          }, 1_000);
+        };
+        context.subscriptions.push({ dispose: () => { if (knowledgeSaveTimer) clearTimeout(knowledgeSaveTimer); } });
+        sharedKnowledge.attachStore(knowledgeStore);
 
         // Wire event search engine and project graph lifecycle into MCP server now that DB is ready
         const eventSearchEngine = new EventSearchEngine(ehDatabase);
@@ -397,6 +476,13 @@ export function activate(context: vscode.ExtensionContext): void {
         console.log(`[Event Horizon] Persistence initialized at ${dbPath} (${ehDatabase.getEventCount()} stored events)`);
       } catch (err) {
         console.error('[Event Horizon] Failed to initialize persistence:', err);
+        if (!sharedKnowledge.hasStore()) {
+          // No SQLite — fall back to globalState, keeping anything written since startup.
+          knowledgeUsesGlobalState = true;
+          if (savedKnowledge && knowledgeMigrated) {
+            sharedKnowledge.restoreWorkspace([...savedKnowledge, ...sharedKnowledge.serializeWorkspace()]);
+          }
+        }
       }
     })();
   }
@@ -507,9 +593,14 @@ export function activate(context: vscode.ExtensionContext): void {
     webviewRef.current.postMessage({ type: 'knowledge-update', workspace: entries.workspace, plan: entries.plan });
   }
 
-  // Persist shared knowledge on change
+  // Persist shared knowledge on change. SharedKnowledgeStore already wrote through to
+  // SQLite when attached; globalState is only the fallback copy.
   sharedKnowledge.onChange(() => {
-    void context.globalState.update('sharedKnowledge', sharedKnowledge.serializeWorkspace());
+    if (knowledgeUsesGlobalState) {
+      void context.globalState.update(LEGACY_KNOWLEDGE_KEY, sharedKnowledge.serializeWorkspace());
+    } else {
+      scheduleKnowledgeDbSave?.();
+    }
     broadcastKnowledge();
   });
 
@@ -737,22 +828,73 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // When a spawned agent exits (process or terminal), inject a synthetic
-  // agent.terminate event so AgentStateManager, SQLite, and the webview all
-  // learn the agent is gone — preventing stale-agent persistence.
+  // ── Agent lifecycle ─────────────────────────────────────────────────────────
+  // The lifecycle manager is the single authority on agent death. Every death
+  // signal (process exit, SessionEnd, OpenCode session.deleted, heartbeat loss,
+  // manual purge) goes through registerSignal(); its onTerminate below is the
+  // only place an `agent.terminate` event is created.
+  const lifecycleManager = new AgentLifecycleManager({
+    hasActiveTask: (agentId) => planBoardManager.getAllPlans().some((plan) =>
+      plan.tasks.some((t) => t.assignee === agentId && (t.status === 'claimed' || t.status === 'in_progress'))),
+    heartbeat: heartbeatManager,
+    knownAgentIds: () => agentStateManager.getAllAgents().map((a) => a.id),
+    isProcessAlive: (agentId) => spawnRegistry.isProcessAlive(agentId),
+    isSpawnedNonInteractive: (agentId) => spawnRegistry.isSpawnedNonInteractive(agentId),
+  });
+  // Explicit purges (MCP tool and command) include stale-but-not-yet-lost agents.
+  const purgeStaleAgents = (): string[] => lifecycleManager.purgeStale({ includeStale: true });
+  setMcpPurgeStaleAgents(purgeStaleAgents);
+
+  /**
+   * What triggered a pending termination, so the emitted event keeps the
+   * original name/type/payload (e.g. a SessionEnd's final token counts).
+   * Set just before a registerSignal() call and cleared right after — immediate
+   * signals terminate synchronously.
+   */
+  const terminateOrigins = new Map<string, Pick<AgentEvent, 'agentName' | 'agentType'> & Partial<Pick<AgentEvent, 'timestamp' | 'payload'>>>();
+
+  function signalWithOrigin(
+    agentId: string,
+    signal: DeathSignal,
+    origin: Pick<AgentEvent, 'agentName' | 'agentType'> & Partial<Pick<AgentEvent, 'timestamp' | 'payload'>>,
+  ): void {
+    terminateOrigins.set(agentId, origin);
+    try {
+      lifecycleManager.registerSignal(agentId, signal);
+    } finally {
+      terminateOrigins.delete(agentId);
+    }
+  }
+
+  lifecycleManager.onTerminate((agentId, reason) => {
+    costTracker.evict(agentId);
+    lastCostTokens.delete(agentId);
+    const origin = terminateOrigins.get(agentId);
+    const agent = agentStateManager.getAgent(agentId);
+    const payload: Record<string, unknown> = origin?.payload ? { ...origin.payload } : { synthetic: true };
+    if (payload.reason === undefined) payload.reason = reason;
+    payload.lifecycleReason = reason;
+    payload.lifecycle = true;
+    onAgentEvent({
+      id: `lifecycle-terminate-${agentId}-${Date.now()}`,
+      agentId,
+      agentName: origin?.agentName ?? agent?.name ?? agentId,
+      agentType: (origin?.agentType ?? agent?.type ?? 'unknown') as import('@event-horizon/core').AgentType,
+      type: 'agent.terminate',
+      timestamp: origin?.timestamp ?? Date.now(),
+      payload,
+    });
+    cleanupTerminatedAgent(agentId);
+  });
+
+  // A spawned agent's process exiting or its terminal closing is a hard death
+  // signal — AgentStateManager, SQLite, and the webview learn via onTerminate.
   spawnRegistry.onAgentExit((agentId, info, reason) => {
     const agent = agentStateManager.getAgent(agentId);
-    const syntheticEvent: AgentEvent = {
-      id: `synth-terminate-${agentId}-${Date.now()}`,
-      agentId,
+    signalWithOrigin(agentId, reason, {
       agentName: agent?.name ?? info.terminalName,
       agentType: (agent?.type ?? info.type) as import('@event-horizon/core').AgentType,
-      type: 'agent.terminate',
-      timestamp: Date.now(),
-      payload: { reason, synthetic: true },
-    };
-    onAgentEvent(syntheticEvent);
-    heartbeatManager.remove(agentId);
+    });
   });
 
   // Rebroadcast role map whenever the spawn registry changes (spawn/stop)
@@ -829,37 +971,12 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
-    // Auto-evict agents whose heartbeat is 'lost' (>5 min silence).
-    //
-    // OFF by default. Silence is not evidence that an agent is gone: a session
-    // sitting idle sends nothing, so this removed live agents from the universe
-    // after five quiet minutes — the regression where an idle Claude session
-    // simply vanished. It also contradicts the rule further down that planets
-    // are only removed by an explicit agent.terminate.
-    //
-    // Real deaths are still handled: SessionEnd emits agent.terminate, spawned
-    // agents report process exit, and eventHorizon.purgeStaleAgents /
-    // eh_purge_stale_agents clean up on demand. Turn this on only if you would
-    // rather lose an idle agent than keep a dead one on screen.
-    const autoEvictLost = vscode.workspace.getConfiguration('eventHorizon')
-      .get<boolean>('autoEvictLostAgents', false);
-    for (const beat of autoEvictLost ? allBeats : []) {
-      if (beat.status !== 'lost') continue;
-      const agent = agentStateManager.getAgent(beat.agentId);
-      if (!agent) continue;
-      if (spawnRegistry.getSpawnedAgent(beat.agentId)) continue; // process still alive
-
-      const syntheticEvent: AgentEvent = {
-        id: `synth-heartbeat-${beat.agentId}-${Date.now()}`,
-        agentId: beat.agentId,
-        agentName: agent.name,
-        agentType: agent.type as import('@event-horizon/core').AgentType,
-        type: 'agent.terminate',
-        timestamp: Date.now(),
-        payload: { reason: 'heartbeat-lost', synthetic: true },
-      };
-      onAgentEvent(syntheticEvent);
-      heartbeatManager.remove(beat.agentId);
+    // A 'lost' heartbeat (>5 min silence) is reported to the lifecycle manager,
+    // never acted on here. Silence is not evidence an agent is gone — an idle
+    // session sends nothing — so the signal only makes the agent a purge
+    // candidate. Re-signalling every tick is idempotent.
+    for (const beat of allBeats) {
+      if (beat.status === 'lost') lifecycleManager.registerSignal(beat.agentId, 'heartbeat-lost');
     }
 
     // Forward heartbeat statuses to webview
@@ -967,8 +1084,97 @@ export function activate(context: vscode.ExtensionContext): void {
   // a DIFFERENT file, release the previous lock automatically.
   const lastLockedFileByAgent = new Map<string, string>();
 
+  /**
+   * Charge a cost change to every active plan the agent works in. Sources report
+   * cumulative totals, so this records the delta from CostTracker, never the raw
+   * payload value (which re-added the whole session cost on every event).
+   */
+  function recordBudget(agentId: string, agentName: string, deltaUsd: number, deltaTokens: number): void {
+      const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
+      for (const plan of activePlans) {
+        const isAgentInPlan = plan.tasks.some((t) => t.assignee === agentId);
+        if (isAgentInPlan) {
+          budgetManager.recordCost(plan.id, agentId, deltaUsd, deltaTokens);
+          void context.globalState.update('budgetState', budgetManager.serialize());
+
+          // Check budget and halt (hard mode) or warn.
+          if (budgetManager.shouldHalt(plan.id)) {
+            // Hard enforcement + over budget — actually stop the offending agent,
+            // using the same mechanism as eh_stop_agent (spawnRegistry.stop).
+            void spawnRegistry.stop(agentId).catch(() => { /* already gone */ });
+            // Notify the webview that this agent was paused for budget reasons.
+            webviewRef.current?.postMessage({
+              type: 'agent-paused',
+              agentId: agentId,
+              reason: 'budget',
+            });
+            // Keep the existing budget-exceeded signal for any listeners relying on it.
+            webviewRef.current?.postMessage({
+              type: 'budget-exceeded',
+              planId: plan.id,
+              agentId: agentId,
+            });
+            void vscode.window.showWarningMessage(
+              `Agent ${agentName} stopped — plan budget exceeded.`,
+            );
+          } else if (budgetManager.isExceeded(plan.id)) {
+            // Warn mode (or off): budget is over but we do not force-stop agents.
+            void vscode.window.showWarningMessage(
+              `Budget exceeded for plan "${plan.name}" — consider pausing agents.`,
+            );
+            webviewRef.current?.postMessage({
+              type: 'budget-exceeded',
+              planId: plan.id,
+              agentId: agentId,
+            });
+          } else if (budgetManager.isWarning(plan.id)) {
+            const summary = budgetManager.getRemaining(plan.id);
+            void vscode.window.showWarningMessage(
+              `Budget warning for plan "${plan.name}": ${Math.round(summary.percentUsed * 100)}% used ($${summary.spent.toFixed(2)} of $${summary.limit.toFixed(2)}).`,
+            );
+          }
+        }
+      }
+  }
+
+  /** Last cumulative token count seen per agent, for budget token deltas. */
+  const lastCostTokens = new Map<string, number>();
+
+  function broadcastCostTotals(): void {
+    webviewRef.current?.postMessage({
+      type: 'cost-totals',
+      totalUsd: costTracker.grandTotal(),
+      byAgent: Object.fromEntries(costTracker.ledger.allTotals()),
+    });
+  }
+
+  /**
+   * The single path for cost: resolve by source precedence, persist to the ledger,
+   * show the agent total, and charge only the change to plan budgets.
+   */
+  function applyCost(event: AgentEvent): void {
+    const sample = costSampleFromEvent(event);
+    if (sample) applyCostSample(sample, event.agentName);
+  }
+
+  /** Same as applyCost, for producers that report cost without an AgentEvent (OTLP, statusLine). */
+  function applyCostSample(sample: CostSample, agentName: string): void {
+    const agentId = sample.agentId;
+    const update = costTracker.record(sample);
+    if (!update) return;
+    metricsEngine.setResolvedCost(agentId, update.totalUsd, update.estimated);
+    // The webview's per-agent cost comes only from here, never from raw payloads.
+    webviewRef.current?.postMessage({ type: 'agent-cost', agentId, costUsd: update.totalUsd, estimated: update.estimated });
+    const tokens = (sample.tokens?.input ?? 0) + (sample.tokens?.output ?? 0);
+    const deltaTokens = Math.max(0, tokens - (lastCostTokens.get(agentId) ?? 0));
+    if (tokens > 0) lastCostTokens.set(agentId, Math.max(tokens, lastCostTokens.get(agentId) ?? 0));
+    if (update.deltaUsd !== 0) recordBudget(agentId, agentName, update.deltaUsd, deltaTokens);
+    broadcastCostTotals();
+  }
+
   /** Events from transcript watcher bypass hooks — route directly to webview. */
   function onTranscriptEvent(event: AgentEvent): void {
+    applyLifecycleClassification(lifecycleManager, event);
     // Feed transcript events to TokenAnalyzer — they carry the real per-turn
     // token deltas, so without this the Costs tab stays empty forever for
     // Claude Code sessions (hooks alone only report tokens on Stop).
@@ -981,6 +1187,7 @@ export function activate(context: vscode.ExtensionContext): void {
       } catch { /* persistence failure should never block event processing */ }
     }
     metricsEngine.process(event);
+    applyCost(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
     updateStatusBar();
@@ -1013,7 +1220,35 @@ export function activate(context: vscode.ExtensionContext): void {
   const subagentToParent = new Map<string, string>();
   let lastRunSubagentParent: string | null = null;
 
+  /**
+   * Death signal for an `agent.terminate` that arrived from outside the
+   * lifecycle manager (connector SessionEnd / session.deleted, MCP purge).
+   */
+  function terminateSignalFor(event: AgentEvent): DeathSignal {
+    const reason = event.payload?.reason;
+    if (reason === 'mcp-purge' || reason === 'manual-purge') return 'user-purge';
+    if (event.agentType === 'opencode') return 'opencode-session-deleted';
+    return 'session-end';
+  }
+
   function onAgentEvent(event: AgentEvent): void {
+    // ── Lifecycle routing ──
+    // An incoming agent.terminate is only a signal; the lifecycle manager's
+    // onTerminate re-enters here with the one real terminate event.
+    if (event.type === 'agent.terminate' && !event.payload?.lifecycle) {
+      signalWithOrigin(event.agentId, terminateSignalFor(event), event);
+      return;
+    }
+    if (event.type === 'agent.spawn') {
+      // The OpenCode plugin re-sends session.created every 30s. For an agent the
+      // lifecycle manager already retired, that must not resurrect the planet.
+      if (event.payload?.heartbeat === true && !lifecycleManager.isAlive(event.agentId)) return;
+      // A resumed session keeps its id — clear any earlier termination.
+      lifecycleManager.revive(event.agentId);
+    } else if (event.type !== 'agent.terminate') {
+      applyLifecycleClassification(lifecycleManager, event);
+    }
+
     // Feed event to TokenAnalyzer for cost insights
     tokenAnalyzer.onEvent(event);
 
@@ -1050,7 +1285,8 @@ export function activate(context: vscode.ExtensionContext): void {
               sessionEnd: event.type === 'agent.terminate' ? event.timestamp : undefined,
               totalTokensIn: session.totalTokensIn + ((event.payload?.inputTokens as number) ?? 0),
               totalTokensOut: session.totalTokensOut + ((event.payload?.outputTokens as number) ?? 0),
-              totalCostUsd: session.totalCostUsd + ((event.payload?.costUsd as number) ?? 0),
+              // Cost is cumulative per session — take the ledger total, don't re-add it.
+              totalCostUsd: Math.max(session.totalCostUsd, costTracker.ledger.totalForSession(event.agentId)),
               eventCount: session.eventCount + 1,
             });
           }
@@ -1137,6 +1373,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     metricsEngine.process(event);
+    applyCost(event);
     agentStateManager.apply(event);
     broadcastEvent(event);
     wsBroadcast(event);
@@ -1336,55 +1573,6 @@ export function activate(context: vscode.ExtensionContext): void {
     // Record heartbeat on any event (agent is clearly alive if sending events)
     heartbeatManager.beat(event.agentId);
 
-    // Track cost events for budget management
-    if (event.payload?.costUsd && typeof event.payload.costUsd === 'number') {
-      const activePlans = planBoardManager.getAllPlans().filter((p) => p.status === 'active');
-      for (const plan of activePlans) {
-        const isAgentInPlan = plan.tasks.some((t) => t.assignee === event.agentId);
-        if (isAgentInPlan) {
-          const tokens = ((event.payload.inputTokens as number) ?? 0) + ((event.payload.outputTokens as number) ?? 0);
-          budgetManager.recordCost(plan.id, event.agentId, event.payload.costUsd as number, tokens);
-          void context.globalState.update('budgetState', budgetManager.serialize());
-
-          // Check budget and halt (hard mode) or warn.
-          if (budgetManager.shouldHalt(plan.id)) {
-            // Hard enforcement + over budget — actually stop the offending agent,
-            // using the same mechanism as eh_stop_agent (spawnRegistry.stop).
-            void spawnRegistry.stop(event.agentId).catch(() => { /* already gone */ });
-            // Notify the webview that this agent was paused for budget reasons.
-            webviewRef.current?.postMessage({
-              type: 'agent-paused',
-              agentId: event.agentId,
-              reason: 'budget',
-            });
-            // Keep the existing budget-exceeded signal for any listeners relying on it.
-            webviewRef.current?.postMessage({
-              type: 'budget-exceeded',
-              planId: plan.id,
-              agentId: event.agentId,
-            });
-            void vscode.window.showWarningMessage(
-              `Agent ${event.agentName} stopped — plan budget exceeded.`,
-            );
-          } else if (budgetManager.isExceeded(plan.id)) {
-            // Warn mode (or off): budget is over but we do not force-stop agents.
-            void vscode.window.showWarningMessage(
-              `Budget exceeded for plan "${plan.name}" — consider pausing agents.`,
-            );
-            webviewRef.current?.postMessage({
-              type: 'budget-exceeded',
-              planId: plan.id,
-              agentId: event.agentId,
-            });
-          } else if (budgetManager.isWarning(plan.id)) {
-            const summary = budgetManager.getRemaining(plan.id);
-            void vscode.window.showWarningMessage(
-              `Budget warning for plan "${plan.name}": ${Math.round(summary.percentUsed * 100)}% used ($${summary.spent.toFixed(2)} of $${summary.limit.toFixed(2)}).`,
-            );
-          }
-        }
-      }
-    }
 
     // Parse Copilot transcript on Stop events for richer metrics (tokens, cost)
     if (event.agentType === 'copilot' && event.type === 'agent.idle') {
@@ -1480,39 +1668,45 @@ export function activate(context: vscode.ExtensionContext): void {
     //   }
     // }
 
-    // Clean up transcript watcher when agent terminates
-    if (event.type === 'agent.terminate') {
-      const watcher = transcriptWatchers.get(event.agentId);
-      if (watcher) {
-        watcher.destroy();
-        transcriptWatchers.delete(event.agentId);
-      }
-
-      // Release any file locks held by the terminated agent
-      releaseAgentLocks(event.agentId);
-
-      // Allow a re-backfill if this session id reconnects later.
-      forgetBackfill(event.agentId);
-
-      // Forget the plan notice we sent this session. A replacement session gets
-      // a fresh ID and should be told about active plans once, on its own.
-      planNoticeSignatures.delete(event.agentId);
-
-      // Addresses are deliberately NOT released here. An agent that idles for
-      // a day, or that a watchdog wrongly declares stale, must still be
-      // reachable at the address a peer was given. A stopped agent's handle is
-      // taken over by its replacement at claim time, which needs no cleanup.
-
-      // Also clean up OpenCode SSE watcher
-      const sseWatcher = openCodeSSEWatchers.get(event.agentId);
-      if (sseWatcher) {
-        sseWatcher.destroy();
-        openCodeSSEWatchers.delete(event.agentId);
-      }
-    }
-
     // Update sidebar badge with active agent count
 
+  }
+
+  /**
+   * Per-agent teardown, run once from lifecycleManager.onTerminate for every
+   * termination path (process exit, SessionEnd, session.deleted, purge).
+   */
+  function cleanupTerminatedAgent(agentId: string): void {
+    const watcher = transcriptWatchers.get(agentId);
+    if (watcher) {
+      watcher.destroy();
+      transcriptWatchers.delete(agentId);
+    }
+
+    // Release any file locks held by the terminated agent
+    releaseAgentLocks(agentId);
+    lastLockedFileByAgent.delete(agentId);
+
+    // Allow a re-backfill if this session id reconnects later.
+    forgetBackfill(agentId);
+
+    // Forget the plan notice we sent this session. A replacement session gets
+    // a fresh ID and should be told about active plans once, on its own.
+    planNoticeSignatures.delete(agentId);
+
+    // Addresses are deliberately NOT released here. An agent that idles for
+    // a day, or that a watchdog wrongly declares stale, must still be
+    // reachable at the address a peer was given. A stopped agent's handle is
+    // taken over by its replacement at claim time, which needs no cleanup.
+
+    // Also clean up OpenCode SSE watcher
+    const sseWatcher = openCodeSSEWatchers.get(agentId);
+    if (sseWatcher) {
+      sseWatcher.destroy();
+      openCodeSSEWatchers.delete(agentId);
+    }
+
+    heartbeatManager.remove(agentId);
   }
 
   const unsubscribeEventBus = eventBus.on(onAgentEvent);
@@ -1536,6 +1730,7 @@ export function activate(context: vscode.ExtensionContext): void {
       };
       eventBus.emit(event);
     },
+    reportSilence: (agentId) => lifecycleManager.registerSignal(agentId, 'heartbeat-lost'),
   });
   // Record activity on every event so the watchdog knows the worker is alive
   const unsubscribeWatchdog = eventBus.on((event) => watchdog.onActivity(event.agentId));
@@ -1580,6 +1775,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const ehConfig = vscode.workspace.getConfiguration('eventHorizon');
   const configuredPort = ehConfig.get<number>('port', 28765);
   setFileLockingEnabled(ehConfig.get<boolean>('fileLockingEnabled', false));
+  setReadInterception(ehConfig.get<boolean>('knowledge.interceptReads', true));
 
   // Set default worktree isolation from config
   spawnRegistry.setDefaultIsolation(ehConfig.get<boolean>('worktreeIsolation', false) ? 'worktree' : 'none');
@@ -1591,6 +1787,9 @@ export function activate(context: vscode.ExtensionContext): void {
         setFileLockingEnabled(
           vscode.workspace.getConfiguration('eventHorizon').get<boolean>('fileLockingEnabled', false),
         );
+      }
+      if (e.affectsConfiguration('eventHorizon.knowledge.interceptReads')) {
+        setReadInterception(vscode.workspace.getConfiguration('eventHorizon').get<boolean>('knowledge.interceptReads', true));
       }
       if (e.affectsConfiguration('eventHorizon.worktreeIsolation')) {
         const enabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('worktreeIsolation', false);
@@ -1615,7 +1814,73 @@ export function activate(context: vscode.ExtensionContext): void {
     setAuthToken(savedToken);
   }
 
-  startEventServer({ onEvent: (event) => eventBus.emit(event) }, configuredPort)
+  // ── OTLP telemetry from Claude Code ───────────────────────────────────────
+  // Exports default to delta temporality; the accumulator turns them into the
+  // cumulative per-session total every cost source reports. It is never
+  // cleared on eviction: a late export would otherwise restart the total at 0.
+  const otlpCost = new OtlpCostAccumulator();
+
+  // Re-exports to the collector the user had before Event Horizon took the OTel
+  // endpoint (recorded in the telemetry env backup). Loaded on first use.
+  const otlpForwarder = new OtlpForwarder(undefined, (message) => { void vscode.window.showWarningMessage(message); });
+  let forwardTargetsLoaded: Promise<void> | null = null;
+  function forwardOtlp(signal: 'metrics' | 'logs', rawBody: string, contentType: string): void {
+    forwardTargetsLoaded ??= readTelemetryBackup().then((b) => otlpForwarder.setTargets(b?.forward)).catch(() => {});
+    void forwardTargetsLoaded.then(() => otlpForwarder.forward(signal, rawBody, contentType));
+  }
+
+  function onOtlpMetrics(samples: OtlpMetricSample[]): void {
+    telemetryStore?.enqueueMetrics(samples);
+    for (const sessionId of otlpCost.ingest(samples)) {
+      const t = otlpCost.sessionTokens(sessionId);
+      applyCostSample({
+        agentId: sessionId,
+        sessionId,
+        source: 'otel',
+        costUsd: otlpCost.sessionCost(sessionId),
+        model: otlpCost.sessionModel(sessionId),
+        tokens: { input: t.input + t.cacheRead + t.cacheCreation, output: t.output, cacheRead: t.cacheRead, cacheCreation: t.cacheCreation },
+        timestamp: Date.now(),
+      }, agentStateManager.getAgent(sessionId)?.name ?? 'Claude Code');
+    }
+  }
+
+  /** Claude Code's own cost and measured cache/context figures, via the statusLine bridge. */
+  function onStatusLine(snapshot: StatusLineSnapshot): void {
+    if (snapshot.costUsd !== undefined) {
+      applyCostSample({
+        agentId: snapshot.sessionId,
+        sessionId: snapshot.sessionId,
+        source: 'statusline',
+        costUsd: snapshot.costUsd,
+        model: snapshot.model,
+        tokens: { input: snapshot.totalInputTokens, output: snapshot.totalOutputTokens },
+        timestamp: Date.now(),
+      }, agentStateManager.getAgent(snapshot.sessionId)?.name ?? 'Claude Code');
+    }
+    tokenAnalyzer.recordMeasuredCache(snapshot.sessionId, {
+      hitRatio: snapshot.cacheHitRatio,
+      missCauses: snapshot.cacheMissCauses,
+      contextUsedPercentage: snapshot.contextUsedPercentage,
+      contextWindowSize: snapshot.contextWindowSize,
+    });
+  }
+
+  function onOtlpLogs(records: OtlpLogRecord[]): void {
+    telemetryStore?.enqueueLogs(records);
+    for (const record of records) {
+      const event = otlpLogToEvent(record);
+      // Telemetry enriches agents the hooks already reported; it never creates one.
+      if (event && agentStateManager.getAgent(event.agentId)) eventBus.emit(event);
+    }
+  }
+
+  startEventServer({
+    onEvent: (event) => eventBus.emit(event),
+    onOtlpMetrics: (samples, rawBody, contentType) => { forwardOtlp('metrics', rawBody, contentType); onOtlpMetrics(samples); },
+    onOtlpLogs: (records, rawBody, contentType) => { forwardOtlp('logs', rawBody, contentType); onOtlpLogs(records); },
+    onStatusLine: (snapshot) => onStatusLine(snapshot),
+  }, configuredPort)
     .then(async (actualPort) => {
       // Persist the auth token (may be restored or newly generated)
       void context.globalState.update('eventServerToken', getAuthToken());
@@ -1788,6 +2053,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // ── Main universe panel (editor area) ──────────────────────────────────────
   const openUniverse = () => openUniversePanel(
     context, webviewRef, agentStateManager, metricsEngine, () => cachedSkills, rescanSkills,
+    () => ({ totalUsd: costTracker.grandTotal(), byAgent: Object.fromEntries(costTracker.ledger.allTotals()) }),
   );
 
   context.subscriptions.push(
@@ -1929,28 +2195,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── Purge stale agents ──────────────────────────────────────────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('eventHorizon.purgeStaleAgents', () => {
-      const agents = agentStateManager.getAllAgents();
-      let purged = 0;
-      for (const agent of agents) {
-        // Skip agents that are still tracked in the spawn registry (process alive)
-        if (spawnRegistry.getSpawnedAgent(agent.id)) continue;
-        const hb = heartbeatManager.getStatus(agent.id);
-        if (hb === 'stale' || hb === 'lost') {
-          const syntheticEvent: AgentEvent = {
-            id: `synth-purge-${agent.id}-${Date.now()}`,
-            agentId: agent.id,
-            agentName: agent.name,
-            agentType: agent.type as import('@event-horizon/core').AgentType,
-            type: 'agent.terminate',
-            timestamp: Date.now(),
-            payload: { reason: 'manual-purge', synthetic: true },
-          };
-          onAgentEvent(syntheticEvent);
-          heartbeatManager.remove(agent.id);
-          purged++;
-        }
+    vscode.commands.registerCommand('eventHorizon.purgeTelemetry', () => {
+      if (!telemetryStore) {
+        void vscode.window.showInformationMessage('Event Horizon: no telemetry is stored (persistence is off or telemetry has not started).');
+        return;
       }
+      telemetryStore.purge();
+      void vscode.window.showInformationMessage('Event Horizon: stored Claude Code telemetry was deleted.');
+    }),
+    vscode.commands.registerCommand('eventHorizon.purgeStaleAgents', () => {
+      const purged = purgeStaleAgents().length;
       if (purged > 0) {
         vscode.window.showInformationMessage(`Event Horizon: purged ${purged} stale agent(s).`);
       } else {
@@ -2068,6 +2322,7 @@ export function activate(context: vscode.ExtensionContext): void {
       unsubscribeEventBus();
       unsubscribeWatchdog();
       watchdog.stop();
+      lifecycleManager.dispose();
       stopEventServer();
       // Clean up all transcript watchers
       for (const w of transcriptWatchers.values()) w.destroy();

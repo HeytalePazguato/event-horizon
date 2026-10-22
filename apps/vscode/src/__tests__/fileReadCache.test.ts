@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { FileReadCache } from '../fileReadCache.js';
+import { mayCache } from '../secretScanner.js';
 
 describe('FileReadCache', () => {
   let cache: FileReadCache;
@@ -128,6 +129,36 @@ describe('FileReadCache', () => {
       const stats = cache.stats();
       expect(stats.files).toBe(2);
       expect(stats.totalTokens).toBe(Math.ceil(8 / 4) + Math.ceil(12 / 4)); // 2 + 3 = 5
+    });
+  });
+
+  describe('secret gate', () => {
+    const gated = () =>
+      new FileReadCache((p, c) => mayCache(p, c));
+
+    it('stores empty content for .env, counts readers, never serves it', () => {
+      const c = gated();
+      c.record('/repo/.env', 'API_KEY=hunter2', 1, 'a', 10);
+      c.record('/repo/.env', 'API_KEY=hunter2', 1, 'b', 11);
+      expect(c.get('/repo/.env')).toBeUndefined();
+      expect(c.has('/repo/.env')).toBe(false);
+      expect(c.getDigest(1000)).toEqual([]);
+      expect(c.stats().dedupHits).toBe(1);
+      expect(c.stats().totalTokens).toBe(0);
+    });
+
+    it('withholds files whose content contains a token', () => {
+      const c = gated();
+      c.record('/repo/a.txt', 'key=sk-ant-abcdefghijklmnop1234', 1, 'a', 1);
+      expect(c.get('/repo/a.txt')).toBeUndefined();
+    });
+
+    it('leaves normal files unaffected', () => {
+      const c = gated();
+      c.record('/repo/.env', 'X=1', 1, 'a', 1);
+      c.record('/repo/a.ts', 'const a = 1;', 1, 'a', 2);
+      expect(c.get('/repo/a.ts')?.content).toBe('const a = 1;');
+      expect(c.getDigest(1000).map((e) => e.path)).toEqual(['/repo/a.ts']);
     });
   });
 });

@@ -42,7 +42,7 @@
  */
 
 import type { ProjectGraphStore } from './store.js';
-import type { GraphNode, GraphEdge } from './types.js';
+import type { GraphNode, GraphEdge } from './index.js';
 
 const GENERIC_NAMES = new Set([
   'init', 'process', 'handle', 'get', 'set', 'value', 'update',

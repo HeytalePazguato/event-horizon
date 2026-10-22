@@ -7,7 +7,7 @@
 import type { FC } from 'react';
 import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentState, AgentMetrics } from '@event-horizon/core';
+import type { AgentState, AgentMetrics, Recommendation } from '@event-horizon/core';
 import { useCommandCenterStore } from './store.js';
 import { AgentSidebar } from './panels/AgentSidebar.js';
 import { OverviewPanel } from './panels/OverviewPanel.js';
@@ -23,8 +23,8 @@ import type { KnowledgeEntry } from './panels/KnowledgePanel.js';
 import { TracesPanel } from './panels/TracesPanel.js';
 import type { TraceSpanView } from './panels/TracesPanel.js';
 import { CostInsightsPanel } from './panels/CostInsightsPanel.js';
-import type { CostInsightsData } from './panels/CostInsightsPanel.js';
-type OpsTab = 'overview' | 'activity' | 'files' | 'skills' | 'plan' | 'roles' | 'knowledge' | 'costs';
+import type { CostInsightsData, RecommendationActionStatus } from './panels/CostInsightsPanel.js';
+export type OpsTab = 'overview' | 'activity' | 'files' | 'skills' | 'plan' | 'roles' | 'knowledge' | 'costs';
 type ActivityView = 'timeline' | 'traces' | 'logs';
 type KnowledgeView = 'entries' | 'graph';
 
@@ -77,9 +77,15 @@ export interface OperationsViewProps {
   traceSpans?: TraceSpanView[];
   traceAggregate?: Record<string, number>;
   costInsights?: CostInsightsData | null;
-  costRecommendations?: string[];
+  costRecommendations?: Recommendation[];
   contextLayers?: Record<string, import('./panels/CostInsightsPanel.js').ContextLayerBreakdown> | null;
-  onAddToSharedKnowledge?: (file: string) => void;
+  /** A Cost panel recommendation was clicked; the host performs its action. */
+  onRecommendationAction?: (recommendation: Recommendation) => void;
+  /** Shared-knowledge keys, so files already added show as added. */
+  knowledgeKeys?: ReadonlySet<string>;
+  recommendationStatus?: Record<string, RecommendationActionStatus>;
+  /** Switch to a tab from outside (e.g. an Open task recommendation). `at` makes repeats re-trigger. */
+  requestedTab?: { tab: OpsTab; at: number } | null;
   /** Trigger a persistence-backed event search (Phase 4.2). */
   onPersistedSearch?: (query: string, opts?: { agentId?: string; type?: string; since?: number }) => void;
   /** Results from the last persisted search — when non-null, replaces live log feed. */
@@ -111,8 +117,11 @@ const OPS_TOOLTIP_STYLE: React.CSSProperties = {
   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)',
 };
 
-export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, heartbeatStatuses = {}, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onAddToSharedKnowledge, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution, projectGraphSection }) => {
+export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metricsMap, agentStates, heartbeatStatuses = {}, plan, plans = [], selectedPlanId, onSelectPlan, orchestratorMap, agentRoleMap, onOpenSkill, onCreateSkill, onOpenMarketplace, onMoveSkill, onDuplicateSkill, roles, roleAssignments, agentProfiles, onAssignRole, onCreateRole, onEditRole, onDeleteRole, knowledgeWorkspace = [], knowledgePlan = [], knowledgePlanName, onKnowledgeAdd, onKnowledgeEdit, onKnowledgeDelete, traceSpans = [], traceAggregate = {}, costInsights = null, costRecommendations = [], contextLayers = null, onRecommendationAction, knowledgeKeys, recommendationStatus, requestedTab = null, onPersistedSearch, persistedSearchResults = null, onClearPersistedSearch, onViewExecution, taskExecution = null, onCloseExecution, projectGraphSection }) => {
   const [activeTab, setActiveTab] = useState<OpsTab>('overview');
+  useEffect(() => {
+    if (requestedTab) setActiveTab(requestedTab.tab);
+  }, [requestedTab]);
   const [activityView, setActivityView] = useState<ActivityView>('timeline');
   const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>('entries');
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -299,7 +308,7 @@ export const OperationsView: FC<OperationsViewProps> = ({ agents, agentMap, metr
               </div>
             )}
             {activeTab === 'costs' && (
-              <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} contextLayers={contextLayers} onAddToSharedKnowledge={onAddToSharedKnowledge} />
+              <CostInsightsPanel insights={costInsights} recommendations={costRecommendations} contextLayers={contextLayers} onRecommendationAction={onRecommendationAction} knowledgeKeys={knowledgeKeys} actionStatus={recommendationStatus} />
             )}
             {activeTab === 'knowledge' && (
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>

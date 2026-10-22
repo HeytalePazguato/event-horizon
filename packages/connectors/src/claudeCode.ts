@@ -32,6 +32,7 @@ const CLAUDE_HOOK_TO_EVENT: Record<string, AgentEventType> = {
   WorktreeRemove:      'message.receive', // worktree removed (session exit / subagent done)
   Elicitation:         'agent.waiting',   // MCP server requests user input
   ElicitationResult:   'message.receive', // user responded to MCP elicitation
+  PostModelSwitch:     'message.receive', // session model changed
 };
 
 function nextId(): string {
@@ -86,6 +87,8 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
   if (p.taskId) safePayload.taskId = String(p.taskId).slice(0, 128);
   if (isSubagent) safePayload.isSubagent = true;
   if (isToolFailure) safePayload.isToolFailure = true;
+  // Turn-end hint for the extension host's lifecycle manager (never retires interactive sessions).
+  if (hookEvent === 'TaskCompleted') safePayload.lifecycleSignal = 'work-complete';
   if (waitingSource) safePayload.waitingSource = waitingSource;
   // Capture working directory for workspace-aware cooperation detection
   if (p.cwd) safePayload.cwd = String(p.cwd).slice(0, 512);
@@ -201,8 +204,29 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     if (typeof taskId === 'string') safePayload.taskId = taskId.slice(0, 128);
   }
 
+  if (hookEvent === 'PostModelSwitch') {
+    safePayload.hookType = 'model_switch';
+    const from = p.from_model ?? nested?.from_model;
+    if (typeof from === 'string') safePayload.previousModelName = from.slice(0, 128);
+  }
+
   // Capture MCP servers from SessionStart payload if present
   if (hookEvent === 'SessionStart') {
+    // Resume diagnostics Claude Code reports at session start.
+    const num = (k: string): number | undefined => {
+      const v = p[k] ?? nested?.[k];
+      return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    };
+    const contextTokens = num('context_tokens');
+    if (contextTokens !== undefined) safePayload.contextTokens = contextTokens;
+    const cacheWrite = num('estimated_cache_write_usd');
+    if (cacheWrite !== undefined) safePayload.estimatedCacheWriteUsd = cacheWrite;
+    const sinceLast = num('seconds_since_last_response');
+    if (sinceLast !== undefined) safePayload.secondsSinceLastResponse = sinceLast;
+    const expired = p.prompt_cache_likely_expired ?? nested?.prompt_cache_likely_expired;
+    if (typeof expired === 'boolean') safePayload.promptCacheLikelyExpired = expired;
+    const source = p.source ?? nested?.source;
+    if (typeof source === 'string') safePayload.startSource = source.slice(0, 32);
     const mcpServers = p.mcp_servers ?? nested?.mcp_servers;
     if (Array.isArray(mcpServers)) {
       safePayload.mcpServers = mcpServers.slice(0, 20).map((srv: unknown) => {
@@ -217,8 +241,8 @@ export function mapClaudeHookToEvent(payload: unknown): AgentEvent | null {
     }
   }
 
-  // Capture model name if present in payload (any hook)
-  const model = p.model ?? nested?.model;
+  // Capture model name if present in payload (any hook); PostModelSwitch reports it as to_model.
+  const model = p.model ?? nested?.model ?? p.to_model ?? nested?.to_model;
   if (typeof model === 'string') safePayload.modelName = model.slice(0, 128);
 
   return {

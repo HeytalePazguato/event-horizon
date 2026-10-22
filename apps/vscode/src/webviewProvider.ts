@@ -15,6 +15,9 @@ import type { SkillInfo } from './skillScanner.js';
 import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphLifecycle, onProjectGraphLifecycleReady } from './eventServer.js';
 import { getDatabase, resetBroadcastHashes } from './extension.js';
 import { GraphQueryEngine } from './projectGraph/queryEngine.js';
+import { isRecommendationAction } from '@event-horizon/core';
+import { dispatchRecommendationAction } from './recommendationActions.js';
+import { buildFileDigest } from './knowledgeDigest.js';
 import type { GraphNodeType, GraphTag } from './projectGraph/index.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
@@ -285,6 +288,9 @@ async function writeVscodeConfig(msg: {
   }
 }
 
+/** Spend per agent from the cost ledger, including agents that have been evicted. */
+export type CostTotals = { totalUsd: number; byAgent: Record<string, number> };
+
 /** Set up hydration + message handling for the full universe webview. */
 function wireUniverseWebview(
   webview: vscode.Webview,
@@ -293,6 +299,7 @@ function wireUniverseWebview(
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
+  getCostTotals?: () => CostTotals,
 ): void {
   // Guard to suppress config-change echoes when the webview writes back to VS Code settings
   let suppressConfigEcho = false;
@@ -386,6 +393,8 @@ function wireUniverseWebview(
     if (agents.length > 0) {
       void webview.postMessage({ type: 'init-state', agents, metrics });
     }
+    // Ledger totals include evicted agents, which the per-agent metrics no longer carry.
+    if (getCostTotals) void webview.postMessage({ type: 'cost-totals', ...getCostTotals() });
 
     // Push the current graph state on connect — the lifecycle may have
     // already attached to a pre-existing `<folder>/.eh/graph.db` before
@@ -755,6 +764,24 @@ function wireUniverseWebview(
           void webview.postMessage({ type: 'tell-all-result', success: true });
         }
       });
+    } else if (msg?.type === 'recommendation-action') {
+      // Cost panel button: validate across the webview boundary, run it here, report back.
+      const id = typeof msg.id === 'string' ? msg.id : '';
+      if (!isRecommendationAction(msg.action)) {
+        void webview.postMessage({ type: 'recommendation-action-result', id, ok: false, message: 'Unknown action.' });
+        return;
+      }
+      void dispatchRecommendationAction(msg.action, {
+        workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        readFile: (p) => fsp.readFile(p, 'utf8'),
+        buildDigest: (p, content) => buildFileDigest(p, content),
+        writeKnowledge: (key, value) => { sharedKnowledge.write(key, value, 'workspace', 'user', 'user', undefined, undefined, undefined, 'user'); },
+        openFile: async (p) => { await vscode.window.showTextDocument(vscode.Uri.file(p)); },
+        broadcast: (message) => { sharedKnowledge.write(`broadcast-${Date.now()}`, message, 'workspace', 'user', 'user'); },
+        postToWebview: (m) => { void webview.postMessage(m); },
+      }).then((result) => {
+        void webview.postMessage({ type: 'recommendation-action-result', id, ...result });
+      });
     } else if (msg?.type === 'knowledge-add') {
       const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
       const tier = (msg.tier === 'L0' || msg.tier === 'L1' || msg.tier === 'L2') ? msg.tier : undefined;
@@ -1086,6 +1113,7 @@ export async function openUniversePanel(
   metricsEngine: MetricsEngine,
   getSkills?: () => SkillInfo[],
   rescanSkills?: () => Promise<SkillInfo[]>,
+  getCostTotals?: () => CostTotals,
 ): Promise<void> {
   // If already open, just reveal it
   if (universePanel) {
@@ -1117,7 +1145,7 @@ export async function openUniversePanel(
   const connectedAgents = await getConnectedAgentTypes();
   panel.webview.html = getUniverseHtml(panel.webview, scriptUri, version, connectedAgents);
 
-  wireUniverseWebview(panel.webview, context, agentStateManager, metricsEngine, getSkills, rescanSkills);
+  wireUniverseWebview(panel.webview, context, agentStateManager, metricsEngine, getSkills, rescanSkills, getCostTotals);
 
   panel.onDidDispose(() => {
     universePanel = null;

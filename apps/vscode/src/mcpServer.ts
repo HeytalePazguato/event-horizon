@@ -901,6 +901,8 @@ export interface McpServerDeps {
   isAgentExtractionEnabled?: () => boolean;
   /** Callback to inject events into the main event pipeline (for synthetic terminate, etc.). */
   onEvent?: (event: AgentEvent) => void;
+  /** Lifecycle-owned purge: terminates dead stale/lost agents and returns their ids. */
+  purgeStaleAgents?: () => string[];
 }
 
 export class McpServer {
@@ -953,6 +955,10 @@ export class McpServer {
 
   setOnEvent(onEvent: (event: AgentEvent) => void): void {
     this.deps.onEvent = onEvent;
+  }
+
+  setPurgeStaleAgents(purgeStaleAgents: () => string[]): void {
+    this.deps.purgeStaleAgents = purgeStaleAgents;
   }
 
   /**
@@ -1621,7 +1627,8 @@ export class McpServer {
             exec(task.verifyCommand!, { cwd, timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
               const output = ((stdout ?? '') + (stderr ? `\n--- stderr ---\n${stderr}` : '')).slice(0, 2000);
               if (error) {
-                resolve({ exitCode: error.code ?? 1, output });
+                // code is a string (e.g. an errno name) when the process never ran; report it as a failure.
+                resolve({ exitCode: typeof error.code === 'number' ? error.code : 1, output });
               } else {
                 resolve({ exitCode: 0, output });
               }
@@ -1969,31 +1976,11 @@ export class McpServer {
       }
 
       case 'eh_purge_stale_agents': {
-        const { agentStateManager, heartbeatManager, spawnRegistry, onEvent } = this.deps;
-        if (!agentStateManager || !heartbeatManager) {
-          return { error: 'Agent state manager or heartbeat manager not available' };
+        const { purgeStaleAgents } = this.deps;
+        if (!purgeStaleAgents) {
+          return { error: 'Lifecycle manager not available' };
         }
-        const agents = agentStateManager.getAllAgents();
-        const purged: string[] = [];
-        for (const agent of agents) {
-          if (spawnRegistry?.getSpawnedAgent(agent.id)) continue;
-          const hb = heartbeatManager.getStatus(agent.id);
-          if (hb === 'stale' || hb === 'lost') {
-            if (onEvent) {
-              onEvent({
-                id: `synth-purge-${agent.id}-${Date.now()}`,
-                agentId: agent.id,
-                agentName: agent.name,
-                agentType: agent.type as import('@event-horizon/core').AgentType,
-                type: 'agent.terminate',
-                timestamp: Date.now(),
-                payload: { reason: 'mcp-purge', synthetic: true },
-              });
-            }
-            heartbeatManager.remove(agent.id);
-            purged.push(agent.id);
-          }
-        }
+        const purged = purgeStaleAgents();
         return { purged, count: purged.length };
       }
 
@@ -2363,7 +2350,8 @@ export class McpServer {
             };
           }
         }
-        const recommendations = tokenAnalyzer.getRecommendations();
+        // Agents read recommendations as prose; the typed actions are for the Cost panel.
+        const recommendations = tokenAnalyzer.getRecommendations().map((r) => r.text);
         return { insights, recommendations };
       }
 

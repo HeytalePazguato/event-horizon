@@ -10,3 +10,5 @@ export { MetricsEngine } from './metricsEngine.js';
 export type { AgentMetrics } from './metricsEngine.js';
 export { AgentStateManager } from './agentState.js';
 export type { AgentState, TaskState, AgentRuntimeState } from './agentState.js';
+export type { Recommendation, RecommendationAction, RecommendationKind } from './recommendations.js';
+export { isRecommendationAction } from './recommendations.js';

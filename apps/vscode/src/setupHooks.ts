@@ -8,8 +8,35 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { getAuthToken } from './eventServer.js';
+import { setupTelemetryEnv, removeTelemetryEnv } from './setupTelemetryEnv.js';
+import { setupStatusLine, removeStatusLine, findGitBash, type StatusLineMode } from './setupStatusLine.js';
 
 const PORT = 28765;
+
+/**
+ * Which shell Claude Code will run our hook commands through. On Windows it
+ * uses Git Bash when installed and PowerShell otherwise; everywhere else a
+ * POSIX shell. The fast curl one-liners need a POSIX shell (`|| true`,
+ * `/dev/null`, and in Windows PowerShell 5.1 `curl` is Invoke-WebRequest), so
+ * without Git Bash every hook runs a PowerShell script instead. PowerShell
+ * start-up costs a few hundred ms per call, so it is only used when needed.
+ */
+export type HookShell = 'posix' | 'powershell';
+
+let hookShellOverride: HookShell | null = null;
+
+export function detectHookShell(platform: NodeJS.Platform = process.platform, gitBash: () => string | null = findGitBash): HookShell {
+  if (hookShellOverride) return hookShellOverride;
+  return platform === 'win32' && !gitBash() ? 'powershell' : 'posix';
+}
+
+const ehDir = (): string => path.join(os.homedir(), '.event-horizon');
+/** Forward slashes: Git Bash eats backslashes in command strings, PowerShell accepts both. */
+const fwd = (p: string): string => p.split('\\').join('/');
+
+function powershellFile(script: string, ...args: string[]): string {
+  return `powershell -NoProfile -ExecutionPolicy Bypass -File "${fwd(path.join(ehDir(), script))}"${args.map((x) => ` ${x}`).join('')}`;
+}
 
 const EH_HOOK_EVENTS = [
   'SessionStart',
@@ -30,6 +57,14 @@ const EH_HOOK_EVENTS = [
   'PreCompact',
   'WorktreeCreate',
   'WorktreeRemove',
+  // Turn ended on an API error; otherwise indistinguishable from a normal Stop.
+  'StopFailure',
+  // Outcome of the compaction PreCompact announces (tokens before/after).
+  'PostCompact',
+  // Auto-mode classifier refused a tool: the agent is blocked, not idle.
+  'PermissionDenied',
+  // Live model id without waiting for a transcript entry.
+  'PostModelSwitch',
 ] as const;
 
 function buildEhUrl(): string {
@@ -43,9 +78,51 @@ function buildAuthHeader(): string {
 
 /** Build a command that POSTs stdin to the EH server, silently succeeding if it's down. */
 function buildEhCommand(): string {
+  if (detectHookShell() === 'powershell') return powershellFile('eh-hook.ps1');
   const url = buildEhUrl();
   const authHeader = buildAuthHeader();
-  return `curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeader} -d @- ${url} > /dev/null 2>&1 || true`;
+  return `curl -s --connect-timeout 2 --max-time 3 -X POST -H "Content-Type: application/json" ${authHeader} -d @- ${url} > /dev/null 2>&1 || true`;
+}
+
+/** PreToolUse lock check (POSIX sh). Exits 2 with a message when another agent holds the lock. */
+export function buildLockCheckSh(port: number, token: string | null): string {
+  const lockUrl = `http://127.0.0.1:${port}/lock`;
+  const claudeUrl = `http://127.0.0.1:${port}/claude`;
+  const authHeaderLine = token ? `-H "Authorization: Bearer ${token}"` : '';
+  return `#!/bin/sh
+# Event Horizon — PreToolUse lock check. Auto-generated, do not edit.
+PAYLOAD=$(cat)
+printf '%s' "$PAYLOAD" | curl -s --connect-timeout 2 --max-time 3 -X POST -H "Content-Type: application/json" ${authHeaderLine} -d @- "${claudeUrl}" > /dev/null 2>&1 || true
+TN=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"tool_name" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
+FP=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"file_path" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
+if [ -n "$FP" ]; then
+  AGENT=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"session_id" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
+  CWD=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"cwd" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
+  FOLDER=$(basename "$CWD" 2>/dev/null)
+  ANAME="Claude Code"
+  [ -n "$FOLDER" ] && ANAME="Claude Code ($FOLDER)"
+  # Write/Edit tools: acquire the lock (check + acquire)
+  # Read tools: just query if locked by someone else (no acquire)
+  ACTION="query"
+  if [ "$TN" = "Write" ] || [ "$TN" = "Edit" ] || [ "$TN" = "MultiEdit" ] || [ "$TN" = "WriteFile" ]; then
+    ACTION="check"
+  fi
+  RESP=$(curl -s --connect-timeout 2 --max-time 3 -X POST -H "Content-Type: application/json" ${authHeaderLine} \\
+    -d "{\\"action\\":\\"$ACTION\\",\\"filePath\\":\\"$FP\\",\\"agentId\\":\\"$AGENT\\",\\"agentName\\":\\"$ANAME\\",\\"toolName\\":\\"$TN\\"}" \\
+    "${lockUrl}" 2>/dev/null)
+  if echo "$RESP" | grep -q '"allowed":false'; then
+    OWNER=$(echo "$RESP" | sed -n 's/.*"owner" *: *"\\([^"]*\\)".*/\\1/p')
+    echo "[Event Horizon file lock] BLOCKED: $FP is locked by $OWNER who is actively editing it. You MUST NOT access this file by ANY means — no Read, no Write, no Edit, no Bash commands. The lock will release automatically when $OWNER finishes (within 30 seconds of their last edit). Work on OTHER files first, then retry this file later." >&2
+    exit 2
+  fi
+  # A Read of a file in shared knowledge may be answered with its digest: the
+  # server returns the PreToolUse hook JSON and Claude Code reads it from stdout.
+  if printf '%s' "$RESP" | grep -q '"hookSpecificOutput"'; then
+    printf '%s' "$RESP"
+    exit 0
+  fi
+fi
+`;
 }
 
 /**
@@ -63,46 +140,19 @@ export async function ensureLockScripts(): Promise<{ checkScript: string; releas
   const authHeaderLine = token ? `-H "Authorization: Bearer ${token}"` : '';
 
   const checkScript = path.join(dir, 'eh-lock-check.sh');
-  const checkContent = `#!/usr/bin/env bash
-# Event Horizon — PreToolUse lock check. Auto-generated, do not edit.
-PAYLOAD=$(cat)
-echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} -d @- "${claudeUrl}" > /dev/null 2>&1 || true
-TN=$(echo "$PAYLOAD" | sed -n 's/.*"tool_name" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
-FP=$(echo "$PAYLOAD" | sed -n 's/.*"file_path" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
-if [ -n "$FP" ]; then
-  AGENT=$(echo "$PAYLOAD" | sed -n 's/.*"session_id" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
-  CWD=$(echo "$PAYLOAD" | sed -n 's/.*"cwd" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
-  FOLDER=$(basename "$CWD" 2>/dev/null)
-  ANAME="Claude Code"
-  [ -n "$FOLDER" ] && ANAME="Claude Code ($FOLDER)"
-  # Write/Edit tools: acquire the lock (check + acquire)
-  # Read tools: just query if locked by someone else (no acquire)
-  ACTION="query"
-  if [ "$TN" = "Write" ] || [ "$TN" = "Edit" ] || [ "$TN" = "MultiEdit" ] || [ "$TN" = "WriteFile" ]; then
-    ACTION="check"
-  fi
-  RESP=$(curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} \\
-    -d "{\\"action\\":\\"$ACTION\\",\\"filePath\\":\\"$FP\\",\\"agentId\\":\\"$AGENT\\",\\"agentName\\":\\"$ANAME\\"}" \\
-    "${lockUrl}" 2>/dev/null)
-  if echo "$RESP" | grep -q '"allowed":false'; then
-    OWNER=$(echo "$RESP" | sed -n 's/.*"owner" *: *"\\([^"]*\\)".*/\\1/p')
-    echo "[Event Horizon file lock] BLOCKED: $FP is locked by $OWNER who is actively editing it. You MUST NOT access this file by ANY means — no Read, no Write, no Edit, no Bash commands. The lock will release automatically when $OWNER finishes (within 30 seconds of their last edit). Work on OTHER files first, then retry this file later." >&2
-    exit 2
-  fi
-fi
-`;
+  const checkContent = buildLockCheckSh(PORT, token);
   await fsp.writeFile(checkScript, checkContent, 'utf8');
   await fsp.chmod(checkScript, 0o755).catch(() => {});
 
   const releaseScript = path.join(dir, 'eh-lock-release.sh');
-  const releaseContent = `#!/usr/bin/env bash
+  const releaseContent = `#!/bin/sh
 # Event Horizon — PostToolUse lock release. Auto-generated, do not edit.
 PAYLOAD=$(cat)
-echo "$PAYLOAD" | curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} -d @- "${claudeUrl}" > /dev/null 2>&1 || true
-FP=$(echo "$PAYLOAD" | sed -n 's/.*"file_path" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
+printf '%s' "$PAYLOAD" | curl -s --connect-timeout 2 --max-time 3 -X POST -H "Content-Type: application/json" ${authHeaderLine} -d @- "${claudeUrl}" > /dev/null 2>&1 || true
+FP=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"file_path" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
 if [ -n "$FP" ]; then
-  AGENT=$(echo "$PAYLOAD" | sed -n 's/.*"session_id" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
-  curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeaderLine} \\
+  AGENT=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"session_id" *: *"\\([^"]*\\)".*/\\1/p' | head -1)
+  curl -s --connect-timeout 2 --max-time 3 -X POST -H "Content-Type: application/json" ${authHeaderLine} \\
     -d "{\\"action\\":\\"release\\",\\"filePath\\":\\"$FP\\",\\"agentId\\":\\"$AGENT\\"}" \\
     "${lockUrl}" > /dev/null 2>&1 || true
 fi
@@ -110,7 +160,94 @@ fi
   await fsp.writeFile(releaseScript, releaseContent, 'utf8');
   await fsp.chmod(releaseScript, 0o755).catch(() => {});
 
+  // PowerShell equivalents for Windows without Git Bash. Written with a BOM:
+  // Windows PowerShell 5.1 reads a BOM-less script as ANSI.
+  if (process.platform === 'win32') {
+    await fsp.writeFile(path.join(dir, 'eh-hook.ps1'), '\uFEFF' + buildHookPs1(PORT, token), 'utf8');
+    await fsp.writeFile(path.join(dir, 'eh-lock-check.ps1'), '\uFEFF' + buildLockCheckPs1(PORT, token), 'utf8');
+  }
+
   return { checkScript, releaseScript };
+}
+
+const PS1_PRELUDE = `$ErrorActionPreference = 'SilentlyContinue'
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$payload = [Console]::In.ReadToEnd()
+`;
+
+function ps1Post(token: string | null): string {
+  const auth = token ? `\n    $req.Headers.Add('Authorization', 'Bearer ${token}')` : '';
+  return `function Post-Json([string]$url, [string]$body, [int]$timeoutMs = 2000) {
+  try {
+    $bytes = $utf8.GetBytes($body)
+    $req = [System.Net.HttpWebRequest]::Create($url)
+    $req.Method = 'POST'
+    $req.ContentType = 'application/json'
+    $req.Timeout = $timeoutMs${auth}
+    $s = $req.GetRequestStream(); $s.Write($bytes, 0, $bytes.Length); $s.Close()
+    $resp = $req.GetResponse()
+    $reader = New-Object System.IO.StreamReader($resp.GetResponseStream(), $utf8)
+    $text = $reader.ReadToEnd(); $reader.Close(); $resp.Close()
+    return @{ Status = [int]$resp.StatusCode; Body = $text }
+  } catch [System.Net.WebException] {
+    $r = $_.Exception.Response
+    if ($r) {
+      $reader = New-Object System.IO.StreamReader($r.GetResponseStream(), $utf8)
+      $text = $reader.ReadToEnd(); $reader.Close()
+      return @{ Status = [int]$r.StatusCode; Body = $text }
+    }
+    return $null
+  } catch { return $null }
+}
+`;
+}
+
+/** Generic hook (POST and discard) and, with -Inbox, the prompt-submit notice (print the reply). */
+export function buildHookPs1(port: number, token: string | null): string {
+  return `# Event Horizon, Claude Code hook (PowerShell). Auto-generated, do not edit.
+param([switch]$Inbox)
+${PS1_PRELUDE}${ps1Post(token)}
+if ($Inbox) {
+  $r = Post-Json 'http://127.0.0.1:${port}/claude/inbox' $payload
+  # Claude Code injects this hook's stdout into the turn.
+  if ($r -and $r.Body) { [Console]::Out.Write($r.Body) }
+} else {
+  $null = Post-Json 'http://127.0.0.1:${port}/claude' $payload
+}
+exit 0
+`;
+}
+
+/** PreToolUse lock check (PowerShell); same behaviour as eh-lock-check.sh. */
+export function buildLockCheckPs1(port: number, token: string | null): string {
+  return `# Event Horizon, PreToolUse lock check (PowerShell). Auto-generated, do not edit.
+${PS1_PRELUDE}${ps1Post(token)}
+$null = Post-Json 'http://127.0.0.1:${port}/claude' $payload
+try { $j = $payload | ConvertFrom-Json } catch { exit 0 }
+$fp = $j.tool_input.file_path
+if (-not $fp) { exit 0 }
+$tn = [string]$j.tool_name
+$folder = ''
+if ($j.cwd) { $folder = Split-Path -Leaf ([string]$j.cwd) }
+$name = 'Claude Code'
+if ($folder) { $name = "Claude Code ($folder)" }
+# Write/Edit tools acquire the lock; reads only ask whether someone else holds it.
+$action = 'query'
+if (@('Write', 'Edit', 'MultiEdit', 'WriteFile') -contains $tn) { $action = 'check' }
+$body = @{ action = $action; filePath = [string]$fp; agentId = [string]$j.session_id; agentName = $name; toolName = $tn } | ConvertTo-Json -Compress
+$r = Post-Json 'http://127.0.0.1:${port}/lock' $body
+if ($r -and $r.Body -match '"allowed"\\s*:\\s*false') {
+  $owner = 'another agent'
+  try { $o = ($r.Body | ConvertFrom-Json).owner; if ($o) { $owner = $o } } catch {}
+  [Console]::Error.WriteLine("[Event Horizon file lock] BLOCKED: $fp is locked by $owner who is actively editing it. You MUST NOT access this file by ANY means. No Read, no Write, no Edit, no Bash commands. The lock will release automatically when $owner finishes (within 30 seconds of their last edit). Work on OTHER files first, then retry this file later.")
+  exit 2
+}
+# A Read of a file in shared knowledge may be answered with its digest.
+if ($r -and $r.Body -match '"hookSpecificOutput"') { [Console]::Out.Write($r.Body); exit 0 }
+exit 0
+`;
 }
 
 /**
@@ -124,14 +261,16 @@ fi
  * without the extension host needing to push anything.
  */
 function buildPromptSubmitCommand(): string {
+  if (detectHookShell() === 'powershell') return powershellFile('eh-hook.ps1', '-Inbox');
   const authHeader = buildAuthHeader();
-  return `curl -s --connect-timeout 2 -X POST -H "Content-Type: application/json" ${authHeader} -d @- http://127.0.0.1:${PORT}/claude/inbox 2>/dev/null || true`;
+  return `curl -s --connect-timeout 2 --max-time 3 -X POST -H "Content-Type: application/json" ${authHeader} -d @- http://127.0.0.1:${PORT}/claude/inbox 2>/dev/null || true`;
 }
 
 /** Build the PreToolUse command — calls the external script file. */
 function buildPreToolUseCommand(): string {
-  const scriptPath = path.join(os.homedir(), '.event-horizon', 'eh-lock-check.sh').split('\\').join('/');
-  return `bash "${scriptPath}"`;
+  if (detectHookShell() === 'powershell') return powershellFile('eh-lock-check.ps1');
+  // sh, not bash: the script is POSIX and must not require bash.
+  return `sh "${fwd(path.join(ehDir(), 'eh-lock-check.sh'))}"`;
 }
 
 // PostToolUse no longer releases locks — locks are held until TTL expiry (30s).
@@ -258,6 +397,8 @@ export async function removeClaudeCodeHooks(): Promise<void> {
       );
     }
   }
+  await removeTelemetryEnv();
+  await removeStatusLine();
 }
 
 // 4.7 — converted to async file I/O
@@ -311,6 +452,15 @@ export async function setupClaudeCodeHooks(): Promise<void> {
   const dir = path.dirname(settingsPath);
   await fsp.mkdir(dir, { recursive: true });
   await fsp.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+
+  // OTel export to Event Horizon lives in the same file; keep it in step with the hooks.
+  const telemetryEnabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('claudeTelemetry.enabled', true);
+  if (telemetryEnabled) await setupTelemetryEnv(PORT, getAuthToken());
+  else await removeTelemetryEnv();
+
+  // statusLine bridge: wraps an existing statusLine by default (see setupStatusLine.ts).
+  const statusLineMode = vscode.workspace.getConfiguration('eventHorizon').get<StatusLineMode>('claudeStatusLine.mode', 'chain');
+  await setupStatusLine({ port: PORT, token: getAuthToken(), mode: statusLineMode });
 }
 
 /**
@@ -390,4 +540,6 @@ export const __hookTestables = {
   expectedCommandFor,
   isCurrentEhHook,
   isEhHook,
+  setHookShell: (shell: HookShell | null): void => { hookShellOverride = shell; },
+  hookEvents: EH_HOOK_EVENTS,
 };

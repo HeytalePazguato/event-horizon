@@ -4,6 +4,32 @@
 
 import { describe, it, expect } from 'vitest';
 import { groupAgentsByWorkspace, folderName } from '../utils.js';
+import { formatCost } from '../utils/formatters.js';
+
+describe('formatCost', () => {
+  it('renders negative values (no data) as an em dash', () => {
+    expect(formatCost(-1)).toBe('—');
+  });
+
+  it('renders zero as $0.00', () => {
+    expect(formatCost(0)).toBe('$0.00');
+  });
+
+  it('renders measured values with a $ prefix and no tilde', () => {
+    expect(formatCost(4.1)).toBe('$4.10');
+    expect(formatCost(4.1, { estimated: false })).toBe('$4.10');
+  });
+
+  it('prefixes estimated values with a tilde', () => {
+    expect(formatCost(4.1, { estimated: true })).toBe('~$4.10');
+  });
+
+  it('keeps the precision tiers for small and large values', () => {
+    expect(formatCost(0.005)).toBe('$0.0050');
+    expect(formatCost(25.67)).toBe('$25.7');
+    expect(formatCost(25.67, { estimated: true })).toBe('~$25.7');
+  });
+});
 
 describe('folderName', () => {
   it('extracts folder from unix path', () => {

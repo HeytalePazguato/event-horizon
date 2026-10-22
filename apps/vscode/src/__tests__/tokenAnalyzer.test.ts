@@ -207,7 +207,14 @@ describe('TokenAnalyzer', () => {
       analyzer.onEvent(makeEvent({ agentId: 'a3', type: 'tool.call', payload: { tool: 'Read', file_path: 'src/shared.ts' } }));
 
       const recs = analyzer.getRecommendations();
-      expect(recs.some(r => r.includes('shared knowledge'))).toBe(true);
+      const dup = recs.find(r => r.kind === 'duplicate-read')!;
+      expect(dup.text).toContain('shared knowledge');
+      expect(dup).toMatchObject({ id: 'dup:src/shared.ts', severity: 'info', action: { kind: 'add-to-knowledge', filePath: 'src/shared.ts' } });
+    });
+
+    it('keeps recommendation ids stable across calls', () => {
+      for (const a of ['a1', 'a2', 'a3']) analyzer.onEvent(makeEvent({ agentId: a, type: 'tool.call', payload: { tool: 'Read', file_path: 'src/shared.ts' } }));
+      expect(analyzer.getRecommendations().map(r => r.id)).toEqual(analyzer.getRecommendations().map(r => r.id));
     });
 
     it('flags high compaction pressure', () => {
@@ -217,7 +224,9 @@ describe('TokenAnalyzer', () => {
       analyzer.onEvent(makeEvent({ agentId: 'a1', type: 'task.progress', timestamp: now + 120_000, payload: { compaction: true } }));
 
       const recs = analyzer.getRecommendations();
-      expect(recs.some(r => r.includes('compacted'))).toBe(true);
+      const rec = recs.find(r => r.kind === 'compaction-pressure')!;
+      expect(rec.text).toContain('compacted');
+      expect(rec).toMatchObject({ id: 'compaction:a1', severity: 'warn', action: { kind: 'focus-agent', agentId: 'a1' } });
     });
 
     it('flags cost anomalies', () => {
@@ -227,7 +236,9 @@ describe('TokenAnalyzer', () => {
       analyzer.onEvent(makeEvent({ agentId: 'a1', type: 'task.complete', payload: { taskId: 't4', costUsd: 5.00 } }));
 
       const recs = analyzer.getRecommendations();
-      expect(recs.some(r => r.includes('review for waste'))).toBe(true);
+      const rec = recs.find(r => r.kind === 'cost-anomaly')!;
+      expect(rec.text).toContain('review for waste');
+      expect(rec).toMatchObject({ id: 'anomaly:t4', severity: 'warn', action: { kind: 'open-task', taskId: 't4' } });
     });
 
     it('returns empty when nothing notable', () => {

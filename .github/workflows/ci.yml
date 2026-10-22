@@ -166,10 +166,13 @@ jobs:
 
           # Count existing pre-release tags for this version to auto-increment
           git fetch --tags
-          ALPHA_COUNT=$(git tag -l "v${BASE_VERSION}-alpha.*" | wc -l)
-          BETA_COUNT=$(git tag -l "v${BASE_VERSION}-beta.*" | wc -l)
-          RC_COUNT=$(git tag -l "v${BASE_VERSION}-rc.*" | wc -l)
-          TOTAL=$((ALPHA_COUNT + BETA_COUNT + RC_COUNT))
+          # Highest existing number per stage, not a count: cleanup-prereleases
+          # deletes old pre-releases and their tags, so a count drops and the
+          # next number would collide with a tag that still exists.
+          max_num() { git tag -l "v${BASE_VERSION}-$1.*" | sed "s/^v${BASE_VERSION}-$1\.//" | grep -E '^[0-9]+$' | sort -n | tail -1; }
+          ALPHA_COUNT=$(max_num alpha); ALPHA_COUNT=${ALPHA_COUNT:-0}
+          BETA_COUNT=$(max_num beta); BETA_COUNT=${BETA_COUNT:-0}
+          RC_COUNT=$(max_num rc); RC_COUNT=${RC_COUNT:-0}
 
           # Determine stage based on count: first 3 = alpha, next 3 = beta, then rc
           # Or read from commit message if [alpha], [beta], or [rc] is present

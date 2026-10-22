@@ -24,6 +24,10 @@ OpenCode is a **first-class** Event Horizon agent — full support for hooks, MC
 
 The plugin sends event payloads to `http://127.0.0.1:28765/opencode`. The wizard writes it for you. Hooks are re-checked and refreshed on every activation.
 
+**OpenCode 1 and 2 need different plugins.** The installer runs `opencode --version` and writes the matching one: a plugin function for OpenCode 1, and an `{ id, setup }` definition for OpenCode 2. Nothing else is installed: Event Horizon never writes `~/.config/opencode/package.json` and adds no dependencies. If you upgrade OpenCode, the installed plugin is reported as out of date and **Connect** writes the right one. Restart OpenCode after installing.
+
+**Finished workers leave on their own.** OpenCode reports the end of every turn, including in a session you are still typing into, so a turn ending alone does not remove an agent. A worker Event Horizon spawned is removed once its turn ends, it holds no claimed plan task and it stays quiet for 15 seconds. Sessions you started yourself are only removed when OpenCode exits.
+
 ---
 
 ## Capabilities
@@ -54,6 +58,12 @@ An OpenCode agent can orchestrate or be a worker. A Claude Code orchestrator spa
     - Confirm the Event Horizon panel is open.
     - Confirm the plugin exists in `~/.config/opencode/plugins/`. If not, run **Connect** again.
     - If you changed [`eventHorizon.port`](../configuration.md#eventhorizonport), **reconnect** so the plugin points at the right port.
+
+??? failure "OpenCode 2 says \"Plugin must export a default definition with an id and an effect or setup function\""
+    That plugin was written for OpenCode 1. Run **Connect** again so Event Horizon writes the OpenCode 2 plugin, then restart OpenCode. Any other plugin in `~/.config/opencode/plugins/` written for OpenCode 1 shows the same error.
+
+??? failure "`opencode plugin list` says \"No plugins found\""
+    The first listing after OpenCode's background service starts can run before plugins finish loading. Run it again with `--print-logs`. A plugin OpenCode 2 rejected appears with `-` in the ID column; the Event Horizon plugin shows `event-horizon`.
 
 ??? failure "OpenCode agent shows \"/\" as its working directory"
     OpenCode can report the filesystem root as its `cwd` when the project path resolves oddly. Event Horizon treats root-only paths as missing and injects the primary VS Code workspace folder instead — so [cooperation detection](../the-universe.md#ships-data-transfers-between-agents) still works. If you see this and ships still aren't spawning, confirm the agent is actually running inside your workspace folder.
