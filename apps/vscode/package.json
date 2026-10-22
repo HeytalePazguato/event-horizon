@@ -516,27 +516,27 @@
     "@event-horizon/renderer": "workspace:*",
     "@event-horizon/ui": "workspace:*",
     "html2canvas": "^1.4.1",
-    "sql.js": "^1.14.1",
+    "sql.js": "^1.14.2",
     "tree-sitter-c-sharp": "^0.23.0",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-php": "^0.24.2",
     "tree-sitter-python": "^0.25.0",
     "tree-sitter-typescript": "^0.23.0",
-    "web-tree-sitter": "^0.26.12",
-    "ws": "^8.21.2"
+    "web-tree-sitter": "^0.27.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
-    "@types/node": "^25.8.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/sql.js": "^1.4.11",
     "@types/vscode": "^1.100.0",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
-    "ovsx": "^0.10.12",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "ovsx": "^1.1.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "typescript": "^5.9.3"
   }
 }
