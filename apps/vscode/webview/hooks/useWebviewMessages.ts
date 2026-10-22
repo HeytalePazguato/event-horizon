@@ -6,8 +6,8 @@
 import { useEffect, useRef, startTransition, type MutableRefObject } from 'react';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
 import { useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
-import type { AgentState, AgentRuntimeState, AgentMetrics } from '@event-horizon/core';
-import type { SkillInfo, MarketplaceSkillResult, PlanView, PlanSummary } from '@event-horizon/ui';
+import type { AgentState, AgentRuntimeState, AgentMetrics, Recommendation } from '@event-horizon/core';
+import type { SkillInfo, MarketplaceSkillResult, PlanView, PlanSummary, RecommendationActionStatus, OpsTab } from '@event-horizon/ui';
 
 /** Max visible ships between a given ordered (from→to) pair at once. */
 const MAX_SHIPS_PER_PAIR = 2;
@@ -57,7 +57,9 @@ export interface WebviewMessageDeps {
   setOrchestratorMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setAgentRoleMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setCostInsights?: React.Dispatch<React.SetStateAction<unknown>>;
-  setCostRecommendations?: React.Dispatch<React.SetStateAction<string[]>>;
+  setCostRecommendations?: React.Dispatch<React.SetStateAction<Recommendation[]>>;
+  setRecommendationStatus?: React.Dispatch<React.SetStateAction<Record<string, RecommendationActionStatus>>>;
+  setRequestedOpsTab?: React.Dispatch<React.SetStateAction<{ tab: OpsTab; at: number } | null>>;
   setContextLayers?: React.Dispatch<React.SetStateAction<Record<string, unknown> | null>>;
   setPersistedSearchResults?: React.Dispatch<React.SetStateAction<import('@event-horizon/ui').PersistedSearchResult[] | null>>;
   setTaskExecutionEvents?: React.Dispatch<React.SetStateAction<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>>;
@@ -294,6 +296,36 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
             depsRef.current.setTraceAggregate(data.aggregate);
           }
         });
+        return;
+      }
+      if (msg?.type === 'recommendation-action-result') {
+        const r = msg as unknown as { id?: string; ok?: boolean; message?: string };
+        if (typeof r.id === 'string' && r.id && depsRef.current.setRecommendationStatus) {
+          const id = r.id;
+          depsRef.current.setRecommendationStatus((prev) => ({ ...prev, [id]: { state: r.ok ? 'ok' : 'error', message: r.message ?? '' } }));
+          // Success notes fade; errors stay until the next attempt.
+          if (r.ok) {
+            setTimeout(() => depsRef.current.setRecommendationStatus?.((prev) => {
+              if (prev[id]?.state !== 'ok') return prev;
+              const next = { ...prev }; delete next[id]; return next;
+            }), 6_000);
+          }
+        }
+        return;
+      }
+      if (msg?.type === 'focus-agent') {
+        const agentId = (msg as unknown as { agentId?: string }).agentId;
+        if (typeof agentId === 'string') {
+          const store = useCommandCenterStore.getState();
+          store.setSelectedAgent(agentId);
+          store.setViewMode('universe');
+          store.requestCenter();
+        }
+        return;
+      }
+      if (msg?.type === 'open-plan-task') {
+        useCommandCenterStore.getState().setViewMode('operations');
+        depsRef.current.setRequestedOpsTab?.({ tab: 'plan', at: Date.now() });
         return;
       }
       if (msg?.type === 'cost-insights-update') {

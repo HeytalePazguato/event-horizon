@@ -78,9 +78,9 @@ export function isBridgeCommand(command: unknown): boolean {
 export function findGitBash(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = fs.existsSync): string | null {
   const candidates = [
     env.CLAUDE_CODE_GIT_BASH_PATH,
-    env.ProgramFiles && path.join(env.ProgramFiles, 'Git', 'bin', 'bash.exe'),
-    env['ProgramFiles(x86)'] && path.join(env['ProgramFiles(x86)']!, 'Git', 'bin', 'bash.exe'),
-    env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe'),
+    env.ProgramFiles && path.win32.join(env.ProgramFiles, 'Git', 'bin', 'bash.exe'),
+    env['ProgramFiles(x86)'] && path.win32.join(env['ProgramFiles(x86)']!, 'Git', 'bin', 'bash.exe'),
+    env.LOCALAPPDATA && path.win32.join(env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe'),
   ].filter((p): p is string => typeof p === 'string' && p.length > 0);
   return candidates.find((p) => exists(p)) ?? null;
 }

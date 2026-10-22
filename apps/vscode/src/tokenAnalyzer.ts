@@ -3,7 +3,7 @@
  * and actionable recommendations for optimizing multi-agent workflows.
  */
 
-import type { AgentEvent } from '@event-horizon/core';
+import type { AgentEvent, Recommendation } from '@event-horizon/core';
 import type { FileReadCache } from './fileReadCache.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -234,9 +234,12 @@ export class TokenAnalyzer {
     };
   }
 
-  /** Get actionable text recommendations. */
-  getRecommendations(): string[] {
-    const recs: string[] = [];
+  /**
+   * Recommendations with a concrete action each. Ids are deterministic so the
+   * UI can key on them across refreshes.
+   */
+  getRecommendations(): Recommendation[] {
+    const recs: Recommendation[] = [];
     const insights = this.getInsights();
 
     // Duplicate read recommendations
@@ -245,14 +248,26 @@ export class TokenAnalyzer {
         const suffix = this.fileReadCache
           ? ' — the shared-read cache serves repeat reads, so add key patterns to shared knowledge too'
           : ' — consider adding key patterns to shared knowledge';
-        recs.push(`${dup.agents.length} agents read ${dup.file}${suffix}`);
+        recs.push({
+          id: `dup:${dup.file}`,
+          kind: 'duplicate-read',
+          severity: 'info',
+          text: `${dup.agents.length} agents read ${dup.file}${suffix}`,
+          action: { kind: 'add-to-knowledge', filePath: dup.file },
+        });
       }
     }
 
     // Low cache hit rate
     for (const [agentId, ratio] of Object.entries(insights.cacheHitByAgent)) {
       if (ratio < 0.12 && this.getAgentTokenTotal(agentId) > 1000) {
-        recs.push(`Agent ${agentId} has ${Math.round(ratio * 100)}% cache hit rate — it may be re-reading files unnecessarily`);
+        recs.push({
+          id: `cache:${agentId}`,
+          kind: 'low-cache-hit',
+          severity: 'info',
+          text: `Agent ${agentId} has ${Math.round(ratio * 100)}% cache hit rate — it may be re-reading files unnecessarily`,
+          action: { kind: 'focus-agent', agentId },
+        });
       }
     }
 
@@ -261,13 +276,25 @@ export class TokenAnalyzer {
       const freq = insights.compactionFrequency[agentId];
       if (freq) {
         const intervalMin = Math.round(freq.avgIntervalMs / 60_000);
-        recs.push(`Agent ${agentId} compacted ${freq.count} times (avg every ${intervalMin}min) — consider splitting the task`);
+        recs.push({
+          id: `compaction:${agentId}`,
+          kind: 'compaction-pressure',
+          severity: 'warn',
+          text: `Agent ${agentId} compacted ${freq.count} times (avg every ${intervalMin}min) — consider splitting the task`,
+          action: { kind: 'focus-agent', agentId },
+        });
       }
     }
 
     // Cost anomalies
     for (const anomaly of insights.anomalies) {
-      recs.push(`Task ${anomaly.taskId} cost $${anomaly.costUsd.toFixed(2)} (${anomaly.ratio.toFixed(1)}x average) — review for waste`);
+      recs.push({
+        id: `anomaly:${anomaly.taskId}`,
+        kind: 'cost-anomaly',
+        severity: 'warn',
+        text: `Task ${anomaly.taskId} cost $${anomaly.costUsd.toFixed(2)} (${anomaly.ratio.toFixed(1)}x average) — review for waste`,
+        action: { kind: 'open-task', taskId: anomaly.taskId },
+      });
     }
 
     return recs;

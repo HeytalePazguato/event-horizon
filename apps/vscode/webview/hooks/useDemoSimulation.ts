@@ -294,7 +294,7 @@ export function useDemoSimulation(deps: DemoSimDeps): DemoSimResult {
             toolCalls: 0, toolFailures: 0, promptsSubmitted: 0, subagentSpawns: 0,
             activeSubagents: 0, activeTasks: 0, errorCount: 0,
             sessionStartedAt: Date.now(), toolBreakdown: {},
-            inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, lastUpdated: Date.now(),
+            inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, estimated: false, lastUpdated: Date.now(),
           },
         }));
 

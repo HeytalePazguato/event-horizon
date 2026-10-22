@@ -6,6 +6,7 @@
 
 import type { FC } from 'react';
 import { useState } from 'react';
+import type { Recommendation, RecommendationAction } from '@event-horizon/core';
 import { colors, fonts, sizes } from '../styles/tokens.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -30,14 +31,81 @@ export interface ContextLayerBreakdown {
   usageRatio: number;
 }
 
+/** Feedback for a clicked recommendation, keyed by recommendation id. */
+export interface RecommendationActionStatus {
+  state: 'pending' | 'ok' | 'error';
+  message: string;
+}
+
 export interface CostInsightsPanelProps {
   insights: CostInsightsData | null;
-  recommendations: string[];
+  recommendations: Recommendation[];
   contextLayers?: Record<string, ContextLayerBreakdown> | null;
-  onAddToSharedKnowledge?: (file: string) => void;
+  /** Called with the clicked recommendation; the host performs the action. */
+  onRecommendationAction?: (recommendation: Recommendation) => void;
+  /** Keys of shared-knowledge entries, so files already added show as such. */
+  knowledgeKeys?: ReadonlySet<string>;
+  actionStatus?: Record<string, RecommendationActionStatus>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+const ACTION_LABEL: Record<RecommendationAction['kind'], string> = {
+  'add-to-knowledge': 'Add to Shared Knowledge',
+  broadcast: 'Tell all agents',
+  'open-file': 'Open file',
+  'focus-agent': 'Show agent',
+  'open-task': 'Open task',
+};
+
+/** Compare file paths the way the host writes knowledge keys (slashes and Windows case). */
+export function samePath(a: string, b: string): boolean {
+  const n = (p: string) => p.split('\\').join('/').replace(/^([a-zA-Z]):/, (_, d: string) => `${d.toLowerCase()}:`);
+  const na = n(a);
+  const nb = n(b);
+  return na === nb || (/^[a-z]:/.test(na) && na.toLowerCase() === nb.toLowerCase());
+}
+
+export function isInKnowledge(file: string, keys: ReadonlySet<string> | undefined): boolean {
+  if (!keys || keys.size === 0) return false;
+  if (keys.has(file)) return true;
+  for (const k of keys) if (samePath(k, file)) return true;
+  return false;
+}
+
+/** Recommendation shape for a duplicate-read row, matching the analyzer's id. */
+export function duplicateReadRecommendation(file: string): Recommendation {
+  return { id: `dup:${file}`, kind: 'duplicate-read', severity: 'info', text: '', action: { kind: 'add-to-knowledge', filePath: file } };
+}
+
+const actionButtonStyle = {
+  background: 'rgba(64,160,96,0.15)',
+  border: '1px solid rgba(64,160,96,0.4)',
+  borderRadius: sizes.radius.sm,
+  color: '#40a060',
+  fontSize: sizes.text.xs,
+  fontFamily: fonts.mono,
+  padding: '2px 8px',
+  cursor: 'pointer',
+  flexShrink: 0,
+} as const;
+
+const InKnowledgeBadge: FC = () => (
+  <span data-testid="in-knowledge" style={{
+    color: '#40a060', fontSize: sizes.text.xs, fontFamily: fonts.mono, flexShrink: 0,
+    border: '1px solid rgba(64,160,96,0.25)', borderRadius: sizes.radius.sm, padding: '1px 6px',
+  }}>In knowledge {'\u2713'}</span>
+);
+
+const StatusLine: FC<{ status?: RecommendationActionStatus }> = ({ status }) => {
+  if (!status) return null;
+  const color = status.state === 'error' ? '#cc4444' : status.state === 'ok' ? '#40a060' : colors.text.dim;
+  return (
+    <div data-testid="action-status" style={{ marginTop: 2, fontSize: sizes.text.xs, color }}>
+      {status.state === 'pending' ? 'Working\u2026' : status.message}
+    </div>
+  );
+};
 
 function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -76,7 +144,7 @@ const Section: FC<{ title: string; children: React.ReactNode; count?: number }> 
 
 // ── Panel ──────────────────────────────────────────────────────────────────
 
-export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recommendations, contextLayers, onAddToSharedKnowledge }) => {
+export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recommendations, contextLayers, onRecommendationAction, knowledgeKeys, actionStatus }) => {
   const [expandedDup, setExpandedDup] = useState<string | null>(null);
 
   const agentCacheEntries = insights ? Object.entries(insights.cacheHitByAgent) : [];
@@ -162,18 +230,36 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
       {recommendations.length > 0 && (
         <Section title="Recommendations" count={recommendations.length}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: sizes.spacing.xs }}>
-            {recommendations.map((rec, i) => (
-              <div key={i} style={{
-                padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
-                background: 'rgba(204,136,51,0.08)',
-                border: '1px solid rgba(204,136,51,0.25)',
-                borderRadius: sizes.radius.sm,
-                fontSize: sizes.text.sm, color: '#cc8833',
-                lineHeight: 1.4,
-              }}>
-                {rec}
-              </div>
-            ))}
+            {recommendations.map((rec) => {
+              const added = rec.action?.kind === 'add-to-knowledge' && isInKnowledge(rec.action.filePath, knowledgeKeys);
+              const status = actionStatus?.[rec.id];
+              const warn = rec.severity === 'warn';
+              return (
+                <div key={rec.id} data-testid="recommendation" style={{
+                  padding: `${sizes.spacing.xs}px ${sizes.spacing.sm}px`,
+                  background: warn ? 'rgba(204,68,68,0.08)' : 'rgba(204,136,51,0.08)',
+                  border: `1px solid ${warn ? 'rgba(204,68,68,0.3)' : 'rgba(204,136,51,0.25)'}`,
+                  borderRadius: sizes.radius.sm,
+                  fontSize: sizes.text.sm, color: warn ? '#cc6666' : '#cc8833',
+                  lineHeight: 1.4,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: sizes.spacing.sm }}>
+                    <span style={{ flex: 1 }}>{rec.text}</span>
+                    {added ? <InKnowledgeBadge /> : rec.action && onRecommendationAction && (
+                      <button
+                        type="button"
+                        disabled={status?.state === 'pending'}
+                        onClick={() => onRecommendationAction(rec)}
+                        style={actionButtonStyle}
+                      >
+                        {ACTION_LABEL[rec.action.kind]}
+                      </button>
+                    )}
+                  </div>
+                  <StatusLine status={status} />
+                </div>
+              );
+            })}
           </div>
         </Section>
       )}
@@ -279,6 +365,7 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
                   <span style={{ color: colors.text.primary, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {dup.file}
                   </span>
+                  {isInKnowledge(dup.file, knowledgeKeys) && <span data-testid="in-knowledge-mark" style={{ color: '#40a060', flexShrink: 0 }}>{'✓'}</span>}
                   <span style={{ color: '#cc8833', flexShrink: 0 }}>{dup.agents.length} agents</span>
                   <span style={{ color: colors.text.dim, flexShrink: 0 }}>~{dup.estimatedWasteTokens} tokens</span>
                 </div>
@@ -287,24 +374,18 @@ export const CostInsightsPanel: FC<CostInsightsPanelProps> = ({ insights, recomm
                     <div style={{ color: colors.text.dim, marginBottom: 2 }}>
                       {dup.agents.join(', ')}
                     </div>
-                    {onAddToSharedKnowledge && (
+                    {/* The row stays after adding: it measures reads, and continued reads show whether the entry helps. */}
+                    {isInKnowledge(dup.file, knowledgeKeys) ? <InKnowledgeBadge /> : onRecommendationAction && (
                       <button
                         type="button"
-                        onClick={() => onAddToSharedKnowledge(dup.file)}
-                        style={{
-                          background: 'rgba(64,160,96,0.15)',
-                          border: '1px solid rgba(64,160,96,0.4)',
-                          borderRadius: sizes.radius.sm,
-                          color: '#40a060',
-                          fontSize: sizes.text.xs,
-                          fontFamily: fonts.mono,
-                          padding: '2px 8px',
-                          cursor: 'pointer',
-                        }}
+                        disabled={actionStatus?.[`dup:${dup.file}`]?.state === 'pending'}
+                        onClick={() => onRecommendationAction(duplicateReadRecommendation(dup.file))}
+                        style={actionButtonStyle}
                       >
                         Add to Shared Knowledge
                       </button>
                     )}
+                    <StatusLine status={actionStatus?.[`dup:${dup.file}`]} />
                   </div>
                 )}
               </div>

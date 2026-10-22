@@ -2349,7 +2349,8 @@ export class McpServer {
             };
           }
         }
-        const recommendations = tokenAnalyzer.getRecommendations();
+        // Agents read recommendations as prose; the typed actions are for the Cost panel.
+        const recommendations = tokenAnalyzer.getRecommendations().map((r) => r.text);
         return { insights, recommendations };
       }
 

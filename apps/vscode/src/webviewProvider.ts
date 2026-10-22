@@ -15,6 +15,9 @@ import type { SkillInfo } from './skillScanner.js';
 import { planBoardManager, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, setWebviewSelectedPlanId, getProjectGraphStore, getProjectGraphLifecycle, onProjectGraphLifecycleReady } from './eventServer.js';
 import { getDatabase, resetBroadcastHashes } from './extension.js';
 import { GraphQueryEngine } from './projectGraph/queryEngine.js';
+import { isRecommendationAction } from '@event-horizon/core';
+import { dispatchRecommendationAction } from './recommendationActions.js';
+import { buildFileDigest } from './knowledgeDigest.js';
 import type { GraphNodeType, GraphTag } from './projectGraph/index.js';
 
 // ── Marketplace search ───────────────────────────────────────────────────────
@@ -760,6 +763,24 @@ function wireUniverseWebview(
           // Notify webview so it can refresh knowledge state
           void webview.postMessage({ type: 'tell-all-result', success: true });
         }
+      });
+    } else if (msg?.type === 'recommendation-action') {
+      // Cost panel button: validate across the webview boundary, run it here, report back.
+      const id = typeof msg.id === 'string' ? msg.id : '';
+      if (!isRecommendationAction(msg.action)) {
+        void webview.postMessage({ type: 'recommendation-action-result', id, ok: false, message: 'Unknown action.' });
+        return;
+      }
+      void dispatchRecommendationAction(msg.action, {
+        workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        readFile: (p) => fsp.readFile(p, 'utf8'),
+        buildDigest: (p, content) => buildFileDigest(p, content),
+        writeKnowledge: (key, value) => { sharedKnowledge.write(key, value, 'workspace', 'user', 'user', undefined, undefined, undefined, 'user'); },
+        openFile: async (p) => { await vscode.window.showTextDocument(vscode.Uri.file(p)); },
+        broadcast: (message) => { sharedKnowledge.write(`broadcast-${Date.now()}`, message, 'workspace', 'user', 'user'); },
+        postToWebview: (m) => { void webview.postMessage(m); },
+      }).then((result) => {
+        void webview.postMessage({ type: 'recommendation-action-result', id, ...result });
       });
     } else if (msg?.type === 'knowledge-add') {
       const validUntil = typeof msg.validUntil === 'number' ? msg.validUntil : undefined;
