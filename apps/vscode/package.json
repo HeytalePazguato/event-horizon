@@ -130,6 +130,11 @@
           "description": "Enable file locking to prevent multiple agents from writing to the same file simultaneously. When enabled, agents must acquire a lock before writing — conflicting writes are blocked. Requires reinstalling hooks.",
           "order": 2
         },
+        "eventHorizon.knowledge.interceptReads": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When a Claude Code agent reads a file that is in shared knowledge and has not changed since, answer the first read with the stored summary instead of the full file. Running Read again on the same path returns the full contents, so files stay editable. Secret files are never intercepted."
+        },
         "eventHorizon.worktreeIsolation": {
           "type": "boolean",
           "default": false,

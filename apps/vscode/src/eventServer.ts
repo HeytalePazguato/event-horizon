@@ -142,6 +142,8 @@ import { AgentProfiler } from './agentProfiler.js';
 import { SharedKnowledgeStore } from './sharedKnowledge.js';
 import { parseOtlpMetrics, parseOtlpLogs, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver.js';
 import { parseStatusLinePayload, type StatusLineSnapshot } from './statusLine.js';
+import { ReadInterceptor } from './readInterception.js';
+import { isSecretPath } from './secretScanner.js';
 import { SpawnRegistry, ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner } from './spawnRegistry.js';
 import { SessionStore } from './sessionStore.js';
 import { syncSkillsForAgent } from './skillSync.js';
@@ -160,6 +162,16 @@ export const messageQueue = new MessageQueue();
 export const roleManager = new RoleManager();
 export const agentProfiler = new AgentProfiler();
 export const sharedKnowledge = new SharedKnowledgeStore();
+
+let readInterceptionEnabled = true;
+/** Toggle digest interception of repeat reads (eventHorizon.knowledge.interceptReads). */
+export function setReadInterception(enabled: boolean): void { readInterceptionEnabled = enabled; }
+export const readInterceptor = new ReadInterceptor({
+  entries: () => sharedKnowledge.getAllEntries().workspace,
+  mtimeMs: (filePath) => { try { return fs.statSync(filePath).mtimeMs; } catch { return null; } },
+  isSecretPath: (filePath) => isSecretPath(filePath),
+  enabled: () => readInterceptionEnabled,
+});
 export const spawnRegistry = new SpawnRegistry();
 export const sessionStore = new SessionStore();
 export const heartbeatManager = new HeartbeatManager();
@@ -699,6 +711,12 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
 
         if (action === 'query') {
           const result = lockManager.query(filePath, agentId);
+          // A lock held by someone else wins; otherwise a Read of a knowledge-backed file
+          // may be answered with its digest (deny once, see readInterception.ts).
+          if (result.allowed) {
+            const intercept = readInterceptor.decide(agentId, filePath, typeof b.toolName === 'string' ? b.toolName : undefined);
+            if (intercept) { send(200, JSON.stringify(intercept)); return; }
+          }
           send(result.allowed ? 200 : 409, JSON.stringify(result));
           return;
         }

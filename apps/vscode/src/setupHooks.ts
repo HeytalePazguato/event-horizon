@@ -108,12 +108,18 @@ if [ -n "$FP" ]; then
     ACTION="check"
   fi
   RESP=$(curl -s --connect-timeout 2 --max-time 3 -X POST -H "Content-Type: application/json" ${authHeaderLine} \\
-    -d "{\\"action\\":\\"$ACTION\\",\\"filePath\\":\\"$FP\\",\\"agentId\\":\\"$AGENT\\",\\"agentName\\":\\"$ANAME\\"}" \\
+    -d "{\\"action\\":\\"$ACTION\\",\\"filePath\\":\\"$FP\\",\\"agentId\\":\\"$AGENT\\",\\"agentName\\":\\"$ANAME\\",\\"toolName\\":\\"$TN\\"}" \\
     "${lockUrl}" 2>/dev/null)
   if echo "$RESP" | grep -q '"allowed":false'; then
     OWNER=$(echo "$RESP" | sed -n 's/.*"owner" *: *"\\([^"]*\\)".*/\\1/p')
     echo "[Event Horizon file lock] BLOCKED: $FP is locked by $OWNER who is actively editing it. You MUST NOT access this file by ANY means — no Read, no Write, no Edit, no Bash commands. The lock will release automatically when $OWNER finishes (within 30 seconds of their last edit). Work on OTHER files first, then retry this file later." >&2
     exit 2
+  fi
+  # A Read of a file in shared knowledge may be answered with its digest: the
+  # server returns the PreToolUse hook JSON and Claude Code reads it from stdout.
+  if printf '%s' "$RESP" | grep -q '"hookSpecificOutput"'; then
+    printf '%s' "$RESP"
+    exit 0
   fi
 fi
 `;
@@ -230,7 +236,7 @@ if ($folder) { $name = "Claude Code ($folder)" }
 # Write/Edit tools acquire the lock; reads only ask whether someone else holds it.
 $action = 'query'
 if (@('Write', 'Edit', 'MultiEdit', 'WriteFile') -contains $tn) { $action = 'check' }
-$body = @{ action = $action; filePath = [string]$fp; agentId = [string]$j.session_id; agentName = $name } | ConvertTo-Json -Compress
+$body = @{ action = $action; filePath = [string]$fp; agentId = [string]$j.session_id; agentName = $name; toolName = $tn } | ConvertTo-Json -Compress
 $r = Post-Json 'http://127.0.0.1:${port}/lock' $body
 if ($r -and $r.Body -match '"allowed"\\s*:\\s*false') {
   $owner = 'another agent'
@@ -238,6 +244,8 @@ if ($r -and $r.Body -match '"allowed"\\s*:\\s*false') {
   [Console]::Error.WriteLine("[Event Horizon file lock] BLOCKED: $fp is locked by $owner who is actively editing it. You MUST NOT access this file by ANY means. No Read, no Write, no Edit, no Bash commands. The lock will release automatically when $owner finishes (within 30 seconds of their last edit). Work on OTHER files first, then retry this file later.")
   exit 2
 }
+# A Read of a file in shared knowledge may be answered with its digest.
+if ($r -and $r.Body -match '"hookSpecificOutput"') { [Console]::Out.Write($r.Body); exit 0 }
 exit 0
 `;
 }

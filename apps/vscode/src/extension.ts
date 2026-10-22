@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setMcpPurgeStaleAgents, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, setReadInterception, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setMcpPurgeStaleAgents, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -1775,6 +1775,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const ehConfig = vscode.workspace.getConfiguration('eventHorizon');
   const configuredPort = ehConfig.get<number>('port', 28765);
   setFileLockingEnabled(ehConfig.get<boolean>('fileLockingEnabled', false));
+  setReadInterception(ehConfig.get<boolean>('knowledge.interceptReads', true));
 
   // Set default worktree isolation from config
   spawnRegistry.setDefaultIsolation(ehConfig.get<boolean>('worktreeIsolation', false) ? 'worktree' : 'none');
@@ -1786,6 +1787,9 @@ export function activate(context: vscode.ExtensionContext): void {
         setFileLockingEnabled(
           vscode.workspace.getConfiguration('eventHorizon').get<boolean>('fileLockingEnabled', false),
         );
+      }
+      if (e.affectsConfiguration('eventHorizon.knowledge.interceptReads')) {
+        setReadInterception(vscode.workspace.getConfiguration('eventHorizon').get<boolean>('knowledge.interceptReads', true));
       }
       if (e.affectsConfiguration('eventHorizon.worktreeIsolation')) {
         const enabled = vscode.workspace.getConfiguration('eventHorizon').get<boolean>('worktreeIsolation', false);
