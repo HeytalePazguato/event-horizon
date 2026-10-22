@@ -1,5 +1,5 @@
 // OpenCode v1 plugin: forwards OpenCode events to the Event Horizon server.
-import { send, sendFinal, checkLock } from '../shared/transport';
+import { send, sendFinal, checkLock, randomSuffix } from '../shared/transport';
 
 interface UrlLike {
   href?: string;
@@ -55,7 +55,7 @@ export default async function EventHorizon(
   // Use project.id when available, but always append a unique suffix so
   // multiple OpenCode instances in the same project get separate planets.
   const base = project?.id ? String(project.id) : 'opencode';
-  const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const uid = Date.now().toString(36) + randomSuffix();
   const sessionId = base + '-' + uid;
 
   // Resolve cwd: worktree/directory may be strings, URL objects, or absent.
