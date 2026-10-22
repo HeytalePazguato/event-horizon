@@ -1627,7 +1627,8 @@ export class McpServer {
             exec(task.verifyCommand!, { cwd, timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
               const output = ((stdout ?? '') + (stderr ? `\n--- stderr ---\n${stderr}` : '')).slice(0, 2000);
               if (error) {
-                resolve({ exitCode: error.code ?? 1, output });
+                // code is a string (e.g. an errno name) when the process never ran; report it as a failure.
+                resolve({ exitCode: typeof error.code === 'number' ? error.code : 1, output });
               } else {
                 resolve({ exitCode: 0, output });
               }
