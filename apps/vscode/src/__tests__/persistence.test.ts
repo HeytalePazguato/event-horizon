@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import initSqlJs from 'sql.js';
 import { EventHorizonDB } from '../persistence.js';
 import type { AgentEvent } from '@event-horizon/core';
-import type { PersistedKnowledgeEntry, AgentSession } from '../persistence.js';
+import type { PersistedKnowledgeEntry, AgentSession, CostLedgerRow } from '../persistence.js';
 import { GRAPH_SCHEMA_SQL } from '../projectGraph/schema.js';
 
 function makeEvent(overrides?: Partial<AgentEvent>): AgentEvent {
@@ -324,6 +324,102 @@ describe('EventHorizonDB', () => {
       expect(knowledge[0].key).toBe('saved-key');
 
       db2.close();
+    });
+  });
+
+  // ── Cost ledger + dirty-flag ───────────────────────────────────────────
+
+  describe('cost ledger', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    function makeCost(overrides?: Partial<CostLedgerRow>): CostLedgerRow {
+      return {
+        id: `c-${Math.random().toString(36).slice(2, 8)}`,
+        agentId: 'agent-1',
+        source: 'otel',
+        costUsd: 1,
+        timestamp: Date.now(),
+        ...overrides,
+      };
+    }
+
+    it('creates the table on a fresh DB and keeps it after reopen', async () => {
+      expect(db.queryCostByAgent('agent-1')).toEqual([]);
+      db.upsertCostEntry(makeCost({ id: 'c1' }));
+      const buffer = db.save();
+      db.close();
+      db = await EventHorizonDB.create(buffer);
+      expect(db.queryCostByAgent('agent-1')).toHaveLength(1);
+    });
+
+    it('adds the table to an existing DB file that lacks it', async () => {
+      const SQL = await initSqlJs();
+      const old = new SQL.Database();
+      old.run('CREATE TABLE eh_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+      const buffer = old.export();
+      old.close();
+      db.close();
+      db = await EventHorizonDB.create(buffer);
+      db.upsertCostEntry(makeCost({ id: 'c1' }));
+      expect(db.queryCostByAgent('agent-1')).toHaveLength(1);
+    });
+
+    it('round-trips an entry and upserts by id', () => {
+      const entry = makeCost({
+        id: 'c1', sessionId: 's1', planId: 'p1', model: 'claude-opus-5-5', source: 'statusline',
+        costUsd: 0.5, inputTokens: 10, outputTokens: 20, cacheReadTokens: 30, cacheCreationTokens: 40,
+      });
+      db.upsertCostEntry(entry);
+      expect(db.queryCostByAgent('agent-1')).toEqual([entry]);
+
+      db.upsertCostEntry({ ...entry, costUsd: 0.75 });
+      const rows = db.queryCostByAgent('agent-1');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].costUsd).toBe(0.75);
+    });
+
+    it('marks the DB dirty on write', () => {
+      db.save();
+      expect(db.isDirty()).toBe(false);
+      db.upsertCostEntry(makeCost());
+      expect(db.isDirty()).toBe(true);
+    });
+
+    it('computes per-agent totals with since and plan filters', () => {
+      const now = Date.now();
+      db.upsertCostEntry(makeCost({ id: 'a', agentId: 'a1', costUsd: 1, inputTokens: 5, planId: 'p1', timestamp: now }));
+      db.upsertCostEntry(makeCost({ id: 'b', agentId: 'a1', costUsd: 2, inputTokens: 7, planId: 'p2', timestamp: now - 10 * DAY }));
+      db.upsertCostEntry(makeCost({ id: 'c', agentId: 'a2', costUsd: 4, planId: 'p1', timestamp: now }));
+
+      const all = db.queryCostTotals();
+      expect(all.map((t) => [t.agentId, t.costUsd])).toEqual([['a2', 4], ['a1', 3]]);
+      expect(all.find((t) => t.agentId === 'a1')).toMatchObject({ inputTokens: 12, entryCount: 2 });
+
+      expect(db.queryCostTotals({ since: now - DAY }).map((t) => t.agentId).sort()).toEqual(['a1', 'a2']);
+      expect(db.queryCostTotals({ since: now - DAY }).find((t) => t.agentId === 'a1')?.costUsd).toBe(1);
+      expect(db.queryCostTotals({ planId: 'p2' })).toHaveLength(1);
+    });
+
+    it('prunes entries older than the threshold', () => {
+      const now = Date.now();
+      db.upsertCostEntry(makeCost({ id: 'old', timestamp: now - 40 * DAY }));
+      db.upsertCostEntry(makeCost({ id: 'new', timestamp: now }));
+      expect(db.pruneCostLedger(30 * DAY)).toBe(1);
+      expect(db.queryCostByAgent('agent-1').map((r) => r.id)).toEqual(['new']);
+      expect(db.pruneCostLedger(30 * DAY)).toBe(0);
+    });
+  });
+
+  describe('getDbSizeBytes', () => {
+    it('does not reset the dirty flag', () => {
+      db.insertEvent(makeEvent());
+      expect(db.isDirty()).toBe(true);
+      expect(db.getDbSizeBytes()).toBeGreaterThan(0);
+      expect(db.isDirty()).toBe(true);
+
+      db.save();
+      expect(db.isDirty()).toBe(false);
+      db.getDbSizeBytes();
+      expect(db.isDirty()).toBe(false);
     });
   });
 

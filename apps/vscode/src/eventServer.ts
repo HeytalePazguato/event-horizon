@@ -33,7 +33,18 @@ export const MAX_PAYLOAD_SIZE = 65_536;
 
 export interface EventServerCallbacks {
   onEvent: (event: AgentEvent) => void;
+  /**
+   * OTLP/HTTP JSON exports from Claude Code (`/otlp/v1/metrics`, `/otlp/v1/logs`).
+   * `rawBody` is the request text exactly as received, for verbatim forwarding.
+   */
+  onOtlpMetrics?: (samples: OtlpMetricSample[], rawBody: string, contentType: string) => void;
+  onOtlpLogs?: (records: OtlpLogRecord[], rawBody: string, contentType: string) => void;
+  /** Claude Code statusLine snapshots posted by the statusLine bridge (`/claude/status`). */
+  onStatusLine?: (snapshot: StatusLineSnapshot) => void;
 }
+
+/** Raw request text per request, kept so OTLP payloads can be forwarded byte-for-byte. */
+const rawBodies = new WeakMap<http.IncomingMessage, string>();
 
 let server: http.Server | null = null;
 let callbacks: EventServerCallbacks | null = null;
@@ -129,6 +140,10 @@ import { MessageQueue } from './messageQueue.js';
 import { RoleManager } from './roleManager.js';
 import { AgentProfiler } from './agentProfiler.js';
 import { SharedKnowledgeStore } from './sharedKnowledge.js';
+import { parseOtlpMetrics, parseOtlpLogs, type OtlpMetricSample, type OtlpLogRecord } from './otlp/otlpReceiver.js';
+import { parseStatusLinePayload, type StatusLineSnapshot } from './statusLine.js';
+import { ReadInterceptor } from './readInterception.js';
+import { isSecretPath } from './secretScanner.js';
 import { SpawnRegistry, ClaudeCodeSpawner, OpenCodeSpawner, CursorSpawner } from './spawnRegistry.js';
 import { SessionStore } from './sessionStore.js';
 import { syncSkillsForAgent } from './skillSync.js';
@@ -147,6 +162,16 @@ export const messageQueue = new MessageQueue();
 export const roleManager = new RoleManager();
 export const agentProfiler = new AgentProfiler();
 export const sharedKnowledge = new SharedKnowledgeStore();
+
+let readInterceptionEnabled = true;
+/** Toggle digest interception of repeat reads (eventHorizon.knowledge.interceptReads). */
+export function setReadInterception(enabled: boolean): void { readInterceptionEnabled = enabled; }
+export const readInterceptor = new ReadInterceptor({
+  entries: () => sharedKnowledge.getAllEntries().workspace,
+  mtimeMs: (filePath) => { try { return fs.statSync(filePath).mtimeMs; } catch { return null; } },
+  isSecretPath: (filePath) => isSecretPath(filePath),
+  enabled: () => readInterceptionEnabled,
+});
 export const spawnRegistry = new SpawnRegistry();
 export const sessionStore = new SessionStore();
 export const heartbeatManager = new HeartbeatManager();
@@ -164,13 +189,78 @@ export const budgetManager = new BudgetManager();
  * Returns '' when nothing is waiting, so quiet turns inject nothing at all.
  * Only peer mail is announced — system notices are not worth a nudge.
  */
-export function buildInboxNotice(agentId: string): string {
+export function buildInboxNotice(agentId: string, now = Date.now()): string {
+  const parts: string[] = [];
   const { peer, senders } = messageQueue.summarizeUnread(agentId);
-  if (peer === 0) return '';
-  const from = senders.slice(0, 3).join(', ');
-  const more = senders.length > 3 ? ` and ${senders.length - 3} more` : '';
-  return `[Event Horizon] You have ${peer} unread message${peer === 1 ? '' : 's'} `
-    + `from ${from}${more}. Call eh_get_messages(agent_id: "${agentId}", kind: "peer") to read them.`;
+  if (peer > 0) {
+    const from = senders.slice(0, 3).join(', ');
+    const more = senders.length > 3 ? ` and ${senders.length - 3} more` : '';
+    parts.push(`[Event Horizon] You have ${peer} unread message${peer === 1 ? '' : 's'} `
+      + `from ${from}${more}. Call eh_get_messages(agent_id: "${agentId}", kind: "peer") to read them.`);
+  }
+  const knowledge = buildKnowledgeNotice(agentId, now);
+  if (knowledge) parts.push(knowledge);
+  return parts.join('\n\n');
+}
+
+/** Upper bound on knowledge text injected into one turn. */
+export const KNOWLEDGE_NOTICE_MAX_CHARS = 2000;
+
+/** agentId → (scope:key → updatedAt) of knowledge already injected into that agent. */
+const knowledgeSent = new Map<string, Map<string, number>>();
+
+/** @internal — exposed for testing only. */
+export function _resetKnowledgeSent(): void { knowledgeSent.clear(); }
+
+/** The plan an agent works on: one where it holds a task, else the active plan. */
+function planIdForAgent(agentId: string): string | undefined {
+  for (const plan of planBoardManager.getAllPlans()) {
+    if (plan.tasks.some((t) => t.assignee === agentId)) return plan.id;
+  }
+  return planBoardManager.getPlan()?.id;
+}
+
+/**
+ * Shared knowledge is pull-only through eh_read_shared, so an agent that never
+ * calls it never learns what peers recorded. This pushes entries the agent has
+ * not seen yet into the next prompt-submit turn, newest first and capped.
+ *
+ * An entry is re-sent only when its updatedAt changes. Skipped: expired
+ * entries, entries the agent wrote itself, and auto-seeded instruction files
+ * (those are already in the agent's own context).
+ */
+function buildKnowledgeNotice(agentId: string, now: number): string {
+  const { workspace, plan } = sharedKnowledge.getAllEntries(planIdForAgent(agentId));
+  const sent = knowledgeSent.get(agentId) ?? new Map<string, number>();
+  const fresh = [...workspace, ...plan]
+    .filter((e) => e.source !== 'auto'
+      && e.authorId !== agentId
+      && (e.validUntil === undefined || e.validUntil > now)
+      && sent.get(`${e.scope}:${e.key}`) !== e.updatedAt)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  if (fresh.length === 0) return '';
+
+  const header = '[Event Horizon] Shared knowledge from your team (new or updated since your last turn):';
+  const lines: string[] = [];
+  let length = header.length;
+  for (const entry of fresh) {
+    const line = `- ${entry.key}: ${entry.value}`;
+    if (length + 1 + line.length > KNOWLEDGE_NOTICE_MAX_CHARS) {
+      // Always deliver at least one entry, truncated if it alone is too long.
+      if (lines.length === 0) lines.push(line.slice(0, KNOWLEDGE_NOTICE_MAX_CHARS - length - 2) + '…');
+      else break;
+    } else {
+      lines.push(line);
+    }
+    length += 1 + lines[lines.length - 1].length;
+    sent.set(`${entry.scope}:${entry.key}`, entry.updatedAt);
+  }
+  knowledgeSent.set(agentId, sent);
+  const omitted = fresh.length - lines.length;
+  const tail = omitted > 0
+    ? `\n(${omitted} more not shown — call eh_read_shared to see everything.)`
+    : '';
+  return `${header}\n${lines.join('\n')}${tail}`;
 }
 
 /**
@@ -306,6 +396,11 @@ export function setMcpOnEvent(onEvent: (event: import('@event-horizon/core').Age
   if (mcpServer) mcpServer.setOnEvent(onEvent);
 }
 
+/** Wire the lifecycle-owned purge into eh_purge_stale_agents. */
+export function setMcpPurgeStaleAgents(purgeStaleAgents: () => string[]): void {
+  if (mcpServer) mcpServer.setPurgeStaleAgents(purgeStaleAgents);
+}
+
 // Backward-compat exports used by extension.ts
 export function setFileLockingEnabled(enabled: boolean): void { lockManager.setEnabled(enabled); }
 export function isFileLockingEnabled(): boolean { return lockManager.isEnabled(); }
@@ -387,6 +482,7 @@ export function parseBody(req: http.IncomingMessage): Promise<unknown> {
       settled = true;
       try {
         const body = Buffer.concat(chunks).toString('utf8');
+        rawBodies.set(req, body);
         if (!body) { resolve({}); return; }
         const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
         if (contentType.includes('application/x-www-form-urlencoded')) {
@@ -558,6 +654,30 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
         return;
       }
 
+      // ── Claude Code statusLine bridge ──────────────────────────────────
+      // The bridge discards our reply; answer first so the statusline never waits.
+      if (route === '/claude/status') {
+        const snapshot = parseStatusLinePayload(body);
+        if (!snapshot) { send(400, JSON.stringify({ error: 'Missing session_id' })); return; }
+        send(200, '');
+        try { cb.onStatusLine?.(snapshot); } catch { /* never affect the event path */ }
+        return;
+      }
+
+      // ── OTLP/HTTP JSON (Claude Code telemetry) ─────────────────────────
+      // Answer with the empty Export*ServiceResponse an OTLP exporter expects.
+      // Handlers run after the response so telemetry never delays the exporter.
+      if (route === '/otlp/v1/metrics' || route === '/otlp/v1/logs') {
+        const raw = rawBodies.get(req) ?? '';
+        const contentType = String(req.headers['content-type'] ?? 'application/json');
+        send(200, '{}');
+        try {
+          if (route === '/otlp/v1/metrics') cb.onOtlpMetrics?.(parseOtlpMetrics(body), raw, contentType);
+          else cb.onOtlpLogs?.(parseOtlpLogs(body), raw, contentType);
+        } catch { /* telemetry must never affect the event path */ }
+        return;
+      }
+
       // ── MCP endpoint (JSON-RPC 2.0) ────────────────────────────────────
       if (route === '/mcp') {
         if (!mcpServer) {
@@ -591,6 +711,12 @@ export function handleRequest(req: http.IncomingMessage, res: http.ServerRespons
 
         if (action === 'query') {
           const result = lockManager.query(filePath, agentId);
+          // A lock held by someone else wins; otherwise a Read of a knowledge-backed file
+          // may be answered with its digest (deny once, see readInterception.ts).
+          if (result.allowed) {
+            const intercept = readInterceptor.decide(agentId, filePath, typeof b.toolName === 'string' ? b.toolName : undefined);
+            if (intercept) { send(200, JSON.stringify(intercept)); return; }
+          }
           send(result.allowed ? 200 : 409, JSON.stringify(result));
           return;
         }

@@ -11,7 +11,11 @@
 import { describe, it, expect } from 'vitest';
 import { __hookTestables } from '../setupHooks.js';
 
-const { expectedCommandFor, isCurrentEhHook, isEhHook } = __hookTestables;
+const { expectedCommandFor, isCurrentEhHook, isEhHook, setHookShell } = __hookTestables;
+
+// These cases describe the POSIX command shapes; Windows-without-Git-Bash is
+// covered in hookShell.test.ts. Pin it so the result doesn't depend on the machine.
+setHookShell('posix');
 
 describe('expectedCommandFor', () => {
   it('gives UserPromptSubmit the inbox command that keeps stdout', () => {

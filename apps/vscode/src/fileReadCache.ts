@@ -16,7 +16,12 @@ export interface FileReadEntry {
   readers: Set<string>;
   lastReadTs: number;
   tokenEstimate: number;
+  /** Set when the secret gate rejected this file: content is empty and the entry is never served. */
+  secret?: boolean;
 }
+
+/** Decides whether a file's content may be retained. Injected so this module stays pure. */
+export type MayCacheFn = (path: string, content: string) => boolean;
 
 export interface FileReadCacheStats {
   files: number;
@@ -33,6 +38,8 @@ export class FileReadCache {
   private entries = new Map<string, FileReadEntry>();
   private dedupHits = 0;
 
+  constructor(private readonly mayCache: MayCacheFn = () => true) {}
+
   /**
    * Record a file read. If the entry is absent, or its mtime/hash differs, the
    * entry is (re)created with fresh content and a readers set containing this
@@ -47,15 +54,18 @@ export class FileReadCache {
 
     if (!isValid) {
       // Fresh (or changed) file — rebuild the entry and reset readers.
+      // Secret files are still tracked (hash/readers) but their content is never retained.
+      const secret = !this.mayCache(path, content);
       this.entries.set(path, {
         path,
         mtimeMs,
         contentHash: hash,
-        content,
+        content: secret ? '' : content,
         sizeBytes: content.length,
         readers: new Set([agentId]),
         lastReadTs: ts,
-        tokenEstimate: estimateTokens(content),
+        tokenEstimate: secret ? 0 : estimateTokens(content),
+        ...(secret ? { secret: true } : {}),
       });
       return;
     }
@@ -68,14 +78,15 @@ export class FileReadCache {
     existing.lastReadTs = ts;
   }
 
-  /** Get the entry for a path, or undefined if not cached. */
+  /** Get the entry for a path, or undefined if not cached (or withheld as a secret). */
   get(path: string): FileReadEntry | undefined {
-    return this.entries.get(path);
+    const entry = this.entries.get(path);
+    return entry && !entry.secret ? entry : undefined;
   }
 
-  /** Whether a path is currently cached. */
+  /** Whether a servable (non-secret) entry is cached for a path. */
   has(path: string): boolean {
-    return this.entries.has(path);
+    return this.get(path) !== undefined;
   }
 
   /** Remove a cached entry (e.g. after a write invalidates it). */
@@ -93,6 +104,7 @@ export class FileReadCache {
     const digest: FileReadEntry[] = [];
     let used = 0;
     for (const entry of ordered) {
+      if (entry.secret) continue;
       if (used + entry.tokenEstimate > maxTokens) continue;
       digest.push(entry);
       used += entry.tokenEstimate;

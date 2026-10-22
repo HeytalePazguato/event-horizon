@@ -1,7 +1,7 @@
 {
   "name": "event-horizon-vscode",
   "publisher": "HeytalePazguato",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "private": true,
   "displayName": "Event Horizon",
   "description": "Multi-agent orchestration for AI coding agents. One agent creates the plan, spawns the team, and manages the project. Shared plans, file locking, inter-agent messaging, budget controls, and live visualization. Works with Claude Code, OpenCode, Copilot, and Cursor.",
@@ -79,6 +79,10 @@
         "title": "Event Horizon: Clear Stale Agents"
       },
       {
+        "command": "eventHorizon.purgeTelemetry",
+        "title": "Event Horizon: Delete Stored Claude Code Telemetry"
+      },
+      {
         "command": "eventHorizon.exportData",
         "title": "Event Horizon: Export Data...",
         "icon": "$(export)"
@@ -125,6 +129,11 @@
           "default": false,
           "description": "Enable file locking to prevent multiple agents from writing to the same file simultaneously. When enabled, agents must acquire a lock before writing — conflicting writes are blocked. Requires reinstalling hooks.",
           "order": 2
+        },
+        "eventHorizon.knowledge.interceptReads": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When a Claude Code agent reads a file that is in shared knowledge and has not changed since, answer the first read with the stored summary instead of the full file. Running Read again on the same path returns the full contents, so files stay editable. Secret files are never intercepted."
         },
         "eventHorizon.worktreeIsolation": {
           "type": "boolean",
@@ -343,6 +352,28 @@
           "description": "Budget warning threshold (0.1 to 1.0). A warning is shown when spending reaches this percentage of the plan budget.",
           "order": 7
         },
+        "eventHorizon.telemetry.retentionDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "markdownDescription": "Days of Claude Code telemetry rollups and log records to keep in `telemetry.sqlite`. Older data is removed at startup. Use **Event Horizon: Delete Stored Claude Code Telemetry** to remove it all."
+        },
+        "eventHorizon.claudeStatusLine.mode": {
+          "type": "string",
+          "enum": ["chain", "always", "off"],
+          "enumDescriptions": [
+            "Wrap your existing Claude Code statusLine so Event Horizon also receives its data. Installs nothing if you have no statusLine.",
+            "Also install one when you have none, showing a compact [model] ctx % · $cost line. A custom statusLine hides Claude Code's footer keyboard hints.",
+            "Remove the bridge and restore your original statusLine."
+          ],
+          "default": "chain",
+          "markdownDescription": "How Event Horizon reads Claude Code's statusLine data (its own session cost, prompt-cache hit ratio, cache-miss causes and context usage). Your original statusLine is saved and runs unchanged; it is restored when this is `off` or hooks are removed."
+        },
+        "eventHorizon.claudeTelemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Send Claude Code's OpenTelemetry cost and usage data to Event Horizon so agent cost is measured rather than estimated. Writes per-signal `OTEL_*` variables into the `env` block of `~/.claude/settings.json` (prompts, responses and tool contents stay off) and restores the previous values when turned off. Takes effect for Claude Code sessions started afterwards."
+        },
         "eventHorizon.persistence.enabled": {
           "type": "boolean",
           "default": true,
@@ -376,12 +407,6 @@
           "maximum": 2000000,
           "description": "Estimated context window size in tokens (drives the planet fuel-gauge calculation). Default is 200000 for Claude Sonnet/Opus.",
           "order": 34
-        },
-        "eventHorizon.autoEvictLostAgents": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically remove agents that have been silent for more than 5 minutes. Off by default: an idle agent sends nothing, so silence is not evidence it has exited, and enabling this makes live idle agents disappear from the universe. Real exits are still detected via SessionEnd and spawned-process exit; use the 'Purge Stale Agents' command to clean up on demand.",
-          "order": 36
         },
         "eventHorizon.autoDetect.enabled": {
           "type": "boolean",
@@ -498,10 +523,10 @@
     ]
   },
   "scripts": {
-    "build": "node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs && pnpm run build:webview",
+    "build": "node scripts/build-plugins.mjs && node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs && pnpm run build:webview",
     "lint": "eslint src/ webview/",
-    "build:ext": "node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
-    "build:ext:prod": "node scripts/build-extension.mjs --prod && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
+    "build:ext": "node scripts/build-plugins.mjs && node scripts/build-extension.mjs && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
+    "build:ext:prod": "node scripts/build-plugins.mjs && node scripts/build-extension.mjs --prod && node scripts/copy-sql-wasm.mjs && node scripts/copy-tree-sitter-wasm.mjs",
     "build:webview": "node webview/esbuild.mjs",
     "build:webview:dev": "node webview/esbuild.mjs --dev",
     "build:webview:prod": "node webview/esbuild.mjs --minify",

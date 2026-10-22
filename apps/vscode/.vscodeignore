@@ -3,6 +3,7 @@
 .cursor-plugin/**
 .turbo/**
 src/**
+plugins/**
 webview/**
 scripts/**
 node_modules/**

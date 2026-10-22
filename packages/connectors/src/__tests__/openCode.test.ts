@@ -182,6 +182,43 @@ describe('mapOpenCodeToEvent', () => {
     expect(result!.payload.costUsd).toBe(0.25);
   });
 
+  describe('lifecycle hints', () => {
+    it.each(['session.execution.succeeded', 'session.execution.failed', 'session.idle'])(
+      'maps %s to an agent.idle turn end',
+      (event) => {
+        const r = mapOpenCodeToEvent({ event, agentId: 'oc-1' });
+        expect(r!.type).toBe('agent.idle');
+        expect(r!.payload.lifecycleSignal).toBe('opencode-session-idle');
+      },
+    );
+
+    it('keeps the interrupt reason on session.execution.interrupted', () => {
+      const r = mapOpenCodeToEvent({ event: 'session.execution.interrupted', agentId: 'oc-1', payload: { reason: 'inactivity' } });
+      expect(r!.type).toBe('agent.idle');
+      expect(r!.payload.lifecycleSignal).toBe('opencode-session-idle');
+      expect(r!.payload.interruptReason).toBe('inactivity');
+      expect(r!.payload.outcome).toBe('interrupted');
+    });
+
+    it('reads the interrupt reason from a nested data object', () => {
+      const r = mapOpenCodeToEvent({ event: 'session.execution.interrupted', agentId: 'oc-1', payload: { data: { reason: 'shutdown' } } });
+      expect(r!.payload.interruptReason).toBe('shutdown');
+    });
+
+    it('maps session.execution.started to activity', () => {
+      const r = mapOpenCodeToEvent({ event: 'session.execution.started', agentId: 'oc-1' });
+      expect(r!.type).toBe('task.progress');
+      expect(r!.payload.lifecycleSignal).toBe('activity');
+    });
+
+    it('maps session.status busy to activity and idle to a turn end', () => {
+      const busy = mapOpenCodeToEvent({ event: 'session.status', agentId: 'oc-1', payload: { properties: { status: { type: 'busy' } } } });
+      expect(busy!.payload.lifecycleSignal).toBe('activity');
+      const idle = mapOpenCodeToEvent({ event: 'session.status', agentId: 'oc-1', payload: { properties: { status: { type: 'idle' } } } });
+      expect(idle!.payload.lifecycleSignal).toBe('opencode-session-idle');
+    });
+  });
+
   it('does not set isSkill for non-skill tools', () => {
     const result = mapOpenCodeToEvent({
       event: 'tool.execute.before',

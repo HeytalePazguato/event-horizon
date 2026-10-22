@@ -6,8 +6,8 @@
 import { useEffect, useRef, startTransition, type MutableRefObject } from 'react';
 import type { ShipSpawn, SparkSpawn } from '@event-horizon/renderer';
 import { useCommandCenterStore, clearAllBoostTimers } from '@event-horizon/ui';
-import type { AgentState, AgentRuntimeState, AgentMetrics } from '@event-horizon/core';
-import type { SkillInfo, MarketplaceSkillResult, PlanView, PlanSummary } from '@event-horizon/ui';
+import type { AgentState, AgentRuntimeState, AgentMetrics, Recommendation } from '@event-horizon/core';
+import type { SkillInfo, MarketplaceSkillResult, PlanView, PlanSummary, RecommendationActionStatus, OpsTab } from '@event-horizon/ui';
 
 /** Max visible ships between a given ordered (from→to) pair at once. */
 const MAX_SHIPS_PER_PAIR = 2;
@@ -57,7 +57,9 @@ export interface WebviewMessageDeps {
   setOrchestratorMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setAgentRoleMap?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setCostInsights?: React.Dispatch<React.SetStateAction<unknown>>;
-  setCostRecommendations?: React.Dispatch<React.SetStateAction<string[]>>;
+  setCostRecommendations?: React.Dispatch<React.SetStateAction<Recommendation[]>>;
+  setRecommendationStatus?: React.Dispatch<React.SetStateAction<Record<string, RecommendationActionStatus>>>;
+  setRequestedOpsTab?: React.Dispatch<React.SetStateAction<{ tab: OpsTab; at: number } | null>>;
   setContextLayers?: React.Dispatch<React.SetStateAction<Record<string, unknown> | null>>;
   setPersistedSearchResults?: React.Dispatch<React.SetStateAction<import('@event-horizon/ui').PersistedSearchResult[] | null>>;
   setTaskExecutionEvents?: React.Dispatch<React.SetStateAction<{ taskId: string; events: import('@event-horizon/ui').PersistedSearchResult[] } | null>>;
@@ -92,6 +94,11 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
   // Debounce refs for singularity stats: max 1 update/sec, skip if values unchanged
   const singularityDebounceTimerRef = useRef<number | null>(null);
   const lastSingularityStatsRef = useRef<{ totalTokens: number; totalCostUsd: number } | null>(null);
+  // Ledger grand total from the host. Includes evicted agents, whose metrics this
+  // webview drops on agent.terminate, so it is preferred over summing metrics.
+  const hostCostTotalRef = useRef<number | null>(null);
+  // Resolved cost that arrived before the agent's first event created its metrics entry.
+  const pendingCostRef = useRef(new Map<string, { costUsd: number; estimated: boolean }>());
 
   useEffect(() => {
     const flushSingularityStats = () => {
@@ -110,6 +117,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       }
       if (!hasTokenData) totalTokens = -1;
       if (!hasCostData) totalCost = -1;
+      if (hostCostTotalRef.current !== null && hostCostTotalRef.current > 0) totalCost = hostCostTotalRef.current;
 
       const newStats = { totalTokens, totalCostUsd: totalCost };
       const oldStats = lastSingularityStatsRef.current;
@@ -126,6 +134,29 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
       // ── Dispatch map for non-event messages ──
       if (msg?.type === 'toggle-view') {
         useCommandCenterStore.getState().toggleViewMode();
+        return;
+      }
+      if (msg?.type === 'agent-cost') {
+        const c = msg as unknown as { agentId?: string; costUsd?: number; estimated?: boolean };
+        if (typeof c.agentId !== 'string' || typeof c.costUsd !== 'number') return;
+        const agentId = c.agentId;
+        const costUsd = c.costUsd;
+        // Kept for when the agent's first event creates its metrics entry.
+        pendingCostRef.current.set(agentId, { costUsd, estimated: c.estimated === true });
+        setMetricsMap((prev) => {
+          const m = prev[agentId];
+          if (!m) return prev;
+          return { ...prev, [agentId]: { ...m, estimatedCostUsd: costUsd, estimated: c.estimated === true } };
+        });
+        if (singularityDebounceTimerRef.current === null) {
+          singularityDebounceTimerRef.current = setTimeout(flushSingularityStats, 1000) as unknown as number;
+        }
+        return;
+      }
+      if (msg?.type === 'cost-totals') {
+        const totals = msg as unknown as { totalUsd?: number };
+        if (typeof totals.totalUsd === 'number') hostCostTotalRef.current = totals.totalUsd;
+        flushSingularityStats();
         return;
       }
       if (msg?.type === 'connected-agents') {
@@ -265,6 +296,36 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
             depsRef.current.setTraceAggregate(data.aggregate);
           }
         });
+        return;
+      }
+      if (msg?.type === 'recommendation-action-result') {
+        const r = msg as unknown as { id?: string; ok?: boolean; message?: string };
+        if (typeof r.id === 'string' && r.id && depsRef.current.setRecommendationStatus) {
+          const id = r.id;
+          depsRef.current.setRecommendationStatus((prev) => ({ ...prev, [id]: { state: r.ok ? 'ok' : 'error', message: r.message ?? '' } }));
+          // Success notes fade; errors stay until the next attempt.
+          if (r.ok) {
+            setTimeout(() => depsRef.current.setRecommendationStatus?.((prev) => {
+              if (prev[id]?.state !== 'ok') return prev;
+              const next = { ...prev }; delete next[id]; return next;
+            }), 6_000);
+          }
+        }
+        return;
+      }
+      if (msg?.type === 'focus-agent') {
+        const agentId = (msg as unknown as { agentId?: string }).agentId;
+        if (typeof agentId === 'string') {
+          const store = useCommandCenterStore.getState();
+          store.setSelectedAgent(agentId);
+          store.setViewMode('universe');
+          store.requestCenter();
+        }
+        return;
+      }
+      if (msg?.type === 'open-plan-task') {
+        useCommandCenterStore.getState().setViewMode('operations');
+        depsRef.current.setRequestedOpsTab?.({ tab: 'plan', at: Date.now() });
         return;
       }
       if (msg?.type === 'cost-insights-update') {
@@ -642,7 +703,10 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
         if (type === 'tool.call' && toolName) tb[toolName] = (tb[toolName] ?? 0) + 1;
         const inputTokens = typeof raw.payload?.inputTokens === 'number' ? raw.payload.inputTokens as number : (m?.inputTokens ?? -1);
         const outputTokens = typeof raw.payload?.outputTokens === 'number' ? raw.payload.outputTokens as number : (m?.outputTokens ?? -1);
-        const estimatedCostUsd = typeof raw.payload?.costUsd === 'number' ? raw.payload.costUsd as number : (m?.estimatedCostUsd ?? -1);
+        // Cost is resolved host-side (source precedence + ledger) and arrives as
+        // 'agent-cost'; raw payload costUsd is per-source and would race it.
+        const pendingCost = m ? undefined : pendingCostRef.current.get(agentId);
+        const estimatedCostUsd = m?.estimatedCostUsd ?? pendingCost?.costUsd ?? -1;
         return {
           ...prev,
           [agentId]: {
@@ -654,7 +718,7 @@ export function useWebviewMessages(deps: WebviewMessageDeps): void {
             activeSubagents, activeTasks,
             errorCount: type === 'agent.error' ? (m?.errorCount ?? 0) + 1 : (m?.errorCount ?? 0),
             sessionStartedAt: m?.sessionStartedAt ?? Date.now(),
-            toolBreakdown: tb, inputTokens, outputTokens, estimatedCostUsd, lastUpdated: Date.now(),
+            toolBreakdown: tb, inputTokens, outputTokens, estimatedCostUsd, estimated: m?.estimated ?? pendingCost?.estimated ?? false, lastUpdated: Date.now(),
           },
         };
       });

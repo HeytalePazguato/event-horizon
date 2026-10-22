@@ -198,4 +198,40 @@ describe('mapClaudeHookToEvent', () => {
     expect(result).not.toBeNull();
     expect((result!.payload as Record<string, unknown>).isSkill).toBeUndefined();
   });
+
+  describe('3.3.0 hook events', () => {
+    it('maps PostModelSwitch to the new model id', () => {
+      const ev = mapClaudeHookToEvent({ hook_event_name: 'PostModelSwitch', session_id: 's', from_model: 'claude-opus-4-5', to_model: 'claude-opus-5' });
+      expect(ev).not.toBeNull();
+      expect(ev!.type).toBe('message.receive');
+      expect(ev!.payload).toMatchObject({ hookType: 'model_switch', modelName: 'claude-opus-5', previousModelName: 'claude-opus-4-5' });
+    });
+
+    it('forwards SessionStart resume diagnostics and model', () => {
+      const ev = mapClaudeHookToEvent({
+        hook_event_name: 'SessionStart', session_id: 's', source: 'resume', model: 'claude-opus-5',
+        context_tokens: 182340, estimated_cache_write_usd: 1.1396, prompt_cache_likely_expired: true, seconds_since_last_response: 5400,
+      });
+      expect(ev!.payload).toMatchObject({
+        modelName: 'claude-opus-5', contextTokens: 182340, estimatedCacheWriteUsd: 1.1396,
+        promptCacheLikelyExpired: true, secondsSinceLastResponse: 5400, startSource: 'resume',
+      });
+    });
+
+    it('ignores non-numeric SessionStart diagnostics', () => {
+      const ev = mapClaudeHookToEvent({ hook_event_name: 'SessionStart', session_id: 's', context_tokens: 'lots' });
+      expect((ev!.payload as Record<string, unknown>).contextTokens).toBeUndefined();
+    });
+
+    it('maps StopFailure to agent.error with its message', () => {
+      const ev = mapClaudeHookToEvent({ hook_event_name: 'StopFailure', session_id: 's', error: 'overloaded_error' });
+      expect(ev!.type).toBe('agent.error');
+      expect(ev!.payload).toMatchObject({ hookType: 'stop_failure', errorMessage: 'overloaded_error' });
+    });
+
+    it('maps PostCompact with token counts', () => {
+      const ev = mapClaudeHookToEvent({ hook_event_name: 'PostCompact', session_id: 's', pre_tokens: 190000, post_tokens: 30000 });
+      expect(ev!.payload).toMatchObject({ hookType: 'context_compaction', preTokens: 190000, postTokens: 30000 });
+    });
+  });
 });

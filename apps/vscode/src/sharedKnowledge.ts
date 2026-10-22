@@ -9,6 +9,7 @@
  */
 
 import type { EventBridge } from './projectGraph/eventBridge.js';
+import { KnowledgeStore } from './knowledgeStore.js';
 
 export type KnowledgeScope = 'workspace' | 'plan';
 
@@ -43,6 +44,8 @@ export class SharedKnowledgeStore {
   private planEntries = new Map<string, Map<string, KnowledgeEntry>>(); // planId -> entries
   private changeListeners: Array<() => void> = [];
   private eventBridge?: EventBridge;
+  /** SQLite system of record. When absent (persistence disabled/unavailable) the Maps are the only copy. */
+  private store?: KnowledgeStore;
 
   constructor(eventBridge?: EventBridge) {
     this.eventBridge = eventBridge;
@@ -50,6 +53,50 @@ export class SharedKnowledgeStore {
 
   setEventBridge(bridge: EventBridge | undefined): void {
     this.eventBridge = bridge;
+  }
+
+  /** True once a SQLite-backed store is attached and receiving every write. */
+  hasStore(): boolean {
+    return this.store !== undefined;
+  }
+
+  /**
+   * Attach the SQLite store and hydrate the read cache from it. Entries written to
+   * the cache before the DB was ready (and not already newer in SQLite) are flushed
+   * to the store first so nothing written during startup is lost.
+   */
+  attachStore(store: KnowledgeStore): void {
+    this.store = store;
+    const pending: Array<{ entry: KnowledgeEntry; planId?: string }> = [];
+    for (const entry of this.workspace.values()) pending.push({ entry });
+    for (const [planId, map] of this.planEntries) {
+      for (const entry of map.values()) pending.push({ entry, planId });
+    }
+    const persisted = new Map<string, number>();
+    for (const { entry, planId } of store.load({ includeExpired: true })) {
+      persisted.set(KnowledgeStore.rowId(entry.scope, entry.key, planId), entry.updatedAt);
+    }
+    for (const { entry, planId } of pending) {
+      const prev = persisted.get(KnowledgeStore.rowId(entry.scope, entry.key, planId));
+      if (prev === undefined || prev < entry.updatedAt) store.upsert(entry, planId);
+    }
+
+    this.workspace.clear();
+    this.planEntries.clear();
+    for (const { entry, planId } of store.load({ includeExpired: true })) {
+      if (entry.scope === 'workspace') {
+        this.workspace.set(entry.key, entry);
+        continue;
+      }
+      const pid = planId ?? '_default';
+      let map = this.planEntries.get(pid);
+      if (!map) {
+        map = new Map();
+        this.planEntries.set(pid, map);
+      }
+      map.set(entry.key, entry);
+    }
+    this.notifyChange();
   }
 
   onChange(listener: () => void): void {
@@ -92,7 +139,10 @@ export class SharedKnowledgeStore {
         source: source ?? existing?.source,
       };
       this.workspace.set(key, entry);
-      this.enforceLimit(this.workspace, MAX_WORKSPACE_ENTRIES);
+      this.store?.upsert(entry);
+      for (const evicted of this.enforceLimit(this.workspace, MAX_WORKSPACE_ENTRIES)) {
+        this.store?.delete('workspace', evicted);
+      }
       this.notifyChange();
       this.eventBridge?.ingestKnowledge(entry, 'write');
       return entry;
@@ -119,7 +169,10 @@ export class SharedKnowledgeStore {
       source: source ?? existing?.source,
     };
     planMap.set(key, entry);
-    this.enforceLimit(planMap, MAX_PLAN_ENTRIES);
+    this.store?.upsert(entry, pid);
+    for (const evicted of this.enforceLimit(planMap, MAX_PLAN_ENTRIES)) {
+      this.store?.delete('plan', evicted, pid);
+    }
     this.notifyChange();
     this.eventBridge?.ingestKnowledge(entry, 'write');
     return entry;
@@ -199,6 +252,7 @@ export class SharedKnowledgeStore {
       // User can delete any, agents can only delete their own
       if (callerAuthorId !== 'user' && entry.authorId !== callerAuthorId) return false;
       this.workspace.delete(key);
+      this.store?.delete('workspace', key);
       this.notifyChange();
       this.eventBridge?.ingestKnowledge(entry, 'delete');
       return true;
@@ -211,6 +265,7 @@ export class SharedKnowledgeStore {
     if (!entry) return false;
     if (callerAuthorId !== 'user' && entry.authorId !== callerAuthorId) return false;
     planMap.delete(key);
+    this.store?.delete('plan', key, pid);
     this.notifyChange();
     this.eventBridge?.ingestKnowledge(entry, 'delete');
     return true;
@@ -264,6 +319,10 @@ export class SharedKnowledgeStore {
    * Remove all plan-scoped entries for a given plan.
    */
   clearPlan(planId: string): void {
+    const planMap = this.planEntries.get(planId);
+    if (planMap && this.store) {
+      for (const key of planMap.keys()) this.store.delete('plan', key, planId);
+    }
     this.planEntries.delete(planId);
     this.notifyChange();
   }
@@ -314,13 +373,19 @@ export class SharedKnowledgeStore {
     };
   }
 
-  private enforceLimit(map: Map<string, KnowledgeEntry>, max: number): void {
-    if (map.size <= max) return;
-    // FIFO eviction: remove oldest by createdAt
+  /** FIFO-evict the oldest entries (by createdAt) beyond max. Returns the evicted keys. */
+  private enforceLimit(map: Map<string, KnowledgeEntry>, max: number): string[] {
+    if (map.size <= max) return [];
+    const evicted: string[] = [];
     const sorted = Array.from(map.entries()).sort((a, b) => a[1].createdAt - b[1].createdAt);
     while (map.size > max) {
       const oldest = sorted.shift();
-      if (oldest) map.delete(oldest[0]);
+      if (oldest) {
+        map.delete(oldest[0]);
+        evicted.push(oldest[0]);
+      }
     }
+    return evicted;
   }
 }
+

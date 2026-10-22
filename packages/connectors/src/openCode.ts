@@ -219,6 +219,29 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     return null;
   }
 
+  // Lifecycle hints for the extension host. `lifecycleSignal` says whether the
+  // event is a turn end ("this turn finished", NOT "the agent is done") or proof
+  // the agent is working again. See docs/secret/SPIKE_OPENCODE_SESSION_IDLE.md.
+  if (eventName.startsWith('session.execution.')) {
+    const kind = eventName.slice('session.execution.'.length);
+    if (kind === 'started') {
+      payload.lifecycleSignal = 'activity';
+      return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'task.progress', timestamp: Date.now(), payload };
+    }
+    if (kind === 'succeeded' || kind === 'failed' || kind === 'interrupted') {
+      payload.lifecycleSignal = 'opencode-session-idle';
+      payload.outcome = kind;
+      const data = (payload.data as Record<string, unknown> | undefined) ?? {};
+      const reason = payload.reason ?? data.reason ?? props.reason;
+      if (typeof reason === 'string') payload.interruptReason = reason.slice(0, 64);
+      return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'agent.idle', timestamp: Date.now(), payload };
+    }
+    return null;
+  }
+  if (eventName === 'session.idle') {
+    payload.lifecycleSignal = 'opencode-session-idle';
+  }
+
   // message.part.updated: detect subagent spawn from subtask parts
   if (eventName === 'message.part.updated') {
     const part = (payload.properties as Record<string, unknown>)?.part as Record<string, unknown> | undefined;
@@ -315,9 +338,11 @@ export function mapOpenCodeToEvent(raw: unknown): AgentEvent | null {
     const statusType = (payload.properties as Record<string, unknown>)?.status as Record<string, unknown> | undefined;
     const sType = statusType?.type as string | undefined;
     if (sType === 'busy') {
+      payload.lifecycleSignal = 'activity';
       return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'task.progress', timestamp: Date.now(), payload };
     }
     if (sType === 'idle') {
+      payload.lifecycleSignal = 'opencode-session-idle';
       return { id: nextId(), agentId, agentName, agentType: 'opencode', type: 'task.complete', timestamp: Date.now(), payload };
     }
     return null;

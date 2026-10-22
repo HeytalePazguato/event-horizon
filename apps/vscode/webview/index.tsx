@@ -19,8 +19,8 @@ import { useState, useEffect, useCallback, useRef, useMemo, Component, type Reac
 import { Universe } from '@event-horizon/renderer';
 import type { ShipSpawn, SparkSpawn, SpawnBeam, KnowledgeLink } from '@event-horizon/renderer';
 import { CommandCenter, Tooltip, AchievementToasts, CreateSkillWizard, MarketplacePanel, SettingsModal, OperationsView, ProjectGraphSection, useCommandCenterStore } from '@event-horizon/ui';
-import type { CreateSkillRequest, MarketplaceSkillResult, CostInsightsData } from '@event-horizon/ui';
-import type { AgentState, AgentMetrics } from '@event-horizon/core';
+import type { CreateSkillRequest, MarketplaceSkillResult, CostInsightsData, RecommendationActionStatus, OpsTab } from '@event-horizon/ui';
+import type { AgentState, AgentMetrics, Recommendation } from '@event-horizon/core';
 
 import { useWebviewMessages } from './hooks/useWebviewMessages';
 import { useAchievementTriggers } from './hooks/useAchievementTriggers';
@@ -186,7 +186,9 @@ function App() {
   const [mcpServers, setMcpServers] = useState<Record<string, Array<{ name: string; connected: boolean; toolCount: number }>>>({});
   const [compactingAgentIds, setCompactingAgentIds] = useState<Record<string, boolean>>({});
   const [costInsights, setCostInsights] = useState<unknown>(null);
-  const [costRecommendations, setCostRecommendations] = useState<string[]>([]);
+  const [costRecommendations, setCostRecommendations] = useState<Recommendation[]>([]);
+  const [recommendationStatus, setRecommendationStatus] = useState<Record<string, RecommendationActionStatus>>({});
+  const [requestedOpsTab, setRequestedOpsTab] = useState<{ tab: OpsTab; at: number } | null>(null);
   const [contextLayers, setContextLayers] = useState<Record<string, unknown> | null>(null);
   const [spawnBeams, setSpawnBeams] = useState<SpawnBeam[]>([]);
   const [orchestratorAgentIds, setOrchestratorAgentIds] = useState<Record<string, boolean>>({});
@@ -265,7 +267,7 @@ function App() {
     setTraceSpans, setTraceAggregate,
     setMcpServers, setCompactingAgentIds,
     setSpawnBeams, setOrchestratorAgentIds, setOrchestratorMap, setAgentRoleMap,
-    setCostInsights, setCostRecommendations,
+    setCostInsights, setCostRecommendations, setRecommendationStatus, setRequestedOpsTab,
     setContextLayers,
     setPersistedSearchResults,
     setTaskExecutionEvents,
@@ -408,6 +410,14 @@ function App() {
   }, []);
 
   // ── Skill actions ──
+  // Keys of workspace knowledge: lets the Cost panel show a file as added, and
+  // stops showing it once the entry is deleted in the Knowledge tab.
+  const knowledgeKeys = useMemo(() => new Set(knowledgeWorkspace.map((e) => e.key)), [knowledgeWorkspace]);
+  const handleRecommendationAction = useCallback((rec: Recommendation) => {
+    if (!rec.action) return;
+    setRecommendationStatus((prev) => ({ ...prev, [rec.id]: { state: 'pending', message: '' } }));
+    vscodeApi?.postMessage({ type: 'recommendation-action', id: rec.id, action: rec.action });
+  }, []);
   const handleOpenSkill = useCallback((filePath: string) => { vscodeApi?.postMessage({ type: 'open-skill-file', filePath }); }, []);
   const handleCreateSkill = useCallback((req: CreateSkillRequest) => { vscodeApi?.postMessage({ type: 'create-skill', ...req }); toggleCreateSkill(); }, [toggleCreateSkill]);
   const handleMoveSkill = useCallback((filePath: string, newCategory: string) => { vscodeApi?.postMessage({ type: 'move-skill', filePath, newCategory }); }, []);
@@ -852,6 +862,10 @@ function App() {
           traceAggregate={traceAggregate}
           costInsights={costInsights as CostInsightsData | null}
           costRecommendations={costRecommendations}
+          knowledgeKeys={knowledgeKeys}
+          recommendationStatus={recommendationStatus}
+          requestedTab={requestedOpsTab}
+          onRecommendationAction={handleRecommendationAction}
           contextLayers={contextLayers as Record<string, import('@event-horizon/ui').ContextLayerBreakdown> | null}
           onPersistedSearch={(query, opts) => vscodeApi?.postMessage({ type: 'search-events', query, ...(opts ?? {}) })}
           persistedSearchResults={persistedSearchResults}
@@ -859,7 +873,6 @@ function App() {
           onViewExecution={(taskId, agentId, claimTime, completeTime) => vscodeApi?.postMessage({ type: 'request-task-execution', taskId, agentId, claimTime, completeTime })}
           taskExecution={taskExecutionEvents as { taskId: string; events: import('@event-horizon/ui').TaskExecutionEvent[] } | null}
           onCloseExecution={() => setTaskExecutionEvents(null)}
-          onAddToSharedKnowledge={(file) => vscodeApi?.postMessage({ type: 'knowledge-add', key: file, value: `File frequently read by multiple agents: ${file}`, scope: 'workspace' })}
           projectGraphSection={projectGraphSection} />
       )}
 

@@ -122,8 +122,9 @@ describe('ModelTierManager', () => {
       expect(sonnet).toBeLessThan(opus);
       // Sanity-check the absolute values (70% input / 30% output split).
       expect(haiku).toBeCloseTo(0.022, 6);
-      expect(sonnet).toBeCloseTo(0.066, 6);
-      expect(opus).toBeCloseTo(0.33, 6);
+      // Representative rows: Haiku 4.5, Sonnet 5, Opus 5.
+      expect(sonnet).toBeCloseTo(0.044, 6);
+      expect(opus).toBeCloseTo(0.11, 6);
     });
   });
 
