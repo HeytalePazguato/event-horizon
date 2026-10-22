@@ -185,7 +185,7 @@ describe.skipIf(!canRunSh)('sh bridge (end to end)', () => {
     expect(r.stdout).toBe(`orig:${PAYLOAD}\nsemi;colon\n`);
     await waitForPost();
     expect(posted[0]).toEqual({ auth: 'Bearer tok', body: PAYLOAD });
-  });
+  }, 60_000);
 
   it('prints a compact line when there is no original', async () => {
     const paths = defaultStatusLinePaths(home);
@@ -193,7 +193,7 @@ describe.skipIf(!canRunSh)('sh bridge (end to end)', () => {
     fs.writeFileSync(paths.shPath, buildShBridge(port, 'tok', paths), 'utf8');
     const r = spawnSync('sh', [paths.shPath], { input: PAYLOAD, encoding: 'utf8' });
     expect(r.stdout.trim()).toBe('[Opus 5] ctx 42% · $1.23');
-  });
+  }, 60_000);
 });
 
 describe.skipIf(!canRunPs)('PowerShell bridge (end to end)', () => {

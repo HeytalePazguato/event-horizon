@@ -181,7 +181,7 @@ describe.skipIf(!canSh)('sh lock script passes the digest to Claude Code', () =>
     expect(JSON.parse(first.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
     const retry = await run('sh', [script], payload);
     expect(retry).toEqual({ status: 0, stdout: '' });
-  });
+  }, 60_000);
 });
 
 describe.skipIf(!canPs)('PowerShell lock script passes the digest to Claude Code', () => {

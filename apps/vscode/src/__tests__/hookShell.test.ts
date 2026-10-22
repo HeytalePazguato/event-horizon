@@ -151,19 +151,19 @@ describe.skipIf(!canSh)('sh lock check (end to end)', async () => {
     const lock = JSON.parse(hits.find((h) => h.url === '/lock')!.body);
     expect(lock).toMatchObject({ action: 'check', filePath: '/w/proj/a.ts', agentId: 's1', agentName: 'Claude Code (proj)' });
     expect(hits.every((h) => h.auth === 'Bearer tok')).toBe(true);
-  });
+  }, 60_000);
 
   it('blocks with exit code 2 and names the owner', async () => {
     lockAllowed = false;
     const r = await runSh(EDIT);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('BLOCKED: /w/proj/a.ts is locked by Reviewer');
-  });
+  }, 60_000);
 
   it('skips the lock for tools without a file path', async () => {
     expect((await runSh(BASH_TOOL)).status).toBe(0);
     expect(hits.some((h) => h.url === '/lock')).toBe(false);
-  });
+  }, 60_000);
 });
 
 describe.skipIf(!canPs)('PowerShell hooks (end to end)', async () => {

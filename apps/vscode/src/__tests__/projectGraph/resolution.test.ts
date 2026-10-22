@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProjectGraphDB } from '../../projectGraph/projectGraphDb.js';
 import type { ProjectGraphStore } from '../../projectGraph/store.js';
-import type { GraphNode, GraphEdge } from '../../projectGraph/types.js';
+import type { GraphNode, GraphEdge } from '../../projectGraph/index.js';
 import { runResolution } from '../../projectGraph/resolution.js';
 
 const NOW = 1_700_000_000_000;
