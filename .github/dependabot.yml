@@ -8,6 +8,11 @@ updates:
     target-branch: "develop"
     labels:
       - "dependencies"
+    ignore:
+      # @types/vscode must not be newer than engines.vscode or vsce refuses to
+      # package. Raising the engine drops older VS Code builds (and Cursor, which
+      # lags VS Code), so move the two together by hand.
+      - dependency-name: "@types/vscode"
     groups:
       # All non-major dev dependency bumps collapse into a single PR.
       npm-development:
