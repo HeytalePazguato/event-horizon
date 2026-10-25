@@ -541,7 +541,7 @@
     "@event-horizon/renderer": "workspace:*",
     "@event-horizon/ui": "workspace:*",
     "html2canvas": "^1.4.1",
-    "sql.js": "^1.15.0",
+    "sql.js": "^1.15.1",
     "tree-sitter-c-sharp": "^0.23.0",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-php": "^0.24.2",
