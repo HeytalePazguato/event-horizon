@@ -21,13 +21,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.10.0",
-    "globals": "^17.12.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
     "turbo": "^2.10.12",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.0",
+    "typescript-eslint": "^8.72.1",
     "vite": "^7.3.7",
-    "vitest": "^5.0.0"
+    "vitest": "^5.1.0"
   },
   "pnpm": {
     "overrides": {
