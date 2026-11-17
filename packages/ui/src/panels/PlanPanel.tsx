@@ -12,7 +12,7 @@ import { DependencyPanel } from './DependencyPanel.js';
 
 // ── Task status → visual mapping ────────────────────────────────────────────
 
-export type PlanTaskStatus = 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked';
+export type PlanTaskStatus = 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked' | 'cancelling' | 'aborted';
 
 export type TaskComplexity = 'low' | 'medium' | 'high';
 export type VerificationStatus = 'pending' | 'passed' | 'failed';
@@ -28,6 +28,7 @@ export interface PlanTaskView {
   notes: Array<{ agentId: string; agentName: string; text: string; ts: number }>;
   retryCount?: number;
   failedReason?: string | null;
+  cancelReason?: string | null;
   recommendedFor?: string;
   acceptanceCriteria?: string | null;
   verifyCommand?: string | null;
@@ -66,6 +67,8 @@ export function taskStatusColor(status: PlanTaskStatus): string {
     case 'done':        return '#40a060';        // green
     case 'failed':      return colors.text.error;
     case 'blocked':     return '#8a6a2a';        // amber-dim
+    case 'cancelling':  return '#8a4a2a';        // rust — being cancelled by orchestrator
+    case 'aborted':     return colors.text.dim;  // muted — cancelled and acknowledged
   }
 }
 
@@ -78,10 +81,13 @@ function taskStatusLabel(status: PlanTaskStatus): string {
     case 'done':        return 'DONE';
     case 'failed':      return 'FAILED';
     case 'blocked':     return 'BLOCKED';
+    case 'cancelling':  return 'CANCELLING';
+    case 'aborted':     return 'ABORTED';
   }
 }
 
-// Kanban columns in display order
+// Kanban columns in display order.
+// `cancelling` tasks render in the In Progress column; `aborted` tasks have no column.
 const COLUMNS: { status: PlanTaskStatus; label: string }[] = [
   { status: 'blocked',     label: 'Blocked' },
   { status: 'pending',     label: 'Pending' },
@@ -90,6 +96,17 @@ const COLUMNS: { status: PlanTaskStatus; label: string }[] = [
   { status: 'done',        label: 'Done' },
   { status: 'failed',      label: 'Failed' },
 ];
+
+/** Kanban column each status is shown in. `aborted` maps to no column. */
+const COLUMN_FOR_STATUS: Partial<Record<PlanTaskStatus, PlanTaskStatus>> = {
+  pending: 'pending',
+  claimed: 'claimed',
+  in_progress: 'in_progress',
+  cancelling: 'in_progress',
+  done: 'done',
+  failed: 'failed',
+  blocked: 'blocked',
+};
 
 export interface TaskExecutionEvent {
   id: string;
@@ -144,9 +161,9 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan, onViewExecution, taskExecu
     const grouped = new Map<PlanTaskStatus, PlanTaskView[]>();
     for (const col of COLUMNS) grouped.set(col.status, []);
     for (const task of plan.tasks!) {
-      const list = grouped.get(task.status);
-      if (list) list.push(task);
-      else grouped.get('pending')!.push(task); // fallback
+      if (task.status === 'aborted') continue; // aborted tasks are removed from the board — no column
+      const colStatus = COLUMN_FOR_STATUS[task.status] ?? 'pending'; // unknown status → fallback
+      grouped.get(colStatus)!.push(task);
     }
     return COLUMNS.map((col) => ({
       ...col,
@@ -158,7 +175,7 @@ export const PlanPanel: FC<PlanPanelProps> = ({ plan, onViewExecution, taskExecu
   const setShowAllColumns = useCommandCenterStore((s) => s.setPlanShowAllColumns);
   const visibleColumns = showAllColumns ? columns : columns.filter((col) => col.tasks.length > 0);
 
-  const totalTasks = plan.tasks!.length;
+  const totalTasks = plan.tasks!.filter((t) => t.status !== 'aborted').length;
   const doneTasks = plan.tasks!.filter((t) => t.status === 'done').length;
   const progress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
@@ -473,6 +490,18 @@ const TaskCard: FC<{ task: PlanTaskView; onViewExecution?: PlanPanelProps['onVie
           {task.title}
         </span>
       </div>
+
+      {/* Cancel reason (cancelling/aborted) */}
+      {task.cancelReason && (
+        <div style={{
+          fontSize: sizes.text.xs,
+          color: colors.text.dim,
+          marginBottom: 2,
+          lineHeight: 1.3,
+        }}>
+          {task.cancelReason}
+        </div>
+      )}
 
       {/* Role pill + complexity dot + model tier + verification status */}
       {(task.role || task.complexity || task.modelTier || task.verificationStatus) && (

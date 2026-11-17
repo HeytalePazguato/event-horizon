@@ -20,6 +20,8 @@ const STATUS_COLORS: Record<PlanTaskStatus, string> = {
   done: '#40a060',
   failed: '#c65858',
   blocked: '#8a6a2a',
+  cancelling: '#8a4a2a',
+  aborted: '#4a7a58',
 };
 
 // ── Cycle detection (DFS coloring) ────────────────────────────────────────

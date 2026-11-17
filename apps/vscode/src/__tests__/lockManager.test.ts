@@ -139,3 +139,39 @@ describe('reason tracking', () => {
     expect(result.reason).toBe('Refactoring auth');
   });
 });
+
+describe('ownership rule (plan files)', () => {
+  const rule = (p: string) => (p === 'c:/p/plan.md' ? 'orch' : null);
+
+  it('denies non-orchestrator on plan file', () => {
+    lm.setOwnershipRule(rule);
+    const r = lm.acquire('C:\\p\\PLAN.md', 'worker', 'Worker');
+    expect(r.allowed).toBe(false);
+    expect(r.owner).toBe('orchestrator');
+    expect(r.ownerAgent).toBe('orch');
+    expect(r.reason).toBe('Plan files can only be edited by the plan orchestrator');
+  });
+
+  it('allows the orchestrator', () => {
+    lm.setOwnershipRule(rule);
+    expect(lm.acquire('C:\\p\\PLAN.md', 'orch', 'Orch').allowed).toBe(true);
+  });
+
+  it('does not affect non-plan files', () => {
+    lm.setOwnershipRule(rule);
+    expect(lm.acquire('src/a.ts', 'worker', 'Worker').allowed).toBe(true);
+  });
+
+  it('is ignored when locking disabled or rule null', () => {
+    lm.setOwnershipRule(rule);
+    lm.setEnabled(false);
+    expect(lm.acquire('c:/p/plan.md', 'worker', 'Worker').allowed).toBe(true);
+    lm.setEnabled(true);
+    lm.setOwnershipRule(null);
+    expect(lm.acquire('c:/p/plan.md', 'worker', 'Worker').allowed).toBe(true);
+  });
+
+  it('normalizePath matches lock normalization', () => {
+    expect(lm.normalizePath('C:\\A\\B.md')).toBe('c:/a/b.md');
+  });
+});

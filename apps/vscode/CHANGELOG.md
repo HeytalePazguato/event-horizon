@@ -4,6 +4,23 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ## [Unreleased]
 
+### Added
+- **Plans load from a file and stay in sync.** `eh_load_plan` takes a `file_path` to a `.md` plan inside the workspace. Event Horizon watches the file, so every save is picked up with no reload. Paths outside the workspace folders are refused.
+- **`eh_get_task`** returns the full detail of one task (description, acceptance criteria, verify command, last 20 notes) without reading the whole plan.
+- **`eh_cancel_task`** lets the orchestrator cancel a task. An unclaimed task is removed at once. A claimed task enters `cancelling` until its assignee confirms with `aborted`.
+- **Filtered plan reads.** `eh_get_plan` returns a compact view by default and accepts `status`, `task_ids`, `fields`, and `since_revision`, so an agent can ask only for what changed.
+- **Batch task updates.** `eh_update_task` takes `task_ids` to set the same status and note on several tasks in one call.
+
+### Changed
+- **Plan files are edited by the orchestrator only.** Edits to a plan file from any other agent are rejected, and the live plan is left unchanged.
+- **Reloading a plan merges by task ID.** Tasks keep their claims, assignees, and notes when the file changes. Task IDs must not be renumbered; a save that renumbers too many tasks at once is rejected and the live plan is left unchanged.
+- **`content` in `eh_load_plan` is a legacy fallback.** It is used only when no file exists. Plan content should not be pasted when a file is available.
+- **MCP tools manual.** `docs/manual/mcp-tools.md` documents the file-based plan flow, the new read and cancel tools, and how to edit a plan.
+
+### Fixed
+- **`eh_load_plan` ignored `file_path`.** Passing a file path loaded nothing from it, so the plan had to be pasted in as `content`. The file is now read and watched.
+- **Reloading a plan dropped claims, assignees, and notes.** A reload replaced the live plan with the file's tasks, so work in progress disappeared. Reloads now merge by task ID and keep that state.
+
 ## [3.3.0] — 2026-10-21
 
 ### Added
