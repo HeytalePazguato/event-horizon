@@ -997,7 +997,8 @@ describe('PlanBoardManager revision tracking', () => {
 
   it('restore defaults missing fields on old boards', () => {
     const b = mgr.loadPlan(md, 'rev.md');
-    const old: any = structuredClone(b);
+    // A board as persisted before these fields existed.
+    const old = structuredClone(b) as unknown as Record<string, unknown> & { tasks: Array<Record<string, unknown>> };
     delete old.revision;
     delete old.sourceMissing;
     delete old.lastSelfWriteHash;
@@ -1006,7 +1007,7 @@ describe('PlanBoardManager revision tracking', () => {
       delete t.cancelReason;
     }
     const m2 = new PlanBoardManager();
-    m2.restore([old]);
+    m2.restore([old as unknown as typeof b]);
     const r = m2.getPlan(b.id)!;
     expect(r.revision).toBe(1);
     expect(r.sourceMissing).toBe(false);
