@@ -21,6 +21,9 @@ function makePlan(overrides: Partial<PlanBoard>): PlanBoard {
     orchestratorAgentId: null,
     strategy: 'manual',
     maxBudgetUsd: null,
+    revision: 1,
+    sourceMissing: false,
+    lastSelfWriteHash: null,
     ...overrides,
   };
 }

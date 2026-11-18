@@ -30,16 +30,78 @@ Create and work [coordination plans](orchestration.md#plans).
 
 | Tool | What it does |
 |------|--------------|
-| `eh_load_plan` | Create and register a plan with Event Horizon |
-| `eh_get_plan` | Fetch a plan and its current state |
+| `eh_load_plan` | Load a plan from a `.md` file in the workspace by `file_path`; EH watches the file |
+| `eh_get_plan` | Fetch a plan compactly, optionally filtered by status, task IDs, or `since_revision` |
+| `eh_get_task` | Fetch the full detail of one task |
 | `eh_list_plans` | List all plans |
 | `eh_claim_task` | Atomically claim a task — no other agent can take it |
-| `eh_update_task` | Update a task's status, notes, or progress |
+| `eh_update_task` | Update one or more tasks' status and notes (`task_ids` batches); `aborted` confirms a cancellation |
+| `eh_cancel_task` | Cancel a task (orchestrator only); the assignee confirms with `aborted` |
 | `eh_verify_task` | Run a task's verify command to confirm it works |
 | `eh_retry_task` | Retry a failed task (with [model escalation](budget.md#tiered-model-selection)) |
 | `eh_recommend_task` | Get scored task recommendations for an agent |
 | `eh_archive_plan` | Archive a completed plan |
 | `eh_delete_plan` | Delete a plan |
+
+### Loading a plan
+
+Pass the plan's markdown file by `file_path`:
+
+```
+eh_load_plan(agent_id: "...", file_path: "docs/plans/release-plan.md")
+```
+
+- **Workspace only.** The path is relative to a workspace folder, or absolute inside one. Paths outside the workspace folders are refused, and the file must have a `.md` extension.
+- **Watched.** Event Horizon watches the file and picks up every save. You do not need to call `eh_load_plan` again after editing it.
+- **Re-loading merges.** Loading a path that is already loaded merges by task ID. Claims, assignees, and notes are kept, so reloading never wipes live work.
+- **`content` is a legacy fallback.** It is only used when no file exists. When `file_path` is given, `content` is ignored.
+
+The response is a compact summary (`plan_id`, `revision`, `counts`) with no task list. Read tasks with `eh_get_plan` or `eh_get_task`.
+
+### Reading a plan
+
+`eh_get_plan` returns a compact view by default: each task has its `id`, `title`, `status`, `assignee`, and `blockedBy`, plus plan-wide counts and a `revision` number. Narrow it down with:
+
+- `status`: only tasks with one of these statuses
+- `task_ids`: only these tasks
+- `fields`: add per-task columns such as `notes`, `acceptanceCriteria`, `verifyCommand`, or `description`
+- `since_revision`: only tasks changed after that revision. Pass the `revision` from your last response. Tasks deleted since then are listed in `removed`. When nothing changed, the response says `unchanged: true`.
+
+```
+eh_get_plan(agent_id: "...", status: ["pending", "blocked"])
+eh_get_plan(agent_id: "...", since_revision: 42)
+```
+
+For one task's full detail (description, acceptance criteria, verify command, and the last 20 notes), call `eh_get_task(agent_id: "...", task_id: "2.1")`. It is cheaper than reading the whole plan.
+
+### Updating tasks
+
+`eh_update_task` changes a task you own. Pass `task_id` for one task, or `task_ids` to apply the same status and note to several tasks at once. Statuses are `in_progress`, `done`, `failed`, `blocked`, and `aborted`. Event Horizon marks the plan's checkbox itself when a task is `done`.
+
+`aborted` is only used to confirm a cancellation (see below). It returns `{ updated, failed, revision }`.
+
+### Cancelling a task
+
+Only the plan's orchestrator can cancel a task:
+
+```
+eh_cancel_task(agent_id: "...", task_id: "3.2", reason: "Superseded by 3.4")
+```
+
+- An **unclaimed** task is removed immediately.
+- A **claimed or in-progress** task enters `cancelling`. Its assignee must stop work and confirm with `eh_update_task(status: "aborted")`. That removes the task and unblocks anything that depended on it.
+
+Until the assignee confirms, any other status update it sends is rejected, and the rejection includes the `reason`, so it knows why it must stop.
+
+### Editing a plan
+
+The plan file is the source of truth for the plan's task list, and only the orchestrator may edit it.
+
+1. Edit the `.md` file in your editor.
+2. Save it. No reload is needed: Event Horizon re-reads the file on save and merges the changes.
+3. Never renumber task IDs. Adding a task takes a new ID. A save that changes too many IDs at once is rejected as suspected renumbering, and the live plan stays as it was.
+
+Agents working tasks should not edit the plan file. Use `eh_update_task` to report progress, and Event Horizon will tick the checkbox on `done`.
 
 ---
 

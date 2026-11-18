@@ -2,7 +2,7 @@
  * Plan Board tests — markdown parser, task claiming, dependency resolution, MCP tool integration.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { parsePlanMarkdown, PlanBoardManager } from '../planBoard.js';
 import { McpServer, FileActivityTracker } from '../mcpServer.js';
 import { LockManager } from '../lockManager.js';
@@ -342,6 +342,297 @@ describe('PlanBoardManager', () => {
       expect(manager.getPlan()).toBeNull();
     });
   });
+
+  // ── Plan file sync (task 2.3) ──────────────────────────────────────────────
+
+  describe('loadOrMergePlan (merge-on-reload)', () => {
+    it('reload of the same file merges and preserves claims and notes', () => {
+      const first = manager.loadPlan(simplePlan, '/ws/plan.md', 'orch');
+      manager.claimTask('1.1', 'agent-a', 'Agent A');
+      manager.updateTask('1.1', 'agent-a', 'in_progress', 'started');
+      const edited = simplePlan.replace('First task', 'First task (renamed)') + '\n- [ ] 1.4 Fourth task';
+
+      const res = manager.loadOrMergePlan(edited, '/ws/plan.md', 'someone-else');
+      expect(res.applied).toBe(true);
+      expect(res.diff).not.toBeNull();
+      expect(res.diff!.added).toEqual(['1.4']);
+      expect(res.diff!.updated).toEqual(['1.1']);
+      expect(res.board.id).toBe(first.id);
+      expect(res.board.orchestratorAgentId).toBe('orch');
+      const t11 = res.board.tasks.find((t) => t.id === '1.1')!;
+      expect(t11.title).toBe('First task (renamed)');
+      expect(t11.status).toBe('in_progress');
+      expect(t11.assignee).toBe('agent-a');
+      expect(t11.notes).toHaveLength(1);
+      expect(manager.getAllPlans()).toHaveLength(1);
+      expect(manager.getPlan(first.id)).toBe(res.board);
+    });
+
+    it('bumps the revision once and stamps added/updated tasks', () => {
+      const first = manager.loadPlan(simplePlan, '/ws/plan.md');
+      const rev = first.revision;
+      const res = manager.loadOrMergePlan(simplePlan + '\n- [ ] 1.4 Fourth', '/ws/plan.md');
+      expect(res.board.revision).toBe(rev + 1);
+      expect(res.board.tasks.find((t) => t.id === '1.4')!.changedAtRevision).toBe(rev + 1);
+      expect(res.board.tasks.find((t) => t.id === '1.3')!.changedAtRevision).toBe(1);
+    });
+
+    it('matches source files after path normalization', () => {
+      const first = manager.loadPlan(simplePlan, '/ws/sub/../plan.md');
+      const res = manager.loadOrMergePlan(simplePlan, '/ws/plan.md');
+      expect(res.diff).not.toBeNull();
+      expect(res.board.id).toBe(first.id);
+      if (process.platform === 'win32') {
+        const res2 = manager.loadOrMergePlan(simplePlan, '/WS/PLAN.md');
+        expect(res2.diff).not.toBeNull();
+      }
+    });
+
+    it('never merges inline plans (loads fresh)', () => {
+      manager.loadPlan(simplePlan, 'inline');
+      manager.claimTask('1.1', 'agent-a');
+      const res = manager.loadOrMergePlan(simplePlan, 'inline');
+      expect(res.diff).toBeNull();
+      expect(res.board.tasks[0].status).toBe('pending');
+    });
+
+    it('refused merge (renumber) leaves the live board intact', () => {
+      const first = manager.loadPlan(simplePlan, '/ws/plan.md');
+      const rev = first.revision;
+      const res = manager.loadOrMergePlan('# Test Plan\n- [ ] 9.1 A\n- [ ] 9.2 B\n- [ ] 9.3 C', '/ws/plan.md');
+      expect(res.applied).toBe(false);
+      expect(res.diff!.renumberSuspected).toBe(true);
+      expect(manager.getPlan(first.id)!.tasks.map((t) => t.id)).toEqual(['1.1', '1.2', '1.3']);
+      expect(manager.getPlan(first.id)!.revision).toBe(rev);
+    });
+  });
+
+  describe('rebindPlan', () => {
+    it('merges into an inline plan and binds it to the file', () => {
+      const inline = manager.loadPlan(simplePlan, 'inline');
+      manager.claimTask('1.1', 'agent-a');
+      const res = manager.rebindPlan(inline.id, simplePlan + '\n- [ ] 1.4 Fourth', '/ws/plan.md');
+      expect(res.success).toBe(true);
+      expect(res.applied).toBe(true);
+      const board = manager.getPlan(inline.id)!;
+      expect(board.sourceFile).toBe('/ws/plan.md');
+      expect(board.tasks.find((t) => t.id === '1.1')!.assignee).toBe('agent-a');
+      expect(board.tasks).toHaveLength(4);
+      // later loads by path now merge into the same board
+      const again = manager.loadOrMergePlan(simplePlan + '\n- [ ] 1.4 Fourth', '/ws/plan.md');
+      expect(again.board.id).toBe(inline.id);
+      expect(again.diff).not.toBeNull();
+    });
+
+    it('rejects rebinding a file-backed plan', () => {
+      const b = manager.loadPlan(simplePlan, '/ws/plan.md');
+      expect(manager.rebindPlan(b.id, simplePlan, '/ws/other.md').success).toBe(false);
+    });
+  });
+
+  describe('applyFileChange', () => {
+    let planId: string;
+    beforeEach(() => {
+      planId = manager.loadPlan(simplePlan, '/ws/plan.md', 'orch').id;
+      manager.claimTask('1.1', 'agent-a', 'Agent A');
+    });
+
+    it('applies an orchestrator edit, bumps once, clears sourceMissing', () => {
+      manager.markSourceMissing(planId, true);
+      const rev = manager.getPlan(planId)!.revision;
+      const res = manager.applyFileChange(planId, simplePlan + '\n- [ ] 1.4 Fourth', 'orch');
+      expect(res.applied).toBe(true);
+      expect(res.diff!.added).toEqual(['1.4']);
+      const board = manager.getPlan(planId)!;
+      expect(board.revision).toBe(rev + 1);
+      expect(board.sourceMissing).toBe(false);
+      expect(board.tasks.find((t) => t.id === '1.1')!.assignee).toBe('agent-a');
+    });
+
+    it('applies unattributed edits (editor null)', () => {
+      expect(manager.applyFileChange(planId, simplePlan + '\n- [ ] 1.4 Fourth', null).applied).toBe(true);
+    });
+
+    it('rejects an edit by a non-orchestrator and leaves the board unchanged', () => {
+      const before = structuredClone(manager.getPlan(planId)!);
+      const res = manager.applyFileChange(planId, simplePlan + '\n- [ ] 1.4 Fourth', 'agent-a');
+      expect(res).toEqual({ applied: false, reason: 'not-orchestrator' });
+      expect(manager.getPlan(planId)).toEqual(before);
+    });
+
+    it('parse error leaves the board intact', () => {
+      const before = structuredClone(manager.getPlan(planId)!);
+      vi.spyOn(manager as unknown as { parseWithTiers: () => never }, 'parseWithTiers').mockImplementation(() => {
+        throw new Error('boom');
+      });
+      const res = manager.applyFileChange(planId, 'garbage', 'orch');
+      expect(res).toEqual({ applied: false, reason: 'parse-error' });
+      expect(manager.getPlan(planId)).toEqual(before);
+    });
+
+    it('treats a file that parses to zero tasks as a parse error', () => {
+      const res = manager.applyFileChange(planId, '# Test Plan\n', 'orch');
+      expect(res.reason).toBe('parse-error');
+      expect(manager.getPlan(planId)!.tasks).toHaveLength(3);
+    });
+
+    it('reports duplicate IDs and renumbering', () => {
+      const dup = manager.applyFileChange(planId, simplePlan + '\n- [ ] 1.3 Again', 'orch');
+      expect(dup.reason).toBe('duplicate-ids');
+      const ren = manager.applyFileChange(planId, '# T\n- [ ] 9.1 A\n- [ ] 9.2 B\n- [ ] 9.3 C', 'orch');
+      expect(ren.reason).toBe('renumber');
+      expect(manager.getPlan(planId)!.tasks.map((t) => t.id)).toEqual(['1.1', '1.2', '1.3']);
+    });
+
+    it('removing a claimed task line puts it in cancelling and fires onTaskCancelling', () => {
+      const fired: string[] = [];
+      manager.onTaskCancelling((t, pid) => fired.push(`${pid}:${t.id}`));
+      const withoutFirst = `# Test Plan
+- [ ] 1.2 Second task
+  - depends: 1.1
+- [ ] 1.3 Third task`;
+      const res = manager.applyFileChange(planId, withoutFirst, 'orch');
+      expect(res.applied).toBe(true);
+      expect(res.diff!.cancelling).toEqual(['1.1']);
+      const t = manager.getPlan(planId)!.tasks.find((x) => x.id === '1.1')!;
+      expect(t.status).toBe('cancelling');
+      expect(fired).toEqual([`${planId}:1.1`]);
+    });
+  });
+
+  describe('updateTasks (batch)', () => {
+    it('updates 3 tasks with one notification and one revision bump', () => {
+      const planId = manager.loadPlan('# P\n- [ ] 1 A\n- [ ] 2 B\n- [ ] 3 C', '/ws/p.md').id;
+      for (const id of ['1', '2', '3']) manager.claimTask(id, 'agent-a');
+      const rev = manager.getPlan(planId)!.revision;
+      const onChange = vi.fn();
+      manager.onChange(onChange);
+
+      const res = manager.updateTasks(['1', '2', '3'], 'agent-a', 'done', 'batch');
+      expect(res.updated).toEqual(['1', '2', '3']);
+      expect(res.failed).toEqual([]);
+      expect(res.revision).toBe(rev + 1);
+      expect(onChange).toHaveBeenCalledTimes(1);
+      const board = manager.getPlan(planId)!;
+      expect(board.tasks.every((t) => t.status === 'done' && t.changedAtRevision === rev + 1)).toBe(true);
+      expect(board.status).toBe('completed');
+    });
+
+    it('reports per-task failures without aborting the batch', () => {
+      manager.loadPlan(simplePlan, '/ws/plan.md');
+      manager.claimTask('1.1', 'agent-a');
+      manager.claimTask('1.3', 'agent-b');
+      const res = manager.updateTasks(['1.1', '1.3', '9.9'], 'agent-a', 'in_progress');
+      expect(res.updated).toEqual(['1.1']);
+      expect(res.failed.map((f) => f.id)).toEqual(['1.3', '9.9']);
+    });
+
+    it('does not notify or bump when nothing was updated', () => {
+      const b = manager.loadPlan(simplePlan, '/ws/plan.md');
+      const rev = b.revision;
+      const onChange = vi.fn();
+      manager.onChange(onChange);
+      manager.updateTasks(['9.9'], 'agent-a', 'done');
+      expect(onChange).not.toHaveBeenCalled();
+      expect(b.revision).toBe(rev);
+    });
+  });
+
+  describe('cancel handshake', () => {
+    let planId: string;
+    beforeEach(() => {
+      planId = manager.loadPlan(simplePlan, '/ws/plan.md', 'orch').id;
+      manager.claimTask('1.1', 'agent-a', 'Agent A');
+      manager.updateTask('1.1', 'agent-a', 'in_progress');
+    });
+
+    it('records removed task IDs against the removing revision for since_revision pollers', async () => {
+      const { queryPlan } = await import('../planQuery.js');
+      manager.cancelTask(planId, '1.1', 'orch', 'scope cut');
+      const before = manager.getPlan(planId)!.revision;
+      manager.updateTask('1.1', 'agent-a', 'aborted');
+      const board = manager.getPlan(planId)!;
+      expect(board.removedTasks).toEqual([{ id: '1.1', revision: before + 1 }]);
+      expect(queryPlan(board, { sinceRevision: before }).removed).toEqual(['1.1']);
+      expect(queryPlan(board, { sinceRevision: before + 1 }).unchanged).toBe(true);
+      expect(queryPlan(board, {}).removed).toBeUndefined();
+    });
+
+    it('end-to-end: cancel → cancelling → assignee aborted → removed, dependents unblocked', () => {
+      const fired: string[] = [];
+      manager.onTaskCancelling((t) => fired.push(t.id));
+
+      const c = manager.cancelTask(planId, '1.1', 'orch', 'scope cut');
+      expect(c).toEqual({ success: true, status: 'cancelling', assignee: 'agent-a' });
+      const t = manager.getPlan(planId)!.tasks.find((x) => x.id === '1.1')!;
+      expect(t.status).toBe('cancelling');
+      expect(t.cancelReason).toBe('scope cut');
+      expect(fired).toEqual(['1.1']);
+
+      // cancelling task can't be claimed or progressed
+      expect(manager.claimTask('1.1', 'agent-b').success).toBe(false);
+      expect(manager.updateTask('1.1', 'agent-a', 'done').success).toBe(false);
+
+      const rev = manager.getPlan(planId)!.revision;
+      const a = manager.updateTask('1.1', 'agent-a', 'aborted');
+      expect(a.success).toBe(true);
+      const board = manager.getPlan(planId)!;
+      expect(board.tasks.map((x) => x.id)).toEqual(['1.2', '1.3']);
+      const dep = board.tasks.find((x) => x.id === '1.2')!;
+      expect(dep.blockedBy).toEqual([]);
+      expect(dep.status).toBe('pending');
+      expect(dep.changedAtRevision).toBe(rev + 1);
+      expect(board.revision).toBe(rev + 1);
+      expect(manager.claimTask('1.2', 'agent-b').success).toBe(true);
+    });
+
+    it('orchestrator may confirm the abort; others may not', () => {
+      manager.cancelTask(planId, '1.1', 'orch', 'x');
+      expect(manager.updateTask('1.1', 'agent-b', 'aborted').success).toBe(false);
+      expect(manager.updateTask('1.1', 'orch', 'aborted').success).toBe(true);
+      expect(manager.getPlan(planId)!.tasks.find((x) => x.id === '1.1')).toBeUndefined();
+    });
+
+    it("'aborted' is rejected unless the task is cancelling", () => {
+      const r = manager.updateTask('1.1', 'agent-a', 'aborted');
+      expect(r.success).toBe(false);
+      expect(manager.getPlan(planId)!.tasks.find((x) => x.id === '1.1')!.status).toBe('in_progress');
+    });
+
+    it('workers cannot set cancelling', () => {
+      const r = manager.updateTask('1.1', 'agent-a', 'cancelling');
+      expect(r.success).toBe(false);
+      expect(r.error).toContain('orchestrator');
+      expect(manager.getPlan(planId)!.tasks.find((x) => x.id === '1.1')!.status).toBe('in_progress');
+    });
+
+    it('cancelTask is orchestrator-only', () => {
+      const r = manager.cancelTask(planId, '1.1', 'agent-a', 'x');
+      expect(r.success).toBe(false);
+      expect(manager.getPlan(planId)!.tasks.find((x) => x.id === '1.1')!.status).toBe('in_progress');
+    });
+
+    it('cancelling an unclaimed task removes it immediately', () => {
+      const fired: string[] = [];
+      manager.onTaskCancelling((t) => fired.push(t.id));
+      const r = manager.cancelTask(planId, '1.3', 'orch', 'not needed');
+      expect(r).toEqual({ success: true, status: 'removed', assignee: null });
+      expect(manager.getPlan(planId)!.tasks.find((x) => x.id === '1.3')).toBeUndefined();
+      expect(fired).toEqual([]);
+    });
+
+    it('confirmAbortForLostAgent removes the lost agent\'s cancelling tasks', () => {
+      manager.claimTask('1.3', 'agent-a');
+      manager.cancelTask(planId, '1.1', 'orch', 'x');
+      manager.cancelTask(planId, '1.3', 'orch', 'x');
+      expect(manager.confirmAbortForLostAgent('agent-b')).toEqual([]);
+      const removed = manager.confirmAbortForLostAgent('agent-a');
+      expect(removed.sort()).toEqual(['1.1', '1.3']);
+      const board = manager.getPlan(planId)!;
+      expect(board.tasks.map((x) => x.id)).toEqual(['1.2']);
+      expect(board.tasks[0].status).toBe('pending');
+    });
+  });
 });
 
 // ── MCP Tool Integration ────────────────────────────────────────────────────
@@ -386,7 +677,7 @@ describe('Plan MCP tools', () => {
     expect(names).toContain('eh_get_plan');
     expect(names).toContain('eh_claim_task');
     expect(names).toContain('eh_update_task');
-    expect(result.tools).toHaveLength(52); // base tools + eh_extract_concepts + eh_build_graph + eh_scan_status + eh_query_graph + eh_curate_context + eh_rescan_files + eh_get_cached_read + eh_claim_handle
+    expect(result.tools).toHaveLength(54); // base tools + eh_extract_concepts + eh_build_graph + eh_scan_status + eh_query_graph + eh_curate_context + eh_rescan_files + eh_get_cached_read + eh_claim_handle + eh_get_task + eh_cancel_task
   });
 
   describe('eh_load_plan', () => {
@@ -397,8 +688,10 @@ describe('Plan MCP tools', () => {
         loaded: true,
         name: 'Integration Test Plan',
         taskCount: 3,
+        watching: false,
       });
-      expect((parsed.tasks as unknown[]).length).toBe(3);
+      // Compact response: no task array
+      expect(parsed.tasks).toBeUndefined();
     });
 
     it('fails without content or file_path', async () => {
@@ -466,13 +759,14 @@ describe('Plan MCP tools', () => {
     it('updates task to in_progress', async () => {
       const res = await callTool('eh_update_task', { task_id: '1.1', agent_id: 'a1', status: 'in_progress' });
       const parsed = parseResult(res) as Record<string, unknown>;
-      expect(parsed).toMatchObject({ updated: true, task: { status: 'in_progress' } });
+      expect(parsed).toMatchObject({ updated: ['1.1'], failed: [] });
+      expect(typeof parsed.revision).toBe('number');
     });
 
     it('marks task done and unblocks dependents', async () => {
       const res = await callTool('eh_update_task', { task_id: '1.1', agent_id: 'a1', status: 'done' });
       const parsed = parseResult(res) as Record<string, unknown>;
-      expect(parsed).toMatchObject({ updated: true, task: { status: 'done' } });
+      expect(parsed).toMatchObject({ updated: ['1.1'], failed: [] });
 
       // 1.2 should now be unblocked
       const planRes = await callTool('eh_get_plan', { agent_id: 'a1' });
@@ -486,7 +780,7 @@ describe('Plan MCP tools', () => {
         task_id: '1.1', agent_id: 'a1', status: 'in_progress',
         note: 'Refactored the module', agent_name: 'Alpha',
       });
-      const planRes = await callTool('eh_get_plan', { agent_id: 'a1' });
+      const planRes = await callTool('eh_get_plan', { agent_id: 'a1', fields: ['notes'] });
       const plan = parseResult(planRes) as { tasks: Array<{ id: string; notes: Array<{ text: string }> }> };
       const task = plan.tasks.find((t) => t.id === '1.1');
       expect(task!.notes).toHaveLength(1);
@@ -500,8 +794,9 @@ describe('Plan MCP tools', () => {
 
     it('rejects update from non-owner', async () => {
       const res = await callTool('eh_update_task', { task_id: '1.1', agent_id: 'a2', status: 'done' });
-      const parsed = parseResult(res) as Record<string, unknown>;
-      expect(parsed).toMatchObject({ updated: false });
+      const parsed = parseResult(res) as { updated: string[]; failed: Array<{ id: string; error: string }> };
+      expect(parsed.updated).toEqual([]);
+      expect(parsed.failed[0].id).toBe('1.1');
     });
   });
 
@@ -610,5 +905,127 @@ describe('PlanBoardManager — orchestrator helpers', () => {
     expect(ids.size).toBe(2);
     expect(ids.has('agent-a')).toBe(true);
     expect(ids.has('agent-b')).toBe(true);
+  });
+});
+
+// ── Revision tracking ───────────────────────────────────────────────────────
+
+describe('PlanBoardManager revision tracking', () => {
+  let mgr: PlanBoardManager;
+  const md = '# Rev\n\n- [ ] 1.1 A\n- [ ] 1.2 B\n  - depends: 1.1\n- [ ] 1.3 C';
+
+  beforeEach(() => {
+    mgr = new PlanBoardManager();
+  });
+
+  it('starts at revision 1 with default fields', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    expect(b.revision).toBe(1);
+    expect(b.sourceMissing).toBe(false);
+    expect(b.lastSelfWriteHash).toBeNull();
+    expect(b.tasks.every((t) => t.changedAtRevision === 1 && t.cancelReason === null)).toBe(true);
+  });
+
+  it('claimTask bumps once and stamps the task', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    mgr.claimTask('1.1', 'a');
+    expect(b.revision).toBe(2);
+    expect(b.tasks.find((t) => t.id === '1.1')!.changedAtRevision).toBe(2);
+    expect(b.tasks.find((t) => t.id === '1.3')!.changedAtRevision).toBe(1);
+  });
+
+  it('updateTask done bumps once and stamps unblocked dependents', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    mgr.claimTask('1.1', 'a');
+    mgr.updateTask('1.1', 'a', 'done');
+    expect(b.revision).toBe(3);
+    expect(b.tasks.find((t) => t.id === '1.1')!.changedAtRevision).toBe(3);
+    expect(b.tasks.find((t) => t.id === '1.2')!.changedAtRevision).toBe(3);
+  });
+
+  it('failed with cascade bumps once and stamps cascaded tasks', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    mgr.claimTask('1.1', 'a');
+    mgr.updateTask('1.1', 'a', 'failed', 'boom');
+    expect(b.revision).toBe(3);
+    expect(b.tasks.find((t) => t.id === '1.2')!.changedAtRevision).toBe(3);
+  });
+
+  it('auto-retry in updateTask bumps exactly once', () => {
+    const b = mgr.loadPlan('# R\n<!-- maxAutoRetries: 2 -->\n- [ ] 1.1 A', 'rev.md');
+    mgr.claimTask('1.1', 'a');
+    const before = b.revision;
+    mgr.updateTask('1.1', 'a', 'failed', 'x');
+    expect(b.revision).toBe(before + 1);
+  });
+
+  it('retryTask bumps once', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    mgr.claimTask('1.1', 'a');
+    mgr.updateTask('1.1', 'a', 'failed');
+    const before = b.revision;
+    mgr.retryTask('1.1');
+    expect(b.revision).toBe(before + 1);
+    expect(b.tasks.find((t) => t.id === '1.2')!.changedAtRevision).toBe(before + 1);
+  });
+
+  it('claimOrchestrator and archivePlan bump once', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    mgr.claimOrchestrator('o');
+    expect(b.revision).toBe(2);
+    mgr.archivePlan(b.id);
+    expect(b.revision).toBe(3);
+  });
+
+  it('failed claim does not bump', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    mgr.claimTask('1.2', 'a'); // blocked
+    expect(b.revision).toBe(1);
+  });
+
+  it('setSelfWriteHash does not bump; markSourceMissing bumps only on change', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    mgr.setSelfWriteHash(b.id, 'abc');
+    expect(b.lastSelfWriteHash).toBe('abc');
+    expect(b.revision).toBe(1);
+    mgr.markSourceMissing(b.id, true);
+    expect(b.sourceMissing).toBe(true);
+    expect(b.revision).toBe(2);
+    mgr.markSourceMissing(b.id, true);
+    expect(b.revision).toBe(2);
+  });
+
+  it('restore defaults missing fields on old boards', () => {
+    const b = mgr.loadPlan(md, 'rev.md');
+    // A board as persisted before these fields existed.
+    const old = structuredClone(b) as unknown as Record<string, unknown> & { tasks: Array<Record<string, unknown>> };
+    delete old.revision;
+    delete old.sourceMissing;
+    delete old.lastSelfWriteHash;
+    for (const t of old.tasks) {
+      delete t.changedAtRevision;
+      delete t.cancelReason;
+    }
+    const m2 = new PlanBoardManager();
+    m2.restore([old as unknown as typeof b]);
+    const r = m2.getPlan(b.id)!;
+    expect(r.revision).toBe(1);
+    expect(r.sourceMissing).toBe(false);
+    expect(r.lastSelfWriteHash).toBeNull();
+    expect(r.tasks.every((t) => t.changedAtRevision === 1 && t.cancelReason === null)).toBe(true);
+  });
+
+  it('checkAutoComplete: aborted ignored, cancelling blocks completion', () => {
+    const b = mgr.loadPlan('# R\n- [ ] 1.1 A\n- [ ] 1.2 B', 'rev.md');
+    b.tasks[1].status = 'aborted';
+    mgr.claimTask('1.1', 'a');
+    mgr.updateTask('1.1', 'a', 'done');
+    expect(b.status).toBe('completed');
+
+    const b2 = mgr.loadPlan('# R2\n- [ ] 1.1 A\n- [ ] 1.2 B', 'rev2.md');
+    b2.tasks[1].status = 'cancelling';
+    mgr.claimTask('1.1', 'a', undefined, b2.id);
+    mgr.updateTask('1.1', 'a', 'done', undefined, undefined, b2.id);
+    expect(b2.status).toBe('active');
   });
 });

@@ -39,6 +39,17 @@ export const workspace = {
   }),
 };
 
+export class RelativePattern {
+  constructor(public base: string, public pattern: string) {}
+}
+
+(workspace as Record<string, unknown>).createFileSystemWatcher = () => ({
+  onDidChange: () => ({ dispose: () => {} }),
+  onDidCreate: () => ({ dispose: () => {} }),
+  onDidDelete: () => ({ dispose: () => {} }),
+  dispose: () => {},
+});
+
 export const Uri = {
   file: (path: string) => ({ fsPath: path, scheme: 'file' }),
   parse: (str: string) => ({ fsPath: str, scheme: 'file' }),

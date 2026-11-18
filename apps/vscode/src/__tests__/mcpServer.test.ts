@@ -13,6 +13,10 @@ import { AgentProfiler } from '../agentProfiler.js';
 import { SharedKnowledgeStore } from '../sharedKnowledge.js';
 import { ProjectGraphDB } from '../projectGraph/projectGraphDb.js';
 import { GraphQueryEngine } from '../projectGraph/queryEngine.js';
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 let lockManager: LockManager;
 let agentStateManager: AgentStateManager;
@@ -73,7 +77,7 @@ describe('tools/list', () => {
   it('returns all tools', async () => {
     const res = await rpc('tools/list');
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools).toHaveLength(52);
+    expect(result.tools).toHaveLength(54);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain('eh_check_lock');
     expect(names).toContain('eh_acquire_lock');
@@ -89,6 +93,8 @@ describe('tools/list', () => {
     expect(names).toContain('eh_send_message');
     expect(names).toContain('eh_get_messages');
     expect(names).toContain('eh_rescan_files');
+    expect(names).toContain('eh_get_task');
+    expect(names).toContain('eh_cancel_task');
   });
 });
 
@@ -684,5 +690,213 @@ describe('eh_build_graph + eh_scan_status', () => {
     });
     const res = parseResult(await call(server, 'eh_build_graph'));
     expect(res.error).toContain('scan registry not wired');
+  });
+});
+
+// ── Plan file sync tool surface ─────────────────────────────────────────────
+
+describe('plan tool surface (file-backed)', () => {
+  const PLAN = [
+    '# Sync Plan',
+    '- [ ] 1.1 Setup',
+    '- [ ] 1.2 Build',
+    '  - depends: 1.1',
+    '- [ ] 1.3 Docs',
+    '  - **Accept**: docs written',
+    '',
+  ].join('\n');
+
+  type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  let tmp: string;
+  let outside: string;
+  let pbm: PlanBoardManager;
+  let server: McpServer;
+  let loaded: Array<[string, string]>;
+  let closed: string[];
+  const ws = vscode.workspace as unknown as { workspaceFolders: Array<{ uri: { fsPath: string } }> };
+  const prevFolders = ws.workspaceFolders;
+
+  async function t(name: string, args: Record<string, unknown>): Promise<Json> {
+    const res = await server.handleRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name, arguments: args }, id: 1 });
+    if (res.error) return { __error: res.error.message };
+    return JSON.parse((res.result as { content: Array<{ text: string }> }).content[0].text) as Json;
+  }
+
+  beforeEach(() => {
+    tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eh-mcp-ws-')));
+    outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eh-mcp-out-')));
+    fs.mkdirSync(path.join(tmp, 'docs'));
+    fs.writeFileSync(path.join(tmp, 'docs', 'plan.md'), PLAN);
+    fs.writeFileSync(path.join(outside, 'plan.md'), PLAN);
+    ws.workspaceFolders = [{ uri: { fsPath: tmp } }];
+    pbm = new PlanBoardManager();
+    loaded = [];
+    closed = [];
+    server = new McpServer({
+      lockManager: new LockManager(100), agentStateManager: new AgentStateManager(), fileActivityTracker: new FileActivityTracker(),
+      planBoardManager: pbm, messageQueue: new MessageQueue(), roleManager: new RoleManager(), agentProfiler: new AgentProfiler(),
+      sharedKnowledge: new SharedKnowledgeStore(),
+      onPlanLoaded: (id, abs) => { loaded.push([id, abs]); },
+      onPlanClosed: (id) => { closed.push(id); },
+    });
+  });
+
+  afterEach(() => {
+    ws.workspaceFolders = prevFolders;
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('loads by relative path inside the workspace without content, compact response', async () => {
+    const r = await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    expect(r.loaded).toBe(true);
+    expect(r.watching).toBe(true);
+    expect(r.taskCount).toBe(3);
+    expect(r.tasks).toBeUndefined();
+    expect(typeof r.revision).toBe('number');
+    expect(r.counts.pending).toBe(2);
+    expect(r.counts.blocked).toBe(1);
+    expect(Object.keys(r).sort()).toEqual(['counts', 'loaded', 'name', 'plan_id', 'revision', 'taskCount', 'watching']);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0][0]).toBe(r.plan_id);
+    expect(path.normalize(loaded[0][1]).toLowerCase()).toBe(path.join(tmp, 'docs', 'plan.md').toLowerCase());
+    expect(pbm.getPlan(r.plan_id)!.orchestratorAgentId).toBe('orch');
+  });
+
+  it('rejects a path outside the workspace', async () => {
+    const r = await t('eh_load_plan', { agent_id: 'orch', file_path: path.join(outside, 'plan.md') });
+    expect(r.loaded).toBe(false);
+    expect(r.error).toMatch(/outside/);
+    const r2 = await t('eh_load_plan', { agent_id: 'orch', file_path: `../${path.basename(outside)}/plan.md` });
+    expect(r2.loaded).toBe(false);
+    expect(pbm.getAllPlans()).toHaveLength(0);
+    expect(loaded).toHaveLength(0);
+  });
+
+  it('ignores content when file_path is given', async () => {
+    const r = await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md', content: '# Other\n- [ ] 9.9 Nope' });
+    expect(r.name).toBe('Sync Plan');
+    expect(r.taskCount).toBe(3);
+  });
+
+  it('second load of the same path merges and preserves a claim', async () => {
+    const first = await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    expect((await t('eh_claim_task', { agent_id: 'w1', task_id: '1.1' })).claimed).toBe(true);
+    fs.writeFileSync(path.join(tmp, 'docs', 'plan.md'), PLAN + '- [ ] 1.4 Extra\n');
+    const second = await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    expect(second.plan_id).toBe(first.plan_id);
+    expect(second.merged).toBe(true);
+    expect(second.diff.added).toEqual(['1.4']);
+    expect(second.taskCount).toBe(4);
+    const task = pbm.getPlan(first.plan_id)!.tasks.find((x) => x.id === '1.1')!;
+    expect(task.status).toBe('claimed');
+    expect(task.assignee).toBe('w1');
+  });
+
+  it('plan_id rebinds an inline plan to the file', async () => {
+    const inline = await t('eh_load_plan', { agent_id: 'orch', content: PLAN });
+    expect(inline.watching).toBe(false);
+    await t('eh_claim_task', { agent_id: 'w1', task_id: '1.1', plan_id: inline.plan_id });
+    const r = await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md', plan_id: inline.plan_id });
+    expect(r.plan_id).toBe(inline.plan_id);
+    expect(r.watching).toBe(true);
+    const board = pbm.getPlan(inline.plan_id)!;
+    expect(board.sourceFile).not.toBe('inline');
+    expect(board.tasks.find((x) => x.id === '1.1')!.assignee).toBe('w1');
+  });
+
+  it('eh_get_plan default rows have exactly 5 keys; filters and fields work', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    const r = await t('eh_get_plan', { agent_id: 'orch' });
+    expect(r.tasks).toHaveLength(3);
+    for (const row of r.tasks) {
+      expect(Object.keys(row).sort()).toEqual(['assignee', 'blockedBy', 'id', 'status', 'title']);
+    }
+    const withFields = await t('eh_get_plan', { agent_id: 'orch', fields: ['acceptanceCriteria'], task_ids: ['1.3'] });
+    expect(withFields.tasks).toHaveLength(1);
+    expect(withFields.tasks[0].acceptanceCriteria).toBe('docs written');
+    const byStatus = await t('eh_get_plan', { agent_id: 'orch', status: ['blocked'] });
+    expect(byStatus.tasks.map((x: { id: string }) => x.id)).toEqual(['1.2']);
+  });
+
+  it('eh_get_plan since_revision returns only the delta', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    const base = await t('eh_get_plan', { agent_id: 'orch' });
+    const none = await t('eh_get_plan', { agent_id: 'orch', since_revision: base.revision });
+    expect(none.unchanged).toBe(true);
+    expect(none.tasks).toEqual([]);
+    await t('eh_claim_task', { agent_id: 'w1', task_id: '1.3' });
+    const delta = await t('eh_get_plan', { agent_id: 'orch', since_revision: base.revision });
+    expect(delta.tasks.map((x: { id: string }) => x.id)).toEqual(['1.3']);
+    expect(delta.revision).toBeGreaterThan(base.revision);
+  });
+
+  it('eh_get_task returns full detail', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    const r = await t('eh_get_task', { agent_id: 'w1', task_id: '1.3' });
+    expect(r.found).toBe(true);
+    expect(r.task.acceptanceCriteria).toBe('docs written');
+    expect(r.task.notesTruncated).toBe(0);
+    const missing = await t('eh_get_task', { agent_id: 'w1', task_id: '9.9' });
+    expect(missing.found).toBe(false);
+  });
+
+  it('eh_update_task batch updates several tasks and bumps revision once', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    await t('eh_claim_task', { agent_id: 'w1', task_id: '1.1' });
+    await t('eh_claim_task', { agent_id: 'w1', task_id: '1.3' });
+    const before = pbm.getPlan()!.revision;
+    const r = await t('eh_update_task', { agent_id: 'w1', task_ids: ['1.1', '1.3', '9.9'], status: 'in_progress' });
+    expect(Object.keys(r).sort()).toEqual(['failed', 'revision', 'updated']);
+    expect(r.updated).toEqual(['1.1', '1.3']);
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].id).toBe('9.9');
+    expect(r.revision).toBe(before + 1);
+  });
+
+  it('eh_update_task requires task_id or task_ids', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    const r = await t('eh_update_task', { agent_id: 'w1', status: 'done' });
+    expect(r.__error).toMatch(/task_id/);
+  });
+
+  it('eh_cancel_task by a non-orchestrator is rejected', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    const r = await t('eh_cancel_task', { agent_id: 'w1', task_id: '1.3', reason: 'nope' });
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/orchestrator/);
+    expect(pbm.getPlan()!.tasks.find((x) => x.id === '1.3')).toBeDefined();
+  });
+
+  it('eh_cancel_task removes an unclaimed task immediately', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    const r = await t('eh_cancel_task', { agent_id: 'orch', task_id: '1.3', reason: 'not needed' });
+    expect(r).toEqual({ success: true, status: 'removed', assignee: null });
+    expect(pbm.getPlan()!.tasks.find((x) => x.id === '1.3')).toBeUndefined();
+  });
+
+  it('aborted flow via MCP: cancel claimed task, assignee confirms, dependents unblock', async () => {
+    await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    await t('eh_claim_task', { agent_id: 'w1', task_id: '1.1' });
+    const c = await t('eh_cancel_task', { agent_id: 'orch', task_id: '1.1', reason: 'scope cut' });
+    expect(c).toEqual({ success: true, status: 'cancelling', assignee: 'w1' });
+    const refused = await t('eh_update_task', { agent_id: 'w1', task_id: '1.1', status: 'done' });
+    expect(refused.updated).toEqual([]);
+    const other = await t('eh_update_task', { agent_id: 'w2', task_id: '1.1', status: 'aborted' });
+    expect(other.updated).toEqual([]);
+    const ok = await t('eh_update_task', { agent_id: 'w1', task_id: '1.1', status: 'aborted' });
+    expect(ok.updated).toEqual(['1.1']);
+    const plan = await t('eh_get_plan', { agent_id: 'orch' });
+    expect(plan.tasks.map((x: { id: string }) => x.id)).toEqual(['1.2', '1.3']);
+    expect(plan.tasks.find((x: { id: string }) => x.id === '1.2').status).toBe('pending');
+  });
+
+  it('archive and delete fire onPlanClosed', async () => {
+    const a = await t('eh_load_plan', { agent_id: 'orch', file_path: 'docs/plan.md' });
+    expect((await t('eh_archive_plan', { agent_id: 'orch', plan_id: a.plan_id })).archived).toBe(true);
+    expect((await t('eh_delete_plan', { agent_id: 'orch', plan_id: a.plan_id })).deleted).toBe(true);
+    expect(closed).toEqual([a.plan_id, a.plan_id]);
+    await t('eh_delete_plan', { agent_id: 'orch', plan_id: 'missing' });
+    expect(closed).toHaveLength(2);
   });
 });
