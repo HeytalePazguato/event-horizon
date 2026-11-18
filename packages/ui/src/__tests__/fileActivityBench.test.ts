@@ -59,8 +59,11 @@ describe('recordFileOp benchmark', () => {
       for (let i = 0; i < n; i++) slice.recordFileOp(`/f${i % 50}`, 'f', 'a1', 'A', 'c', 'read');
       return performance.now() - start;
     };
-    const t1k = bench(1000);
-    const t10k = bench(10_000);
+    // Best of 5 runs per size: a single ~2ms sample is dominated by GC pauses and
+    // runner contention, which made this flaky on shared CI hosts.
+    const best = (n: number) => Math.min(...Array.from({ length: 5 }, () => bench(n)));
+    const t1k = best(1000);
+    const t10k = best(10_000);
     // 10× workload should cost ≤ 20× — i.e. per-op cost does not inflate.
     expect(t10k).toBeLessThan(t1k * 20 + 10);
   });

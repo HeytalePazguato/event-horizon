@@ -66,6 +66,10 @@ describe('plan file sync: end to end + token cost', () => {
   let fireChange: (() => void) | null;
   let writes: number;
   let contentCalls: number;
+  /** Incremented each time the watcher finishes reading the file (before the self-write check). */
+  let processed: number;
+  /** Write-back file reads/writes currently in flight. */
+  let wbIO: number;
   let cancelling: string[];
 
   async function t(name: string, args: Record<string, unknown>): Promise<Json> {
@@ -82,10 +86,15 @@ describe('plan file sync: end to end + token cost', () => {
       await sleep(5);
     }
   }
-  /** Fire the fake fs change and wait for the watcher debounce + read to settle. */
+  /** True when no write-back is scheduled and none is mid read/write. */
+  const writeBackIdle = (): boolean =>
+    (writeBack as unknown as { pending: Map<string, unknown> }).pending.size === 0 && wbIO === 0;
+
+  /** Fire the fake fs change and wait until the watcher has actually processed it (no fixed sleep). */
   async function fireAndSettle(): Promise<void> {
+    const n = processed;
     fireChange!();
-    await sleep(60);
+    await waitFor(() => processed > n, 5000);
   }
 
   beforeEach(async () => {
@@ -97,6 +106,8 @@ describe('plan file sync: end to end + token cost', () => {
 
     writes = 0;
     contentCalls = 0;
+    processed = 0;
+    wbIO = 0;
     cancelling = [];
     fireChange = null;
 
@@ -117,7 +128,7 @@ describe('plan file sync: end to end + token cost', () => {
         dispose: () => {},
       }),
       readFile: (p) => fsp.readFile(p, 'utf8'),
-      getSelfWriteHash: (id) => pbm.getPlan(id)?.lastSelfWriteHash ?? null,
+      getSelfWriteHash: (id) => { processed++; return pbm.getPlan(id)?.lastSelfWriteHash ?? null; },
       onContent: (id, markdown) => {
         contentCalls++;
         const board = pbm.getPlan(id);
@@ -132,8 +143,8 @@ describe('plan file sync: end to end + token cost', () => {
       debounceMs: 10,
     });
     writeBack = new PlanWriteBack({
-      readFile: (p) => fsp.readFile(p, 'utf8'),
-      writeFile: async (p, s) => { writes++; await fsp.writeFile(p, s, 'utf8'); },
+      readFile: async (p) => { wbIO++; try { return await fsp.readFile(p, 'utf8'); } finally { wbIO--; } },
+      writeFile: async (p, s) => { writes++; wbIO++; try { await fsp.writeFile(p, s, 'utf8'); } finally { wbIO--; } },
       isLockedByOther: (p) => lockManager.query(p, '__eh_writeback__').allowed === false,
       setSelfWriteHash: (id, hash) => pbm.setSelfWriteHash(id, hash),
       coalesceMs: 20,
@@ -265,15 +276,16 @@ describe('plan file sync: end to end + token cost', () => {
     expect(pbm.getPlan(planId)!.tasks.find((x) => x.id === '4.1')).toBeUndefined();
 
     // Let any write-back triggered by the merge/abort settle, then reset counters
-    await sleep(80);
+    await waitFor(writeBackIdle, 5000);
     const writesBeforeDone = writes;
     const contentBeforeDone = contentCalls;
 
     // ── Done writes [x] to disk exactly once; no re-merge ───────────────────
     const done = await t('eh_update_task', { agent_id: W1, task_id: '1.1', plan_id: planId, status: 'done', note: 'finished' });
     expect(done.updated).toEqual(['1.1']);
-    await waitFor(() => writes > writesBeforeDone);
-    await sleep(40);
+    await waitFor(() => writes > writesBeforeDone, 5000);
+    await waitFor(writeBackIdle, 5000);
+    await sleep(40); // window for a (wrong) second write to show up
     expect(writes).toBe(writesBeforeDone + 1);
     const disk = fs.readFileSync(planPath, 'utf8');
     expect(disk).toMatch(/^- \[x\] 1\.1 /m);
