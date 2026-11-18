@@ -8,7 +8,7 @@ import * as path from 'path';
 import { EventBus, MetricsEngine, AgentStateManager } from '@event-horizon/core';
 import type { AgentEvent } from '@event-horizon/core';
 import { openUniversePanel } from './webviewProvider';
-import { startEventServer, stopEventServer, setFileLockingEnabled, setReadInterception, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setMcpPurgeStaleAgents, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId } from './eventServer';
+import { startEventServer, stopEventServer, setFileLockingEnabled, setReadInterception, releaseAgentLocks, initMcpServer, fileActivityTracker, lockManager, planBoardManager, messageQueue, roleManager, agentProfiler, sharedKnowledge, spawnRegistry, sessionStore, heartbeatManager, budgetManager, traceStore, modelTierManager, tokenAnalyzer, setAuthToken, getAuthToken, setExtensionRoot, wsBroadcast, setEventSearchEngine, setMcpOnEvent, setMcpPurgeStaleAgents, setProjectGraphLifecycle, setProjectGraphScanner, setProjectGraphQueryEngine, setEventBridgeOnSharedKnowledge, setActiveBridge, webviewSelectedPlanId, _getMcpServer } from './eventServer';
 import { EventSearchEngine } from './eventSearch';
 import { notifyOrchestratorsOfFailure } from './orchestratorNotifier';
 import { Watchdog } from './watchdog';
@@ -17,6 +17,9 @@ import type { DeathSignal } from './agentLifecycle';
 import { applyLifecycleClassification } from './lifecycleSignals';
 import { backfillSessionCost, forgetBackfill } from './openCodeCostBackfill';
 import type { PlanBoard } from './planBoard';
+import { PlanFileWatcher, vscodeWatchFactory } from './planFileWatcher';
+import { PlanWriteBack } from './planWriteBack';
+import { PlanEditAuthority } from './planEditAuthority';
 import { setupCopilotOutputChannel } from './copilotChannel';
 import { runSetupClaudeCodeHooks, setupClaudeCodeHooks, isClaudeCodeHooksInstalled, registerMcpServer, ensureLockScripts } from './setupHooks';
 import { setupOpenCodeHooks, isOpenCodeHooksInstalled, registerOpenCodeMcpServer } from './setupOpenCodeHooks';
@@ -223,6 +226,64 @@ export function activate(context: vscode.ExtensionContext): void {
   // Initialize MCP server with runtime dependencies
   initMcpServer({ agentStateManager, metricsEngine });
 
+  // ── Plan file sync: watcher (file → board), write-back (board → file), edit authority ──
+  const planEditAuthority = new PlanEditAuthority((p) => lockManager.normalizePath(p));
+  const sendFromEH = (toAgentId: string, text: string): void => {
+    try { messageQueue.send('event-horizon', 'Event Horizon', toAgentId, text); } catch { /* best effort */ }
+  };
+  const planFileWatcher = new PlanFileWatcher({
+    factory: vscodeWatchFactory,
+    readFile: (p) => fsp.readFile(p, 'utf8'),
+    getSelfWriteHash: (planId) => planBoardManager.getPlan(planId)?.lastSelfWriteHash ?? null,
+    onContent: (planId, markdown) => {
+      const board = planBoardManager.getPlan(planId);
+      if (!board) return;
+      const editor = planEditAuthority.lastWriter(board.sourceFile);
+      const result = planBoardManager.applyFileChange(planId, markdown, editor);
+      if (result.applied || !result.reason || result.reason === 'not-found') return;
+      const orchestratorId = board.orchestratorAgentId;
+      if (!orchestratorId) return;
+      const why: Record<string, string> = {
+        'not-orchestrator': 'the edit was made by a non-orchestrator agent; only the orchestrator may edit the plan file',
+        'renumber': 'too many task IDs were removed while new ones were added (suspected renumbering); never renumber or reuse task IDs',
+        'duplicate-ids': `the file contains duplicate task IDs${result.diff?.duplicateIds.length ? ` (${result.diff.duplicateIds.join(', ')})` : ''}`,
+        'parse-error': 'the file could not be parsed into tasks',
+      };
+      sendFromEH(orchestratorId,
+        `Plan file sync rejected for plan "${board.name}" (${board.sourceFile}): ${why[result.reason] ?? result.reason}. ` +
+        `Editor: ${editor ?? 'unknown (unattributed edit)'}. The live board was left unchanged; fix the file and save again.`);
+    },
+    onMissing: (planId) => planBoardManager.markSourceMissing(planId, true),
+  });
+  const planWriteBack = new PlanWriteBack({
+    readFile: (p) => fsp.readFile(p, 'utf8'),
+    writeFile: (p, s) => fsp.writeFile(p, s, 'utf8'),
+    isLockedByOther: (p) => lockManager.query(p, '__eh_writeback__').allowed === false,
+    setSelfWriteHash: (planId, hash) => planBoardManager.setSelfWriteHash(planId, hash),
+    log: (msg) => console.warn(`[Event Horizon] ${msg}`),
+  });
+  lockManager.setOwnershipRule(planEditAuthority.ownershipRuleFor(() => planBoardManager.getAllPlans()));
+  {
+    const mcp = _getMcpServer();
+    if (mcp) {
+      const mcpDeps = (mcp as unknown as { deps: Record<string, unknown> }).deps;
+      mcpDeps.onPlanLoaded = (planId: string, absPath: string) => {
+        if (absPath && absPath !== 'inline') planFileWatcher.watch(planId, absPath);
+      };
+      mcpDeps.onPlanClosed = (planId: string) => {
+        planFileWatcher.unwatch(planId);
+        planWriteBack.cancel(planId);
+      };
+    }
+  }
+  context.subscriptions.push({
+    dispose: () => {
+      planFileWatcher.disposeAll();
+      planWriteBack.dispose();
+      lockManager.setOwnershipRule(null);
+    },
+  });
+
   // Restore plans from globalState (survives window reload)
   // Migration: old single-plan 'planBoard' → new multi-plan 'planBoards'
   const savedPlans = context.globalState.get<PlanBoard[]>('planBoards');
@@ -237,6 +298,11 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     planBoardManager.restore([legacyPlan]);
     void context.globalState.update('planBoard', undefined); // clean up old key
+  }
+  // Resume watching the source files of every restored, still-open plan
+  for (const board of planBoardManager.getAllPlans()) {
+    if (board.status === 'archived' || !board.sourceFile || board.sourceFile === 'inline') continue;
+    planFileWatcher.watch(board.id, board.sourceFile);
   }
 
   // Restore roles and agent profiles from globalState
@@ -660,19 +726,12 @@ export function activate(context: vscode.ExtensionContext): void {
     // Debounce globalState persistence to 1 s windows (coalesces rapid task updates)
     schedulePlanBoardsPersist();
 
-    // Write back checkbox status for the changed plan
+    // Write back checkbox status for the changed plan (coalesced, lock-aware, self-write hashed)
     if (changedPlanId) {
+      const changedBoard = planBoardManager.getPlan(changedPlanId);
       const sync = planBoardManager.getSourceFileSync(changedPlanId);
-      if (sync && sync.sourceFile !== 'inline') {
-        void fsp.readFile(sync.sourceFile, 'utf8').then((content) => {
-          let updated = content;
-          for (const [taskId, isDone] of sync.taskStatuses) {
-            const escapedId = taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(`^(\\s*- \\[)[ xX](\\]\\s+${escapedId}\\s)`, 'gm');
-            updated = updated.replace(re, `$1${isDone ? 'x' : ' '}$2`);
-          }
-          if (updated !== content) return fsp.writeFile(sync.sourceFile, updated, 'utf8');
-        }).catch(() => {});
+      if (changedBoard && sync && !changedBoard.sourceMissing && sync.sourceFile && sync.sourceFile !== 'inline') {
+        planWriteBack.schedule(changedPlanId, sync.sourceFile, sync.taskStatuses);
       }
     }
 
@@ -806,6 +865,45 @@ export function activate(context: vscode.ExtensionContext): void {
     roleNoticesSent.add(noticeKey);
     messageQueue.send('event-horizon', 'Event Horizon', task.assignee, parts.join('\n\n'));
   });
+
+  // Cancel handshake: tell the assignee to stop and confirm with status 'aborted'
+  planBoardManager.onTaskCancelling((task, planId) => {
+    if (!task.assignee) return;
+    const planName = planBoardManager.getPlan(planId)?.name ?? planId;
+    sendFromEH(task.assignee,
+      `Task ${task.id} in plan ${planName} was cancelled by the orchestrator (${task.cancelReason ?? 'no reason given'}). ` +
+      `Stop work, revert uncommitted changes for it, then call eh_update_task(task_id: ${task.id}, status: 'aborted').`);
+  });
+
+  // Auto-confirm cancellations whose assignee is gone (heartbeat 'lost')
+  // After a window reload the heartbeat map is empty, so every still-live worker
+  // reads as 'lost' until it sends its next event. Hold off until workers have
+  // had time to check in, or their persisted cancellations get auto-aborted.
+  const CANCEL_SWEEP_GRACE_MS = 5 * 60_000;
+  const cancelSweepStartedAt = Date.now();
+  const cancellingSweepInterval = setInterval(() => {
+    if (Date.now() - cancelSweepStartedAt < CANCEL_SWEEP_GRACE_MS) return;
+    const lostByAgent = new Map<string, Array<{ planId: string; planName: string; orchestrator: string | null; taskId: string }>>();
+    for (const board of planBoardManager.getAllPlans()) {
+      for (const t of board.tasks) {
+        if (t.status !== 'cancelling' || !t.assignee) continue;
+        if (heartbeatManager.getStatus(t.assignee) !== 'lost') continue;
+        const list = lostByAgent.get(t.assignee) ?? [];
+        list.push({ planId: board.id, planName: board.name, orchestrator: board.orchestratorAgentId, taskId: t.id });
+        lostByAgent.set(t.assignee, list);
+      }
+    }
+    for (const [agentId, tasks] of lostByAgent) {
+      const removed = new Set(planBoardManager.confirmAbortForLostAgent(agentId));
+      for (const t of tasks) {
+        if (!removed.has(t.taskId) || !t.orchestrator) continue;
+        sendFromEH(t.orchestrator,
+          `Task ${t.taskId} in plan ${t.planName} was cancelling, but its assignee ${agentId} is lost (no heartbeat). ` +
+          'Event Horizon confirmed the abort and removed the task; check the working tree for leftover changes.');
+      }
+    }
+  }, 30_000);
+  context.subscriptions.push({ dispose: () => clearInterval(cancellingSweepInterval) });
 
   // Build a merged agentId→role map from both the spawn registry (spawned agents)
   // and the role manager (hook-connected agents that claimed roles via MCP).
@@ -1204,6 +1302,10 @@ export function activate(context: vscode.ExtensionContext): void {
       const toolName = event.payload.toolName as string | undefined;
       const isWrite = toolName === 'Write' || toolName === 'WriteFile' || toolName === 'Edit' || toolName === 'MultiEdit';
       if (isWrite) {
+        // Attribute the write so the plan watcher knows who edited a plan file
+        const cwd = (event.payload?.cwd as string | undefined) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const absWritePath = path.isAbsolute(filePath) || !cwd ? filePath : path.resolve(cwd, filePath);
+        planEditAuthority.recordWrite(event.agentId, absWritePath);
         const lastFile = lastLockedFileByAgent.get(event.agentId);
         if (lastFile && lastFile !== filePath) {
           lockManager.release(lastFile, event.agentId);

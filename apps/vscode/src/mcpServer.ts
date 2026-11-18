@@ -26,6 +26,11 @@ import type { FileReadCache } from './fileReadCache.js';
 import type { ProjectGraphStore, ProjectGraphLifecycle, GraphNodeType, RelationType, ScanRegistry } from './projectGraph/index.js';
 import type { ProjectGraphScanner } from './projectGraph/scanner.js';
 import type { GraphQueryEngine } from './projectGraph/queryEngine.js';
+import type { PlanBoard, TaskStatus } from './planBoard.js';
+import type { MergeDiff } from './planMerge.js';
+import { queryPlan, taskDetail, type PlanQueryField } from './planQuery.js';
+import { resolvePlanPath, readPlanFile } from './planPathResolver.js';
+import * as vscode from 'vscode';
 import { exec } from 'child_process';
 import { createHash } from 'crypto';
 
@@ -133,27 +138,59 @@ export const MCP_TOOLS: McpToolDef[] = [
   // ── Plan coordination tools ──────────────────────────────────────────────
   {
     name: 'eh_load_plan',
-    description: 'Load a plan from a markdown file. Parses task checklist into claimable tasks with dependencies.',
+    description: 'Load a plan from a markdown file. Pass file_path (relative to the workspace or absolute inside it). EH reads and watches the file; edits to the file are picked up automatically, so do not call this again after editing it. Loading a path that is already loaded merges by task ID (claims and notes are kept). Returns a compact summary (no task list); use eh_get_plan to read tasks. `content` is a legacy fallback for when no file exists.',
     inputSchema: {
       type: 'object',
       properties: {
-        file_path: { type: 'string', description: 'Path to plan markdown file' },
+        file_path: { type: 'string', description: 'Path to the plan .md file inside the workspace (preferred)' },
         agent_id: { type: 'string', description: 'Your agent/session ID' },
-        content: { type: 'string', description: 'Markdown content of the plan file (alternative to file_path for agents that already read the file)' },
+        plan_id: { type: 'string', description: 'Optional: ID of an existing inline (content-loaded) plan to bind to file_path. Its state is merged and kept.' },
+        content: { type: 'string', description: 'Legacy fallback: markdown content of the plan. Ignored when file_path is given. Do not paste plan content when a file exists.' },
       },
       required: ['agent_id'],
     },
   },
   {
     name: 'eh_get_plan',
-    description: 'Get a plan by ID, or the most recently loaded plan if no ID given. Returns all tasks with status, assignee, and dependencies.',
+    description: 'Get a plan by ID, or the most recently loaded plan if no ID given. Default output is compact: each task has only id, title, status, assignee, blockedBy, plus plan-wide counts and a revision number. Filter with status / task_ids, add columns with fields, and pass since_revision with the last revision you saw to get only tasks changed since then, plus removed: [ids] for tasks deleted since then (unchanged: true when nothing changed). Use eh_get_task for one task\'s full detail.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent/session ID' },
         plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
+        status: { type: 'array', items: { type: 'string', enum: ['pending', 'claimed', 'in_progress', 'done', 'failed', 'blocked', 'cancelling', 'aborted'] }, description: 'Only return tasks with one of these statuses' },
+        task_ids: { type: 'array', items: { type: 'string' }, description: 'Only return these task IDs' },
+        since_revision: { type: 'number', description: 'Only return tasks changed after this revision. Pass the revision from your last eh_get_plan / eh_load_plan / eh_update_task response.' },
+        fields: { type: 'array', items: { type: 'string', enum: ['notes', 'acceptanceCriteria', 'verifyCommand', 'complexity', 'modelTier', 'verificationStatus', 'role', 'description'] }, description: 'Extra per-task fields to include' },
       },
       required: ['agent_id'],
+    },
+  },
+  {
+    name: 'eh_get_task',
+    description: 'Get the full detail of one task (description, acceptance criteria, verify command, last 20 notes, etc.). Cheaper than reading the whole plan.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID from the plan' },
+        agent_id: { type: 'string', description: 'Your agent/session ID' },
+        plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
+      },
+      required: ['task_id', 'agent_id'],
+    },
+  },
+  {
+    name: 'eh_cancel_task',
+    description: 'Cancel a task (orchestrator only). An unclaimed task is removed immediately. A claimed / in-progress task enters `cancelling`; its assignee must stop work and confirm with eh_update_task(status: "aborted"), which removes it and unblocks dependents.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID to cancel' },
+        reason: { type: 'string', description: 'Why the task is being cancelled (shown to the assignee)' },
+        agent_id: { type: 'string', description: 'Your agent/session ID (must be the plan orchestrator)' },
+        plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
+      },
+      required: ['task_id', 'reason', 'agent_id'],
     },
   },
   {
@@ -184,18 +221,19 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: 'eh_update_task',
-    description: 'Update a task you own — mark progress, done, or failed. Add notes visible to other agents.',
+    description: 'Update a task you own — mark progress, done, or failed. Add notes visible to other agents. Pass task_ids to update several tasks at once. EH marks the plan file checkbox itself on done; do not edit the plan file. Use status "aborted" only to confirm a cancellation (task in `cancelling`). Returns { updated, failed, revision }.',
     inputSchema: {
       type: 'object',
       properties: {
         task_id: { type: 'string', description: 'Task ID from the plan' },
+        task_ids: { type: 'array', items: { type: 'string' }, description: 'Alternative to task_id: update several tasks with the same status/note' },
         agent_id: { type: 'string', description: 'Your agent/session ID' },
         agent_name: { type: 'string', description: 'Human-readable agent name' },
-        status: { type: 'string', enum: ['in_progress', 'done', 'failed', 'blocked'], description: 'New task status' },
+        status: { type: 'string', enum: ['in_progress', 'done', 'failed', 'blocked', 'aborted'], description: 'New task status' },
         note: { type: 'string', description: 'Optional note for other agents' },
         plan_id: { type: 'string', description: 'Plan ID (optional — defaults to the most recently loaded plan)' },
       },
-      required: ['task_id', 'agent_id', 'status'],
+      required: ['agent_id', 'status'],
     },
   },
   {
@@ -903,6 +941,10 @@ export interface McpServerDeps {
   onEvent?: (event: AgentEvent) => void;
   /** Lifecycle-owned purge: terminates dead stale/lost agents and returns their ids. */
   purgeStaleAgents?: () => string[];
+  /** Fired after a plan is loaded/merged/rebound from a real file, so the host can watch it. */
+  onPlanLoaded?: (planId: string, absPath: string) => void;
+  /** Fired after a plan is archived or deleted, so the host can stop watching it. */
+  onPlanClosed?: (planId: string) => void;
 }
 
 export class McpServer {
@@ -1242,20 +1284,50 @@ export class McpServer {
       // ── Plan coordination tools ────────────────────────────────────────────
 
       case 'eh_load_plan': {
-        const filePath = (args.file_path as string | undefined) ?? 'inline';
-        const content = args.content as string | undefined;
-
-        if (!content && !args.file_path) {
-          throw new Error('Either file_path or content must be provided');
-        }
-
-        const markdown = content ?? '';
-        if (!markdown) {
-          throw new Error('No content provided. Pass the markdown content in the "content" parameter.');
-        }
-
+        const rawPath = typeof args.file_path === 'string' && args.file_path.trim() ? args.file_path : undefined;
+        const content = typeof args.content === 'string' ? args.content : undefined;
         const agentId = args.agent_id as string;
-        const plan = planBoardManager.loadPlan(markdown, filePath, agentId);
+        const rebindId = typeof args.plan_id === 'string' && args.plan_id ? args.plan_id : undefined;
+
+        if (!rawPath && !content) {
+          throw new Error('Pass file_path (path to the plan .md inside the workspace). `content` is only a legacy fallback.');
+        }
+
+        let board: PlanBoard;
+        let diff: MergeDiff | null = null;
+        let applied = true;
+        let absPath: string | null = null;
+
+        if (rawPath) {
+          const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+          const resolved = await resolvePlanPath(rawPath, folders);
+          if (!resolved.ok) {
+            return { loaded: false, error: resolved.error };
+          }
+          absPath = resolved.absPath;
+          let markdown: string;
+          try {
+            markdown = await readPlanFile(absPath);
+          } catch (err) {
+            return { loaded: false, error: `Failed to read plan file: ${err instanceof Error ? err.message : String(err)}` };
+          }
+
+          const rebindTarget = rebindId ? planBoardManager.getPlan(rebindId) : null;
+          if (rebindId && rebindTarget && rebindTarget.id === rebindId && rebindTarget.sourceFile === 'inline') {
+            const res = planBoardManager.rebindPlan(rebindId, markdown, absPath);
+            if (!res.success || !res.board) return { loaded: false, error: res.error ?? 'Rebind failed' };
+            board = res.board;
+            diff = res.diff ?? null;
+            applied = res.applied ?? true;
+          } else {
+            const res = planBoardManager.loadOrMergePlan(markdown, absPath, agentId);
+            board = res.board;
+            diff = res.diff;
+            applied = res.applied;
+          }
+        } else {
+          board = planBoardManager.loadPlan(content!, 'inline', agentId);
+        }
 
         // Auto-assign orchestrator role to the agent that loaded the plan
         if (agentId) {
@@ -1264,18 +1336,26 @@ export class McpServer {
           try { this.deps.roleManager.assignRole('orchestrator', agentType, agentId); } catch { /* role may not exist */ }
         }
 
+        const watching = absPath !== null && board.sourceFile !== 'inline';
+        if (watching) {
+          try { this.deps.onPlanLoaded?.(board.id, board.sourceFile); } catch { /* host callback failure must not fail the load */ }
+        }
+
+        const summary = queryPlan(board, { sinceRevision: Number.MAX_SAFE_INTEGER });
         return {
-          loaded: true,
-          plan_id: plan.id,
-          name: plan.name,
-          taskCount: plan.tasks.length,
-          orchestrator: plan.orchestratorAgentId,
-          tasks: plan.tasks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            status: t.status,
-            blockedBy: t.blockedBy,
-          })),
+          loaded: applied,
+          plan_id: board.id,
+          name: board.name,
+          revision: board.revision,
+          taskCount: board.tasks.length,
+          counts: summary.counts,
+          ...(diff ? { merged: applied, diff } : {}),
+          ...(!applied && diff ? {
+            error: diff.duplicateIds.length > 0
+              ? `Plan file has duplicate task IDs (${diff.duplicateIds.join(', ')}); live plan unchanged`
+              : 'Too many task IDs changed at once (suspected renumbering); live plan unchanged. Never renumber task IDs.',
+          } : {}),
+          watching,
         };
       }
 
@@ -1285,28 +1365,36 @@ export class McpServer {
         if (!plan) {
           return { loaded: false, message: planId ? `Plan not found: ${planId}` : 'No plan loaded. Use eh_load_plan first.' };
         }
-        return {
-          loaded: true,
-          plan_id: plan.id,
-          name: plan.name,
-          status: plan.status,
-          sourceFile: plan.sourceFile,
-          lastUpdatedAt: plan.lastUpdatedAt,
-          tasks: plan.tasks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            status: t.status,
-            assignee: t.assigneeName ?? t.assignee,
-            assigneeId: t.assignee,
-            blockedBy: t.blockedBy,
-            notes: t.notes,
-            acceptanceCriteria: t.acceptanceCriteria ?? null,
-            verifyCommand: t.verifyCommand ?? null,
-            complexity: t.complexity ?? null,
-            modelTier: t.modelTier ?? null,
-            verificationStatus: t.verificationStatus ?? null,
-          })),
-        };
+        const strArray = (v: unknown): string[] | undefined =>
+          Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
+        return { loaded: true, ...queryPlan(plan, {
+          status: strArray(args.status) as TaskStatus[] | undefined,
+          taskIds: strArray(args.task_ids),
+          sinceRevision: typeof args.since_revision === 'number' ? args.since_revision : undefined,
+          fields: strArray(args.fields) as PlanQueryField[] | undefined,
+        }) };
+      }
+
+      case 'eh_get_task': {
+        const planId = args.plan_id as string | undefined;
+        const taskId = args.task_id as string;
+        const plan = planBoardManager.getPlan(planId);
+        if (!plan) {
+          return { found: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+        }
+        const task = taskDetail(plan, taskId);
+        if (!task) return { found: false, plan_id: plan.id, error: `Task not found: ${taskId}` };
+        return { found: true, plan_id: plan.id, revision: plan.revision, task };
+      }
+
+      case 'eh_cancel_task': {
+        const planId = args.plan_id as string | undefined;
+        const taskId = args.task_id as string;
+        const agentId = args.agent_id as string;
+        const reason = args.reason as string;
+        const result = planBoardManager.cancelTask(planId, taskId, agentId, reason);
+        if (!result.success) return { success: false, error: result.error };
+        return { success: true, status: result.status, assignee: result.assignee ?? null };
       }
 
       case 'eh_list_plans': {
@@ -1436,33 +1524,32 @@ export class McpServer {
       }
 
       case 'eh_update_task': {
-        const taskId = args.task_id as string;
         const agentId = args.agent_id as string;
         const agentName = (args.agent_name as string) ?? agentId;
         const status = args.status as string;
         const note = args.note as string | undefined;
         const planId = args.plan_id as string | undefined;
 
-        const validStatuses = ['in_progress', 'done', 'failed', 'blocked'];
+        const taskIds: string[] = Array.isArray(args.task_ids)
+          ? args.task_ids.filter((x): x is string => typeof x === 'string' && x !== '')
+          : typeof args.task_id === 'string' && args.task_id !== '' ? [args.task_id] : [];
+        if (taskIds.length === 0) {
+          throw new Error('Missing required parameter: task_id (or task_ids)');
+        }
+
+        const validStatuses = ['in_progress', 'done', 'failed', 'blocked', 'aborted'];
         if (!validStatuses.includes(status)) {
           throw new Error(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
         }
 
-        const result = planBoardManager.updateTask(
-          taskId, agentId,
-          status as 'in_progress' | 'done' | 'failed' | 'blocked',
-          note, agentName, planId,
-        );
-        if (!result.success) {
-          return { updated: false, error: result.error, plan_id: result.planId };
-        }
-        return { updated: true, plan_id: result.planId, task: { id: result.task!.id, title: result.task!.title, status: result.task!.status } };
+        return planBoardManager.updateTasks(taskIds, agentId, status as TaskStatus, note, agentName, planId);
       }
 
       case 'eh_archive_plan': {
         const planId = args.plan_id as string;
         const result = planBoardManager.archivePlan(planId);
         if (!result.success) return { archived: false, error: result.error };
+        try { this.deps.onPlanClosed?.(planId); } catch { /* host callback failure must not fail the archive */ }
         return { archived: true, plan_id: planId };
       }
 
@@ -1470,6 +1557,7 @@ export class McpServer {
         const planId = args.plan_id as string;
         const result = planBoardManager.deletePlan(planId);
         if (!result.success) return { deleted: false, error: result.error };
+        try { this.deps.onPlanClosed?.(planId); } catch { /* host callback failure must not fail the delete */ }
         return { deleted: true, plan_id: planId };
       }
 

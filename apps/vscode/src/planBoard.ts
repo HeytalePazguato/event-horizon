@@ -5,7 +5,10 @@
  * globalState externally by extension.ts).
  */
 
+import * as path from 'path';
 import type { ModelTierManager } from './modelTierManager.js';
+import { mergePlan } from './planMerge.js';
+import type { MergeDiff } from './planMerge.js';
 
 // ── Data model ──────────────────────────────────────────────────────────────
 
@@ -16,7 +19,10 @@ export interface TaskNote {
   ts: number;
 }
 
-export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked';
+export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'done' | 'failed' | 'blocked' | 'cancelling' | 'aborted';
+
+/** How many removed-task records a board keeps for since_revision pollers. */
+const MAX_REMOVED_TRACKED = 500;
 export type PlanStatus = 'active' | 'completed' | 'archived';
 
 export type DependencyFailurePolicy = 'cascade' | 'block' | 'ignore';
@@ -46,6 +52,10 @@ export interface PlanTask {
   complexity: TaskComplexity | null;
   modelTier: string | null;
   verificationStatus: VerificationStatus | null;
+  /** Board revision at which this task last changed. */
+  changedAtRevision: number;
+  /** Why the task was cancelled/aborted (set by plan-file sync). */
+  cancelReason: string | null;
 }
 
 export interface PlanBoard {
@@ -61,6 +71,15 @@ export interface PlanBoard {
   orchestratorAgentId: string | null;
   strategy: SchedulingStrategy;
   maxBudgetUsd: number | null;
+  /** Recently removed task IDs with the revision that removed them, so
+   *  since_revision pollers learn about removals. Capped; oldest dropped. */
+  removedTasks?: Array<{ id: string; revision: number }>;
+  /** Monotonic counter, incremented once per mutating call. Starts at 1. */
+  revision: number;
+  /** True when the source markdown file is missing on disk. */
+  sourceMissing: boolean;
+  /** Hash of the last content this extension wrote to the source file (to ignore self-writes). */
+  lastSelfWriteHash: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -239,6 +258,8 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
       complexity,
       modelTier,
       verificationStatus: null,
+      changedAtRevision: 1,
+      cancelReason: null,
     });
   }
 
@@ -258,10 +279,30 @@ export function parsePlanMarkdown(markdown: string, sourceFile: string): PlanBoa
     orchestratorAgentId: null,
     strategy,
     maxBudgetUsd,
+    revision: 1,
+    sourceMissing: false,
+    lastSelfWriteHash: null,
   };
 }
 
-function resolveBlockedStatus(tasks: PlanTask[]): void {
+/** Normalize a plan source path for comparison. `inline` is returned unchanged. */
+export function normalizeSourceFile(sourceFile: string): string {
+  if (sourceFile === 'inline') return sourceFile;
+  const resolved = path.resolve(sourceFile);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+export type ApplyFileChangeReason = 'not-orchestrator' | 'renumber' | 'duplicate-ids' | 'parse-error' | 'not-found';
+
+export interface LoadOrMergeResult {
+  board: PlanBoard;
+  /** Null when the plan was loaded fresh (no merge happened). */
+  diff: MergeDiff | null;
+  /** False only when a merge was attempted and refused (renumber / duplicate IDs). */
+  applied: boolean;
+}
+
+export function resolveBlockedStatus(tasks: PlanTask[]): void {
   const statusById = new Map(tasks.map((t) => [t.id, t.status]));
   for (const task of tasks) {
     if (task.status === 'done' || task.status === 'failed') continue;
@@ -281,6 +322,7 @@ export class PlanBoardManager {
   private changeListeners: Array<(boards: Map<string, PlanBoard>, changedPlanId: string | null) => void> = [];
   private taskCompleteListeners: Array<(task: PlanTask, planId: string) => void> = [];
   private taskClaimListeners: Array<(task: PlanTask, planId: string) => void> = [];
+  private taskCancellingListeners: Array<(task: PlanTask, planId: string) => void> = [];
   private modelTierManager: ModelTierManager | null;
 
   constructor(modelTierManager?: ModelTierManager) {
@@ -304,12 +346,25 @@ export class PlanBoardManager {
     this.taskClaimListeners.push(fn);
   }
 
+  /** Fired whenever a task enters `cancelling` (from a file merge or `cancelTask`). */
+  onTaskCancelling(fn: (task: PlanTask, planId: string) => void): void {
+    this.taskCancellingListeners.push(fn);
+  }
+
   private notifyChange(changedPlanId: string | null): void {
     for (const fn of this.changeListeners) fn(this.boards, changedPlanId);
   }
 
-  /** Load a plan from parsed markdown. Replaces existing plan with same ID. */
-  loadPlan(markdown: string, sourceFile: string, agentId?: string): PlanBoard {
+  private notifyCancelling(board: PlanBoard, taskIds: Iterable<string>): void {
+    for (const id of taskIds) {
+      const task = board.tasks.find((t) => t.id === id);
+      if (!task) continue;
+      for (const fn of this.taskCancellingListeners) fn(task, board.id);
+    }
+  }
+
+  /** Parse markdown and derive model tiers. Separate method so tests can simulate parse failures. */
+  private parseWithTiers(markdown: string, sourceFile: string): PlanBoard {
     const board = parsePlanMarkdown(markdown, sourceFile);
 
     // Derive a model tier from complexity when no explicit <!-- model --> comment
@@ -321,6 +376,144 @@ export class PlanBoardManager {
         }
       }
     }
+    return board;
+  }
+
+  /** Find a non-archived board bound to the given source file (never matches `inline`). */
+  private findBySourceFile(sourceFile: string): PlanBoard | null {
+    if (sourceFile === 'inline') return null;
+    const norm = normalizeSourceFile(sourceFile);
+    for (const board of this.boards.values()) {
+      if (board.status === 'archived' || board.sourceFile === 'inline') continue;
+      if (normalizeSourceFile(board.sourceFile) === norm) return board;
+    }
+    return null;
+  }
+
+  /** True when a merge changed anything worth a revision (tasks or plan-level settings). */
+  private static mergeChanged(live: PlanBoard, merged: PlanBoard, diff: MergeDiff): boolean {
+    return diff.added.length > 0 || diff.updated.length > 0 || diff.removed.length > 0 ||
+      diff.cancelling.length > 0 || live.name !== merged.name || live.strategy !== merged.strategy ||
+      live.onDependencyFailure !== merged.onDependencyFailure || live.maxAutoRetries !== merged.maxAutoRetries ||
+      live.maxBudgetUsd !== merged.maxBudgetUsd ||
+      live.tasks.map((t) => t.id).join('\n') !== merged.tasks.map((t) => t.id).join('\n');
+  }
+
+  /**
+   * Install a merged board in place of the live one: bumps once with the touched
+   * IDs, re-evaluates plan completion, notifies, and fires cancelling listeners.
+   */
+  private commitMerge(live: PlanBoard, merged: PlanBoard, diff: MergeDiff, force = false): void {
+    const changed = force || PlanBoardManager.mergeChanged(live, merged, diff);
+    if (merged.status === 'completed' && merged.tasks.some((t) => t.status !== 'done' && t.status !== 'aborted')) {
+      merged.status = 'active';
+    }
+    this.checkAutoComplete(merged);
+    if (changed || merged.status !== live.status) {
+      if (diff.removed.length > 0) this.recordRemoved(merged, diff.removed);
+      this.bump(merged, [...diff.added, ...diff.updated, ...diff.cancelling]);
+    }
+    this.boards.set(merged.id, merged);
+    this.notifyChange(merged.id);
+    this.notifyCancelling(merged, diff.cancelling);
+  }
+
+  /**
+   * Load a plan from markdown. If a non-archived board is already bound to the
+   * same source file, the new content is merged into it by task ID (claims,
+   * notes and verification survive). Otherwise the plan is loaded fresh.
+   */
+  loadOrMergePlan(markdown: string, sourceFile: string, agentId?: string): LoadOrMergeResult {
+    const existing = this.findBySourceFile(sourceFile);
+    if (existing) {
+      const parsed = this.parseWithTiers(markdown, existing.sourceFile);
+      const { board, diff, applied } = mergePlan(existing, parsed);
+      if (!applied) return { board: existing, diff, applied: false };
+      if (agentId && !board.orchestratorAgentId) board.orchestratorAgentId = agentId;
+      const orchestratorChanged = board.orchestratorAgentId !== existing.orchestratorAgentId;
+      this.activePlanId = board.id;
+      this.commitMerge(existing, board, diff, orchestratorChanged);
+      return { board, diff, applied: true };
+    }
+    return { board: this.loadFresh(markdown, sourceFile, agentId), diff: null, applied: true };
+  }
+
+  /** Load a plan from markdown (back-compat wrapper around `loadOrMergePlan`). */
+  loadPlan(markdown: string, sourceFile: string, agentId?: string): PlanBoard {
+    return this.loadOrMergePlan(markdown, sourceFile, agentId).board;
+  }
+
+  /**
+   * Bind an existing `inline` plan to a file: merge the file content into it
+   * and set its `sourceFile`. The plan keeps its ID.
+   */
+  rebindPlan(
+    planId: string,
+    markdown: string,
+    absPath: string,
+  ): { success: boolean; error?: string; board?: PlanBoard; diff?: MergeDiff; applied?: boolean } {
+    const live = this.boards.get(planId);
+    if (!live) return { success: false, error: `Plan not found: ${planId}` };
+    if (live.sourceFile !== 'inline') {
+      return { success: false, error: `Plan ${planId} is already bound to ${live.sourceFile}` };
+    }
+    let parsed: PlanBoard;
+    try {
+      parsed = this.parseWithTiers(markdown, absPath);
+    } catch (err) {
+      return { success: false, error: `Failed to parse plan: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const { board, diff, applied } = mergePlan(live, parsed);
+    if (!applied) return { success: true, board: live, diff, applied: false };
+    board.sourceFile = absPath;
+    board.sourceMissing = false;
+    this.activePlanId = board.id;
+    this.commitMerge(live, board, diff, true);
+    return { success: true, board, diff, applied: true };
+  }
+
+  /**
+   * Apply an on-disk edit of a plan's source file. Only the orchestrator (or an
+   * unattributed edit) may change the plan. A failed parse, a suspected mass
+   * renumbering, or duplicate IDs leave the live board untouched.
+   */
+  applyFileChange(
+    planId: string,
+    markdown: string,
+    editorAgentId: string | null,
+  ): { applied: boolean; diff?: MergeDiff; reason?: ApplyFileChangeReason } {
+    const live = this.boards.get(planId);
+    if (!live) return { applied: false, reason: 'not-found' };
+    if (editorAgentId && live.orchestratorAgentId && editorAgentId !== live.orchestratorAgentId) {
+      return { applied: false, reason: 'not-orchestrator' };
+    }
+
+    let result: ReturnType<typeof mergePlan>;
+    try {
+      const parsed = this.parseWithTiers(markdown, live.sourceFile);
+      // A file that parses to zero tasks while the board has some is almost
+      // certainly a truncated / half-written save — never wipe the board for it.
+      if (parsed.tasks.length === 0 && live.tasks.length > 0) {
+        return { applied: false, reason: 'parse-error' };
+      }
+      result = mergePlan(live, parsed);
+    } catch {
+      return { applied: false, reason: 'parse-error' };
+    }
+
+    const { board, diff, applied } = result;
+    if (!applied) {
+      return { applied: false, diff, reason: diff.duplicateIds.length > 0 ? 'duplicate-ids' : 'renumber' };
+    }
+    const wasMissing = board.sourceMissing;
+    board.sourceMissing = false;
+    this.commitMerge(live, board, diff, wasMissing);
+    return { applied: true, diff };
+  }
+
+  /** Fresh (non-merge) load. Replaces an existing plan with the same ID. */
+  private loadFresh(markdown: string, sourceFile: string, agentId?: string): PlanBoard {
+    const board = this.parseWithTiers(markdown, sourceFile);
 
     // Handle ID collisions from different files
     if (this.boards.has(board.id) && this.boards.get(board.id)!.sourceFile !== sourceFile) {
@@ -334,10 +527,46 @@ export class PlanBoardManager {
       board.orchestratorAgentId = agentId;
     }
 
+    // Reloading over an existing plan continues its revision sequence
+    const previous = this.boards.get(board.id);
+    if (previous) {
+      board.revision = previous.revision;
+      this.bump(board, board.tasks.map((t) => t.id));
+    }
+
     this.boards.set(board.id, board);
     this.activePlanId = board.id;
     this.notifyChange(board.id);
     return board;
+  }
+
+  /**
+   * Record one mutation: increments the board revision once and stamps the
+   * touched tasks with the new revision. Call exactly once per mutating call.
+   */
+  private bump(board: PlanBoard, taskIds: Iterable<string> = []): void {
+    board.revision++;
+    board.lastUpdatedAt = Date.now();
+    const ids = new Set(taskIds);
+    if (ids.size === 0) return;
+    for (const t of board.tasks) {
+      if (ids.has(t.id)) t.changedAtRevision = board.revision;
+    }
+  }
+
+  /** Remember the hash of content we just wrote to the source file. Not a revision change. */
+  setSelfWriteHash(planId: string, hash: string | null): void {
+    const board = this.boards.get(planId);
+    if (board) board.lastSelfWriteHash = hash;
+  }
+
+  /** Flag whether the plan's source file is missing. Bumps the revision only on change. */
+  markSourceMissing(planId: string, missing: boolean): void {
+    const board = this.boards.get(planId);
+    if (!board || board.sourceMissing === missing) return;
+    board.sourceMissing = missing;
+    this.bump(board);
+    this.notifyChange(board.id);
   }
 
   /** Check if an agent is orchestrator for a given plan (or any plan).
@@ -350,7 +579,7 @@ export class PlanBoardManager {
       // Auto-promote if no orchestrator is set
       if (!board.orchestratorAgentId) {
         board.orchestratorAgentId = agentId;
-        board.lastUpdatedAt = Date.now();
+        this.bump(board);
         this.notifyChange(board.id);
         return true;
       }
@@ -364,7 +593,7 @@ export class PlanBoardManager {
     const activePlans = Array.from(this.boards.values()).filter((b) => b.status === 'active');
     if (activePlans.length === 1 && !activePlans[0].orchestratorAgentId) {
       activePlans[0].orchestratorAgentId = agentId;
-      activePlans[0].lastUpdatedAt = Date.now();
+      this.bump(activePlans[0]);
       this.notifyChange(activePlans[0].id);
       return true;
     }
@@ -387,7 +616,7 @@ export class PlanBoardManager {
       }
     }
     board.orchestratorAgentId = agentId;
-    board.lastUpdatedAt = Date.now();
+    this.bump(board);
     this.notifyChange(board.id);
     return { success: true };
   }
@@ -447,6 +676,10 @@ export class PlanBoardManager {
       return { success: false, error: `Task not found: ${taskId}` };
     }
 
+    if (task.status === 'cancelling' || task.status === 'aborted') {
+      return { success: false, error: `Task is being cancelled (${task.cancelReason ?? 'cancelled by orchestrator'})`, task, planId: board.id };
+    }
+
     if (task.blockedBy.length > 0) {
       const allDepsComplete = task.blockedBy.every((dep) => {
         const depTask = board.tasks.find((t) => t.id === dep);
@@ -473,7 +706,7 @@ export class PlanBoardManager {
     task.assignee = agentId;
     task.assigneeName = agentName ?? agentId;
     task.claimedAt = Date.now();
-    board.lastUpdatedAt = Date.now();
+    this.bump(board, [task.id]);
     this.notifyChange(board.id);
     for (const fn of this.taskClaimListeners) fn(task, board.id);
     return { success: true, task, planId: board.id };
@@ -492,16 +725,100 @@ export class PlanBoardManager {
       return { success: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
     }
 
+    const res = this.applyTaskUpdate(board, taskId, agentId, status, note, agentName);
+    if (!res.success) return { success: false, error: res.error, task: res.task, planId: res.task ? board.id : undefined };
+    this.bump(board, res.touched);
+    this.notifyChange(board.id);
+    return { success: true, task: res.task, planId: board.id };
+  }
+
+  /**
+   * Update several tasks of one plan in a single call. Each task is validated
+   * independently; the board revision is bumped once and listeners notified once.
+   */
+  updateTasks(
+    taskIds: string[],
+    agentId: string,
+    status: TaskStatus,
+    note?: string,
+    agentName?: string,
+    planId?: string,
+  ): { updated: string[]; failed: Array<{ id: string; error: string }>; revision: number } {
+    const board = this.resolvePlan(planId);
+    if (!board) {
+      const error = planId ? `Plan not found: ${planId}` : 'No plan loaded';
+      return { updated: [], failed: taskIds.map((id) => ({ id, error })), revision: 0 };
+    }
+    const updated: string[] = [];
+    const failed: Array<{ id: string; error: string }> = [];
+    const touched = new Set<string>();
+    for (const id of taskIds) {
+      const res = this.applyTaskUpdate(board, id, agentId, status, note, agentName);
+      if (res.success) {
+        updated.push(id);
+        for (const t of res.touched) touched.add(t);
+      } else {
+        failed.push({ id, error: res.error ?? 'Update failed' });
+      }
+    }
+    if (updated.length > 0) {
+      this.bump(board, touched);
+      this.notifyChange(board.id);
+    }
+    return { updated, failed, revision: board.revision };
+  }
+
+  /**
+   * Validate and apply one task status change without bumping or notifying.
+   * Returns the IDs touched so the caller can bump exactly once.
+   */
+  private applyTaskUpdate(
+    board: PlanBoard,
+    taskId: string,
+    agentId: string,
+    status: TaskStatus,
+    note?: string,
+    agentName?: string,
+  ): { success: true; task: PlanTask; touched: Set<string> } | { success: false; error: string; task?: PlanTask } {
     const task = board.tasks.find((t) => t.id === taskId);
     if (!task) {
       return { success: false, error: `Task not found: ${taskId}` };
     }
 
+    if (status === 'cancelling') {
+      return { success: false, error: "Status 'cancelling' can only be set by the orchestrator via cancelTask", task };
+    }
+
+    if (status === 'aborted') {
+      if (task.status !== 'cancelling') {
+        return { success: false, error: `Task is not being cancelled (status: ${task.status}); 'aborted' only confirms a cancellation`, task };
+      }
+      const isAssignee = task.assignee === agentId;
+      const isOrch = board.orchestratorAgentId === agentId;
+      if (!isAssignee && !isOrch) {
+        return { success: false, error: `Only the assignee (${task.assigneeName ?? task.assignee}) or the orchestrator can confirm the abort`, task };
+      }
+      if (note) {
+        task.notes.push({ agentId, agentName: agentName ?? agentId, text: note, ts: Date.now() });
+      }
+      const touched = this.removeTasks(board, [task.id]);
+      return { success: true, task, touched };
+    }
+
     if (task.assignee && task.assignee !== agentId) {
-      return { success: false, error: `Task is owned by ${task.assigneeName ?? task.assignee}`, task, planId: board.id };
+      return { success: false, error: `Task is owned by ${task.assigneeName ?? task.assignee}`, task };
+    }
+
+    if (task.status === 'cancelling') {
+      return {
+        success: false,
+        error: `Task was cancelled by the orchestrator (${task.cancelReason ?? 'no reason given'}). Stop work and set status 'aborted'.`,
+        task,
+      };
     }
 
     task.status = status;
+    const touched = new Set<string>([task.id]);
 
     if (status === 'in_progress' && !task.assignee) {
       task.assignee = agentId;
@@ -512,7 +829,7 @@ export class PlanBoardManager {
     if (status === 'done' || status === 'failed') {
       task.completedAt = Date.now();
       if (status === 'done') {
-        this.unblockDependents(board, taskId);
+        for (const id of this.unblockDependents(board, taskId)) touched.add(id);
         this.checkAutoComplete(board);
       } else if (status === 'failed') {
         if (note) {
@@ -524,12 +841,10 @@ export class PlanBoardManager {
           if (note) {
             task.notes.push({ agentId, agentName: agentName ?? agentId, text: note, ts: Date.now() });
           }
-          board.lastUpdatedAt = Date.now();
-          this.notifyChange(board.id);
-          this.retryTask(taskId, board.id);
-          return { success: true, task, planId: board.id };
+          for (const id of this.applyRetry(board, task).uncascaded) touched.add(id);
+          return { success: true, task, touched };
         }
-        this.cascadeFailure(board, taskId);
+        for (const id of this.cascadeFailure(board, taskId)) touched.add(id);
       }
       for (const fn of this.taskCompleteListeners) fn(task, board.id);
     }
@@ -543,9 +858,104 @@ export class PlanBoardManager {
       });
     }
 
-    board.lastUpdatedAt = Date.now();
+    return { success: true, task, touched };
+  }
+
+  /**
+   * Cancel a task (orchestrator only). An unclaimed task is removed at once;
+   * a claimed / in-progress task enters `cancelling` until its assignee
+   * confirms with status `aborted` (or is auto-confirmed when lost).
+   */
+  cancelTask(
+    planId: string | undefined,
+    taskId: string,
+    byAgentId: string,
+    reason: string,
+  ): { success: boolean; error?: string; status?: 'removed' | 'cancelling'; assignee?: string | null } {
+    const board = this.resolvePlan(planId);
+    if (!board) return { success: false, error: planId ? `Plan not found: ${planId}` : 'No plan loaded' };
+    if (!this.isOrchestrator(byAgentId, board.id)) {
+      return { success: false, error: 'Only the plan orchestrator can cancel tasks' };
+    }
+    const task = board.tasks.find((t) => t.id === taskId);
+    if (!task) return { success: false, error: `Task not found: ${taskId}` };
+
+    if (task.status === 'cancelling') {
+      return { success: true, status: 'cancelling', assignee: task.assignee };
+    }
+
+    if (task.status === 'claimed' || task.status === 'in_progress') {
+      task.status = 'cancelling';
+      task.cancelReason = reason;
+      this.bump(board, [task.id]);
+      this.notifyChange(board.id);
+      this.notifyCancelling(board, [task.id]);
+      return { success: true, status: 'cancelling', assignee: task.assignee };
+    }
+
+    const touched = this.removeTasks(board, [task.id]);
+    this.bump(board, touched);
     this.notifyChange(board.id);
-    return { success: true, task, planId: board.id };
+    return { success: true, status: 'removed', assignee: null };
+  }
+
+  /**
+   * Auto-confirm the abort of every `cancelling` task assigned to an agent that
+   * is gone (stale / disconnected). Returns the removed task IDs.
+   */
+  confirmAbortForLostAgent(agentId: string): string[] {
+    const removed: string[] = [];
+    for (const board of this.boards.values()) {
+      const ids = board.tasks.filter((t) => t.status === 'cancelling' && t.assignee === agentId).map((t) => t.id);
+      if (ids.length === 0) continue;
+      const touched = this.removeTasks(board, ids);
+      this.bump(board, touched);
+      this.notifyChange(board.id);
+      removed.push(...ids);
+    }
+    return removed;
+  }
+
+  /**
+   * Remove tasks from a board, strip them from other tasks' `blockedBy`, and
+   * re-derive blocked/pending. No bump/notify. Returns IDs of surviving tasks
+   * that changed (plus the removed IDs, harmless for `bump`).
+   */
+  /**
+   * Record removed IDs against the NEXT revision. Every caller of removeTasks
+   * (and commitMerge) bumps exactly once right after, so revision + 1 is the
+   * revision that carries the removal.
+   */
+  private recordRemoved(board: PlanBoard, ids: Iterable<string>): void {
+    const list = board.removedTasks ?? [];
+    for (const id of ids) list.push({ id, revision: board.revision + 1 });
+    board.removedTasks = list.length > MAX_REMOVED_TRACKED ? list.slice(-MAX_REMOVED_TRACKED) : list;
+  }
+
+  private removeTasks(board: PlanBoard, ids: string[]): Set<string> {
+    this.recordRemoved(board, ids);
+    const gone = new Set(ids);
+    const touched = new Set<string>(ids);
+    board.tasks = board.tasks.filter((t) => !gone.has(t.id));
+    const before = new Map(board.tasks.map((t) => [t.id, t.status]));
+    for (const t of board.tasks) {
+      if (t.blockedBy.some((d) => gone.has(d))) {
+        t.blockedBy = t.blockedBy.filter((d) => !gone.has(d));
+        touched.add(t.id);
+      }
+    }
+    const statusById = new Map(board.tasks.map((t) => [t.id, t.status]));
+    for (const t of board.tasks) {
+      if (t.status === 'blocked' && t.blockedBy.every((d) => statusById.get(d) === 'done')) {
+        t.status = 'pending';
+      }
+    }
+    resolveBlockedStatus(board.tasks);
+    for (const t of board.tasks) {
+      if (before.get(t.id) !== t.status) touched.add(t.id);
+    }
+    this.checkAutoComplete(board);
+    return touched;
   }
 
   /** Archive a plan (mark as archived). */
@@ -553,7 +963,7 @@ export class PlanBoardManager {
     const board = this.boards.get(planId);
     if (!board) return { success: false, error: `Plan not found: ${planId}` };
     board.status = 'archived';
-    board.lastUpdatedAt = Date.now();
+    this.bump(board);
     if (this.activePlanId === planId) {
       this.activePlanId = this.findNextActivePlanId();
     }
@@ -579,7 +989,8 @@ export class PlanBoardManager {
     return null;
   }
 
-  private unblockDependents(board: PlanBoard, completedTaskId: string): void {
+  private unblockDependents(board: PlanBoard, completedTaskId: string): string[] {
+    const unblocked: string[] = [];
     for (const task of board.tasks) {
       if (task.status !== 'blocked') continue;
       if (!task.blockedBy.includes(completedTaskId)) continue;
@@ -589,14 +1000,20 @@ export class PlanBoardManager {
       });
       if (allDepsComplete) {
         task.status = 'pending';
+        unblocked.push(task.id);
       }
     }
+    return unblocked;
   }
 
-  /** Auto-complete: if all tasks in a plan are done, mark plan as completed. */
+  /**
+   * Auto-complete: if all tasks in a plan are done (aborted tasks are ignored),
+   * mark plan as completed. A cancelling task is still incomplete.
+   */
   private checkAutoComplete(board: PlanBoard): void {
     if (board.status !== 'active') return;
-    const allDone = board.tasks.every((t) => t.status === 'done');
+    const relevant = board.tasks.filter((t) => t.status !== 'aborted');
+    const allDone = relevant.every((t) => t.status === 'done');
     if (allDone) {
       board.status = 'completed';
     }
@@ -677,6 +1094,16 @@ export class PlanBoardManager {
       return { success: false, error: `Max retries (${task.maxRetries}) exceeded` };
     }
 
+    const { uncascaded } = this.applyRetry(board, task);
+    this.bump(board, [task.id, ...uncascaded]);
+    this.notifyChange(board.id);
+    const retryAfterMs = Math.min(1000 * Math.pow(2, task.retryCount - 1), 30000);
+    return { success: true, task, uncascaded, planId: board.id, retryAfterMs };
+  }
+
+  /** Reset a failed task for retry without bumping/notifying (callers bump once). */
+  private applyRetry(board: PlanBoard, task: PlanTask): { uncascaded: string[] } {
+    const taskId = task.id;
     task.retryCount++;
     task.status = 'pending';
     task.assignee = null;
@@ -702,10 +1129,7 @@ export class PlanBoardManager {
       board.status = 'active';
     }
 
-    board.lastUpdatedAt = Date.now();
-    this.notifyChange(board.id);
-    const retryAfterMs = Math.min(1000 * Math.pow(2, task.retryCount - 1), 30000);
-    return { success: true, task, uncascaded, planId: board.id, retryAfterMs };
+    return { uncascaded };
   }
 
   /**
@@ -775,6 +1199,13 @@ export class PlanBoardManager {
   restore(boards: PlanBoard[]): void {
     this.boards.clear();
     for (const board of boards) {
+      board.revision ??= 1;
+      board.sourceMissing ??= false;
+      board.lastSelfWriteHash ??= null;
+      for (const t of board.tasks) {
+        t.changedAtRevision ??= board.revision;
+        t.cancelReason ??= null;
+      }
       this.boards.set(board.id, board);
     }
     this.activePlanId = this.findNextActivePlanId();

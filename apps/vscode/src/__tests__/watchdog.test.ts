@@ -71,6 +71,8 @@ function makePlans(assignments: Array<{ agentId: string; taskId: string; status?
       complexity: null,
       modelTier: null,
       verificationStatus: null,
+      changedAtRevision: 1,
+      cancelReason: null,
     })),
     createdAt: 0,
     lastUpdatedAt: 0,
@@ -79,6 +81,9 @@ function makePlans(assignments: Array<{ agentId: string; taskId: string; status?
     orchestratorAgentId: 'orch',
     strategy: 'manual',
     maxBudgetUsd: null,
+    revision: 1,
+    sourceMissing: false,
+    lastSelfWriteHash: null,
   }];
 }
 

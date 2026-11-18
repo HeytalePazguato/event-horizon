@@ -21,6 +21,7 @@ export interface LockResult {
 export class LockManager {
   private locks = new Map<string, FileLock>();
   private enabled = false;
+  private ownershipRule: ((normPath: string) => string | null) | null = null;
   private readonly ttlMs: number;
   private waitResolvers = new Map<string, Array<() => void>>();
 
@@ -33,6 +34,11 @@ export class LockManager {
     if (!enabled) this.locks.clear();
   }
 
+  /** Set a rule mapping a normalized path to its sole permitted owner agentId (or null). */
+  setOwnershipRule(rule: ((normPath: string) => string | null) | null): void {
+    this.ownershipRule = rule;
+  }
+
   isEnabled(): boolean {
     return this.enabled;
   }
@@ -42,6 +48,15 @@ export class LockManager {
     if (!this.enabled) return { allowed: true };
     this.pruneExpired();
     const norm = this.normalize(filePath);
+    const ruleOwner = this.ownershipRule ? this.ownershipRule(norm) : null;
+    if (ruleOwner && ruleOwner !== agentId) {
+      return {
+        allowed: false,
+        owner: 'orchestrator',
+        ownerAgent: ruleOwner,
+        reason: 'Plan files can only be edited by the plan orchestrator',
+      };
+    }
     const existing = this.locks.get(norm);
 
     if (existing && existing.agentId !== agentId) {
@@ -127,6 +142,11 @@ export class LockManager {
   getActiveLocks(): Array<{ path: string } & FileLock> {
     this.pruneExpired();
     return [...this.locks.entries()].map(([p, l]) => ({ path: p, ...l }));
+  }
+
+  /** Public path normalization (same as used for lock keys). */
+  normalizePath(p: string): string {
+    return this.normalize(p);
   }
 
   private normalize(filePath: string): string {
