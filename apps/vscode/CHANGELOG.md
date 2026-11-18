@@ -4,6 +4,8 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 
 ## [Unreleased]
 
+## [3.4.0] — 2026-11-17
+
 ### Added
 - **Plans load from a file and stay in sync.** `eh_load_plan` takes a `file_path` to a `.md` plan inside the workspace. Event Horizon watches the file, so every save is picked up with no reload. Paths outside the workspace folders are refused.
 - **`eh_get_task`** returns the full detail of one task (description, acceptance criteria, verify command, last 20 notes) without reading the whole plan.
@@ -20,6 +22,15 @@ All notable changes to the Event Horizon VS Code extension will be documented in
 ### Fixed
 - **`eh_load_plan` ignored `file_path`.** Passing a file path loaded nothing from it, so the plan had to be pasted in as `content`. The file is now read and watched.
 - **Reloading a plan dropped claims, assignees, and notes.** A reload replaced the live plan with the file's tasks, so work in progress disappeared. Reloads now merge by task ID and keep that state.
+
+### Security
+- **All 44 open Dependabot alerts are resolved.** fast-uri, js-yaml, markdown-it and undici are no longer in the dependency tree. `@azure/msal-node`, vite, source-map-js, brace-expansion and qs now resolve to patched versions.
+- **minimatch is pinned to 11.0.1 or later.** eslint 10.14 pulls in minimatch 10.2.6, which has a denial-of-service issue (globparts amplification). It is only used by lint tooling, not shipped in the extension.
+- **One known issue remains in lint tooling.** picomatch 4.0.7 (ReDoS with repeated extglobs), reached through typescript-eslint. No patched version has been published yet. It is not shipped in the extension.
+
+### Dependencies
+- pixi.js 8.23, zustand 5.1, sql.js 1.16, web-tree-sitter 0.27.2, ws 8.22.2, d3-force 3.0.1.
+- @vscode/vsce 4.1, ovsx 1.4, eslint 10.14, typescript-eslint 8.72.2, vitest 5.1, turbo 2.11.11, globals 17.14, vite 7.3.7, @types/node 26.6.6.
 
 ## [3.3.0] — 2026-10-21
 
