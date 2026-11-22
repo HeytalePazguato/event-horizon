@@ -75,8 +75,8 @@ importers:
         specifier: ^1.16.0
         version: 1.16.0
       tree-sitter-c-sharp:
-        specifier: ^0.23.0
-        version: 0.23.5
+        specifier: ^0.24.0
+        version: 0.24.0
       tree-sitter-javascript:
         specifier: ^0.25.0
         version: 0.25.0
@@ -94,7 +94,7 @@ importers:
         version: 0.27.2
       ws:
         specifier: ^8.21.2
-        version: 8.22.2
+        version: 8.23.0
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -1092,6 +1092,7 @@ packages:
   '@typespec/ts-http-runtime@0.3.10':
     resolution: {integrity: sha512-vddvvtZ7sejSlCv+OIkn2ztjB1O31Fc2JsxI/YK725r3elXXlF/J3o3lbXJFRhoeWRWK1tjdZ+GTi6Fdtrp+EA==}
     engines: {node: '>=22.0.0'}
+    deprecated: A newer version 0.3.11 has been published.
 
   '@vitest/mocker@5.1.0':
     resolution: {integrity: sha512-5umB9/jlWcqVS6fsrFmv5Gdnpu6wAUio/lEOwAmvB7v+lFo/IW2B9FhAD0p19GCULTgMzLCdUmuCDCnAzWgppQ==}
@@ -1707,6 +1708,10 @@ packages:
     resolution: {integrity: sha512-9MdFxmkKaOYVTV+XVRG8ArDwwQ77XIgIPyKASB1k3JPq3M8fGQQQE3YpMOrKm6g//Ktx8ivZr8xo1Qmtqub+GA==}
     engines: {node: ^18 || ^20 || >= 21}
 
+  node-addon-api@8.9.2:
+    resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
+    engines: {node: ^18 || ^20 || >= 21}
+
   node-gyp-build@4.8.4:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
@@ -1930,8 +1935,8 @@ packages:
     resolution: {integrity: sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==}
     engines: {node: '>=12.0.0'}
 
-  tree-sitter-c-sharp@0.23.5:
-    resolution: {integrity: sha512-xJGOeXPMmld0nES5+080N/06yY6LQi+KWGWV4LfZaZe6srJPtUtfhIbRSN7EZN6IaauzW28v6W4QHFwmeUW6HQ==}
+  tree-sitter-c-sharp@0.24.0:
+    resolution: {integrity: sha512-M7VLq8mZEmPz3HNyocw484Pdai/DdSycrSlFrLqzjmhUPqhph3VellWbtx9mWcyTXgHWpNQzymFDrLt8IIna5w==}
     peerDependencies:
       tree-sitter: ^0.25.0
     peerDependenciesMeta:
@@ -2140,8 +2145,8 @@ packages:
     resolution: {integrity: sha512-r6lPcBGxZXlIcymEu7InxDMhdW0KDxpLgoFLcguasxCaJ/SOIZwINatK9KY/tf+ZrlywOKU0UDj3ATXUBfxJXA==}
     engines: {node: '>=8'}
 
-  ws@8.22.2:
-    resolution: {integrity: sha512-/rEZ2ejown2N5gxVTHUu9bVVC7ttu0/Tgzf5hbTOixR3Fs7mbbXgn2DbdbcKgJOmpQMtrIUWivtYuVMnp/W/yA==}
+  ws@8.23.0:
+    resolution: {integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -3569,6 +3574,8 @@ snapshots:
 
   node-addon-api@8.7.0: {}
 
+  node-addon-api@8.9.2: {}
+
   node-gyp-build@4.8.4: {}
 
   object-inspect@1.13.4: {}
@@ -3810,14 +3817,14 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.7)
       picomatch: 4.0.7
 
-  tree-sitter-c-sharp@0.23.5:
+  tree-sitter-c-sharp@0.24.0:
     dependencies:
-      node-addon-api: 8.7.0
+      node-addon-api: 8.9.2
       node-gyp-build: 4.8.4
 
   tree-sitter-javascript@0.23.1:
     dependencies:
-      node-addon-api: 8.7.0
+      node-addon-api: 8.9.2
       node-gyp-build: 4.8.4
 
   tree-sitter-javascript@0.25.0:
@@ -3953,7 +3960,7 @@ snapshots:
       string-width: 4.2.3
       strip-ansi: 6.0.1
 
-  ws@8.22.2: {}
+  ws@8.23.0: {}
 
   wsl-utils@1.0.1:
     dependencies:
